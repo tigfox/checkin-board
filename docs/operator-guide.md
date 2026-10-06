@@ -12,22 +12,7 @@ installed beside it. Volunteers use their phones on the node's Wi-Fi.
 
 You need a node with graywolf already running, and shell access.
 
-1. **Create a graywolf login for the app.** This is a login inside
-   graywolf, not a Linux user (`install.sh` creates the `checkin-board`
-   Linux user itself). graywolf's web UI can't add users, so use its
-   command on the node. It creates the user if it doesn't exist, and asks
-   for a password (8+ characters):
-   ```sh
-   sudo -u graywolf graywolf auth set-password --user checkin-board -config /var/lib/graywolf/graywolf.db
-   ```
-   Running it as `graywolf` keeps graywolf's database files owned by
-   graywolf. The app uses this login to send and read messages, read
-   the packet log, and read the station callsign (or change it, from
-   Admin → Station). graywolf logins have no permission levels, so this
-   one can do anything graywolf's admin can. Keeping it separate lets you
-   change or revoke the app's password without touching yours. Using
-   your own graywolf login also works: set `GW_USER` to it in step 3.
-2. Copy the release bundle to the node and unpack it:
+1. Copy the release bundle to the node and unpack it:
    ```sh
    tar xzf checkin-board-<version>-linux.tar.gz
    cd checkin-board-<version>
@@ -37,8 +22,14 @@ You need a node with graywolf already running, and shell access.
    - creates a `checkin-board` system user;
    - installs the binary to `/usr/local/bin`;
    - writes `/etc/checkin-board/checkin-board.env`;
-   - asks for the graywolf password and saves it in
-     `/etc/checkin-board/gw-password` (mode 600);
+   - creates the app's own graywolf login, `checkin-board`, with a
+     random password, and saves the password in
+     `/etc/checkin-board/gw-password` (mode 600). This is a login
+     inside graywolf, not a Linux user. graywolf's web UI can't add
+     users, so the script uses graywolf's command, run as the owner of
+     graywolf's database (`/var/lib/graywolf/graywolf.db`; set
+     `GRAYWOLF_DB` if yours is elsewhere). If it can't, it asks for a
+     password instead (see "The app's graywolf login" below);
    - starts the `checkin-board` service. If you skip the password (or
      run the script non-interactively), it says "Not started": put the
      password in that file and `sudo systemctl start checkin-board`.
@@ -58,6 +49,24 @@ the password are kept, and the database is copied to
 `backups/pre-upgrade-<time>/` before the new version starts. If the
 upgrade fails, the previous version is started again. Backups are never
 pruned: delete old ones yourself when the SD card fills up.
+
+**The app's graywolf login.** The app uses it to send and read
+messages, read the packet log, and read the station callsign (or change
+it, from Admin → Station). graywolf logins have no permission levels, so
+this one can do anything graywolf's admin can. Keeping it separate lets
+you change or revoke the app's password without touching yours. The
+script only ever creates or resets the login named `checkin-board`, and
+only while no password is saved. To create it by hand (it asks for a
+password of 8+ characters, without spaces):
+
+```sh
+sudo -u graywolf graywolf auth set-password --user checkin-board -config /var/lib/graywolf/graywolf.db
+```
+
+Then put the same password in `/etc/checkin-board/gw-password`. To use
+your own graywolf login instead, set `GW_USER` in
+`/etc/checkin-board/checkin-board.env` before running the script, and
+enter its password when asked.
 
 The app listens on port 8090 on every interface (`CB_LISTEN` in the env
 file). If the node also has an uplink you don't want it on, set

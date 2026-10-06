@@ -29,6 +29,10 @@ ENV_FILE=$ETC/checkin-board.env
 PW_FILE=$ETC/gw-password
 STATE=/var/lib/checkin-board
 UNIT=/etc/systemd/system/checkin-board.service
+# graywolf's own database, for creating the app's graywolf login
+# (override with GRAYWOLF_DB=/path/to/graywolf.db).
+GW_DB=${GRAYWOLF_DB:-/var/lib/graywolf/graywolf.db}
+GW_LOGIN=checkin-board
 DOC=/usr/local/share/doc/checkin-board
 
 say() { printf '%s\n' "$*"; }
@@ -96,7 +100,53 @@ if [ ! -f "$ENV_FILE" ]; then
 	say "Wrote $ENV_FILE (edit GW_USER / GW_BASE_URL if needed)"
 fi
 
-if [ ! -s "$PW_FILE" ]; then
+# run_as USER CMD...: run a command as another (system) user.
+run_as() {
+	u=$1
+	shift
+	if [ "$u" = root ]; then
+		"$@"
+	elif command -v runuser >/dev/null 2>&1; then
+		runuser -u "$u" -- "$@"
+	elif command -v sudo >/dev/null 2>&1; then
+		sudo -n -u "$u" -- "$@"
+	else
+		return 127
+	fi
+}
+
+# create_gw_login: create (or reset) the app's own graywolf login with a
+# random password, using graywolf's CLI as the owner of its database, and
+# save the password for the app. Only for the app's dedicated login: an
+# operator who pointed GW_USER at their own login is never touched.
+create_gw_login() {
+	gw_user=$(sed -n 's/^GW_USER=//p' "$ENV_FILE" | tail -n 1)
+	[ "$gw_user" = "$GW_LOGIN" ] || return 1
+	gw_bin=$(command -v graywolf || true)
+	[ -n "$gw_bin" ] && [ -f "$GW_DB" ] || return 1
+	owner=$(stat -c %U "$GW_DB")
+	# 32 random bytes as hex: no spaces (graywolf reads one word).
+	pw=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+	out=$(printf '%s\n' "$pw" | run_as "$owner" "$gw_bin" auth set-password --user "$GW_LOGIN" -config "$GW_DB" 2>&1) || {
+		say "Couldn't create the graywolf login automatically: $out"
+		return 1
+	}
+	case "$out" in
+	*"Created user"* | *"Updated password"*) ;;
+	*)
+		say "Couldn't create the graywolf login automatically: $out"
+		return 1
+		;;
+	esac
+	(umask 077 && printf '%s\n' "$pw" >"$PW_FILE")
+	unset pw
+	case "$out" in
+	*"Created user"*) say "Created graywolf login '$GW_LOGIN' for the app (password saved in $PW_FILE)" ;;
+	*) say "Reset graywolf login '$GW_LOGIN' for the app (password saved in $PW_FILE)" ;;
+	esac
+}
+
+if [ ! -s "$PW_FILE" ] && ! create_gw_login && [ ! -s "$PW_FILE" ]; then
 	if [ -t 0 ]; then
 		say "Password of the graywolf login the app uses (GW_USER in $ENV_FILE):"
 		trap 'stty echo; restart_on_failure' EXIT

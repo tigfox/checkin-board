@@ -49,7 +49,7 @@ in `/var/lib/checkin-board` and starts after `graywolf.service`.
 | Variable           | Default                 | Description |
 |--------------------|-------------------------|-------------|
 | `GW_BASE_URL`      | `http://localhost:8080` | graywolf base URL |
-| `GW_USER`          | (required)              | a graywolf login (not a Linux user) for the app; create it with `graywolf auth set-password --user checkin-board` (see the operator guide) |
+| `GW_USER`          | (required)              | a graywolf login (not a Linux user) for the app; `install.sh` creates `checkin-board` with graywolf's CLI (see the operator guide) |
 | `GW_PASSWORD`      |                         | graywolf password (or use `GW_PASSWORD_FILE`) |
 | `GW_PASSWORD_FILE` |                         | file holding the password; must be `chmod 600`; wins over `GW_PASSWORD` |
 | `GW_TIMEOUT`       | `10s`                   | per-request timeout |
