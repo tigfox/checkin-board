@@ -2,11 +2,13 @@ package web
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -343,4 +345,110 @@ func TestVolunteerBannerHidesErrorDetail(t *testing.T) {
 	if st := decode[stationView](t, e.do("GET", "/api/station", e.volunt, nil)); st.Graywolf.Problem != "graywolf rejected the app's login" {
 		t.Fatalf("banner = %+v", st.Graywolf)
 	}
+}
+
+func TestEntryRetryWithRequestIDLogsOnce(t *testing.T) {
+	e := newEnv(t, checkpointSettings("active"))
+	body := map[string]string{"bib": "77", "request_id": "r-1"}
+	first := decode[entryResult](t, e.do("POST", "/api/entries", e.volunt, body))
+	again := decode[entryResult](t, e.do("POST", "/api/entries", e.volunt, body))
+	if first.ID == 0 || again.ID != first.ID {
+		t.Fatalf("retry = %+v, first = %+v", again, first)
+	}
+	list := decode[map[string][]map[string]any](t, e.do("GET", "/api/entries", e.volunt, nil))
+	if len(list["entries"]) != 1 {
+		t.Fatalf("entries = %d, want the bib logged once", len(list["entries"]))
+	}
+	// A failed attempt isn't cached: the same id can succeed later.
+	bad := map[string]string{"bib": "0", "request_id": "r-2"}
+	expect(t, e.do("POST", "/api/entries", e.volunt, bad), http.StatusBadRequest)
+	expect(t, e.do("POST", "/api/entries", e.volunt, map[string]string{"bib": "78", "request_id": "r-2"}), http.StatusCreated)
+	expect(t, e.do("POST", "/api/entries", e.volunt, map[string]string{"bib": "1", "request_id": strings.Repeat("x", 65)}), http.StatusBadRequest)
+}
+
+func TestRequestDedupExpiresAndBounds(t *testing.T) {
+	now := t0
+	d := newRequestDedup(func() time.Time { return now })
+	release, _, ok := d.begin("a", "77|")
+	if !ok {
+		t.Fatal("first begin refused")
+	}
+	if _, prior, ok := d.begin("a", "77|"); ok || prior.status != http.StatusConflict {
+		t.Fatal("in-flight duplicate not refused")
+	}
+	release(201, []byte(`{"id":1}`))
+	if _, prior, ok := d.begin("a", "77|"); ok || prior.status != 201 {
+		t.Fatalf("stored = %+v", prior)
+	}
+	// The same id for a different entry is a client bug, not a retry.
+	if _, prior, ok := d.begin("a", "78|"); ok || prior.status != http.StatusUnprocessableEntity {
+		t.Fatalf("mismatched retry = %+v", prior)
+	}
+	now = now.Add(dedupTTL)
+	if _, _, ok := d.begin("a", "78|"); !ok {
+		t.Fatal("expired id still cached")
+	}
+}
+
+func TestRequestDedupCapHoldsWithLiveEntries(t *testing.T) {
+	now := t0
+	d := newRequestDedup(func() time.Time { return now })
+	for i := range dedupMax * 2 {
+		release, _, ok := d.begin(fmt.Sprintf("id-%d", i), "1|")
+		if !ok {
+			t.Fatalf("begin %d refused", i)
+		}
+		release(201, []byte(`{}`))
+		now = now.Add(time.Millisecond) // all still unexpired
+	}
+	if n := len(d.entries); n > dedupMax {
+		t.Fatalf("entries = %d, cap %d", n, dedupMax)
+	}
+	// The newest answers are the ones kept.
+	if _, prior, ok := d.begin(fmt.Sprintf("id-%d", dedupMax*2-1), "1|"); ok || prior.status != 201 {
+		t.Fatal("newest entry evicted")
+	}
+}
+
+func TestRequestDedupStaleReleaseKeepsNewClaim(t *testing.T) {
+	now := t0
+	d := newRequestDedup(func() time.Time { return now })
+	stale, _, _ := d.begin("a", "1|")
+	now = now.Add(dedupTTL) // the first attempt hung past the TTL
+	fresh, _, ok := d.begin("a", "1|")
+	if !ok {
+		t.Fatal("expired claim not replaced")
+	}
+	stale(500, nil) // must not drop the fresh claim
+	if _, prior, ok := d.begin("a", "1|"); ok || prior.status != http.StatusConflict {
+		t.Fatalf("fresh claim lost: %+v", prior)
+	}
+	fresh(201, []byte(`{}`))
+}
+
+func TestConcurrentRetriesLogOnce(t *testing.T) {
+	e := newEnv(t, checkpointSettings("active"))
+	const n = 8
+	codes := make(chan int, n)
+	var wg sync.WaitGroup
+	for range n {
+		wg.Go(func() {
+			resp := e.do("POST", "/api/entries", e.volunt, map[string]string{"bib": "55", "request_id": "same"})
+			_ = resp.Body.Close()
+			codes <- resp.StatusCode
+		})
+	}
+	wg.Wait()
+	close(codes)
+	for c := range codes {
+		if c != http.StatusCreated && c != http.StatusConflict {
+			t.Fatalf("status %d", c)
+		}
+	}
+	list := decode[map[string][]map[string]any](t, e.do("GET", "/api/entries", e.volunt, nil))
+	if len(list["entries"]) != 1 {
+		t.Fatalf("entries = %d, want 1", len(list["entries"]))
+	}
+	resp := e.do("POST", "/api/entries", e.volunt, map[string]string{"bib": "56", "request_id": "same"})
+	expect(t, resp, http.StatusUnprocessableEntity)
 }

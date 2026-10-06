@@ -75,8 +75,9 @@ type Deps struct {
 
 type server struct {
 	Deps
-	log *slog.Logger
-	now func() time.Time
+	log   *slog.Logger
+	now   func() time.Time
+	dedup *requestDedup
 }
 
 // NewHandler builds the HTTP handler.
@@ -92,6 +93,7 @@ func NewHandler(d Deps) (http.Handler, error) {
 	if s.now == nil {
 		s.now = time.Now
 	}
+	s.dedup = newRequestDedup(s.now)
 	static := d.Static
 	if static == nil {
 		sub, err := fs.Sub(staticFS, "static")

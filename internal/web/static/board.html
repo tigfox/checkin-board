@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<title>Status board · checkin-board</title>
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/board.css">
+<script type="module" src="/js/board.js"></script>
+</head>
+<body class="board">
+<header class="bar">
+  <img id="brand-logo" class="brand-logo hidden" alt="">
+  <span class="title" id="brand-header"></span>
+  <span class="spacer"></span>
+  <span class="no-print" id="updated"></span>
+  <a class="no-print" href="/admin.html">Admin</a>
+</header>
+<main>
+  <div class="row no-print">
+    <label for="search" class="hidden">Find bib</label>
+    <input id="search" inputmode="numeric" placeholder="Find bib…" maxlength="4">
+    <button type="button" id="print">Print</button>
+  </div>
+  <div id="error" class="banner bad hidden" role="alert"></div>
+  <section>
+    <h2>Checkpoints</h2>
+    <ul class="health-list" id="health"></ul>
+  </section>
+  <section>
+    <h2>Runners</h2>
+    <div class="table-scroll"><table class="board-table" id="board"></table></div>
+  </section>
+</main>
+<footer class="brand" id="brand-footer"></footer>
+</body>
+</html>

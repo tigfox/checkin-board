@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<title>Log in · checkin-board</title>
+<link rel="stylesheet" href="/css/app.css">
+<script type="module" src="/js/login.js"></script>
+</head>
+<body>
+<header class="bar"><span class="title">checkin-board</span></header>
+<main>
+  <section id="setup" class="card hidden">
+    <h1>First-run setup</h1>
+    <p>Set the <strong>admin</strong> password for this node. The setup code is printed in the node's log
+      (<span class="mono">journalctl -u checkin-board | grep setup_code</span>).</p>
+    <form id="setup-form">
+      <label for="setup-code">Setup code</label>
+      <input id="setup-code" autocomplete="off" autocapitalize="characters" required>
+      <label for="setup-pw">Admin password (10+ characters)</label>
+      <input id="setup-pw" type="password" autocomplete="new-password" minlength="10" required>
+      <p><button class="primary" type="submit">Set admin password</button></p>
+      <p id="setup-error" class="error" role="alert"></p>
+    </form>
+  </section>
+  <section id="login" class="card hidden">
+    <h1>Log in</h1>
+    <form id="login-form">
+      <fieldset class="row">
+        <legend class="hidden">Role</legend>
+        <label><input type="radio" name="role" value="volunteer" checked> Volunteer (keypad)</label>
+        <label><input type="radio" name="role" value="admin"> Station admin</label>
+      </fieldset>
+      <label for="login-pw">Password</label>
+      <input id="login-pw" type="password" autocomplete="current-password" required>
+      <p><button class="primary" type="submit">Log in</button></p>
+      <p id="login-error" class="error" role="alert"></p>
+      <p id="volunteer-note" class="muted hidden">Volunteers can't log in yet: ask the station operator to set the volunteer password.</p>
+    </form>
+  </section>
+</main>
+</body>
+</html>

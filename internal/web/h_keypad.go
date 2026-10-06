@@ -1,7 +1,9 @@
 package web
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -105,6 +107,10 @@ func (s *server) getEntries(w http.ResponseWriter, r *http.Request) {
 type entryBody struct {
 	CP  string `json:"cp"`  // optional on a checkpoint (its own code)
 	Bib string `json:"bib"` // as typed: "0042" is 42
+	// RequestID (optional) makes a retry safe: a keypad that lost the
+	// response resends the same id and gets the first result back
+	// instead of logging the bib twice (spec 8.2).
+	RequestID string `json:"request_id"`
 }
 
 type entryResult struct {
@@ -128,6 +134,20 @@ func (s *server) postEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, &httpError{http.StatusBadRequest, "invalid_bib", "bib must be 1-9999"})
 		return
 	}
+	if len(b.RequestID) > maxRequestIDLen {
+		writeError(w, r, s.log, &httpError{http.StatusBadRequest, "invalid", "request_id too long"})
+		return
+	}
+	if b.RequestID != "" {
+		release, prior, ok := s.dedup.begin(b.RequestID, fmt.Sprintf("%d|%s", bib, b.CP))
+		if !ok {
+			writeJSON(w, prior.status, prior.result) // a retry of a logged entry
+			return
+		}
+		rec := &recordingWriter{ResponseWriter: w}
+		defer func() { release(rec.status, rec.body.Bytes()) }()
+		w = rec
+	}
 	cp := b.CP
 	if cp == "" {
 		cfg, err := s.Store.GetSettings(r.Context())
@@ -139,7 +159,9 @@ func (s *server) postEntry(w http.ResponseWriter, r *http.Request) {
 			cp = codes[0]
 		}
 	}
-	res, err := s.Ops.LogBib(r.Context(), cp, bib)
+	// A client that disconnects mid-save must not leave the outcome
+	// ambiguous (committed, but reported as failed and not cached).
+	res, err := s.Ops.LogBib(context.WithoutCancel(r.Context()), cp, bib)
 	if errors.Is(err, ops.ErrJournalOnly) {
 		writeJSON(w, http.StatusAccepted, entryResult{TimeIn: res.TimeIn, ClockSynced: res.ClockSynced,
 			JournalOnly: true, Warning: "saved in the backup journal only; do not re-enter it"})

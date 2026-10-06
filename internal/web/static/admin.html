@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<title>Admin · checkin-board</title>
+<link rel="stylesheet" href="/css/app.css">
+<script type="module" src="/js/admin.js"></script>
+</head>
+<body>
+<header class="bar">
+  <span class="title" id="title">Admin</span>
+  <span id="state"></span>
+  <span class="spacer"></span>
+  <a href="/keypad.html">Keypad</a>
+  <a id="board-link" class="hidden" href="/board.html">Status board</a>
+  <button class="link" id="logout" type="button">Log out</button>
+</header>
+<main>
+  <div id="banner" class="hidden" role="status"></div>
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+  <section id="tab-race" data-tab="Race"></section>
+  <section id="tab-station" data-tab="Station"></section>
+  <section id="tab-outbox" data-tab="Outbox" data-role="checkpoint"></section>
+  <section id="tab-hq" data-tab="HQ" data-role="hq"></section>
+  <section id="tab-branding" data-tab="Branding" data-role="hq"></section>
+  <section id="tab-passwords" data-tab="Passwords"></section>
+</main>
+</body>
+</html>

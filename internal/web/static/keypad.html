@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<title>Keypad · checkin-board</title>
+<link rel="stylesheet" href="/css/app.css">
+<script type="module" src="/js/keypad.js"></script>
+</head>
+<body>
+<header class="bar">
+  <span class="title" id="station-title">checkin-board</span>
+  <span id="race-state"></span>
+  <span class="spacer"></span>
+  <span class="mono" id="race-clock" aria-label="race clock"></span>
+  <a id="admin-link" class="hidden" href="/admin.html">Admin</a>
+  <button class="link" id="logout" type="button">Log out</button>
+</header>
+<main>
+  <div id="clock-banner" class="hidden" role="status"></div>
+  <div id="gw-banner" class="hidden" role="status"></div>
+  <div id="state-banner" class="hidden" role="status"></div>
+  <p id="delivery" class="muted"></p>
+  <div class="keypad-wrap">
+    <div id="cp-select-wrap" class="hidden">
+      <label for="cp-select">Logging at</label>
+      <select id="cp-select"></select>
+    </div>
+    <div class="keypad-display mono" id="display" aria-live="polite"></div>
+    <div class="keys" id="keys"></div>
+    <p class="log-result" id="log-result" role="status"></p>
+  </div>
+  <h2>Recent entries</h2>
+  <ul class="entries" id="entries"></ul>
+  <p><button type="button" id="more">Show more</button></p>
+</main>
+</body>
+</html>

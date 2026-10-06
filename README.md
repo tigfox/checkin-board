@@ -22,6 +22,8 @@ internal/journal/      power-safe bib journal (plain CSV, fsynced before the DB 
 internal/auth/         app logins: bcrypt, sessions, lockout
 internal/branding/     status-board branding: contrast rules, logo processing
 internal/web/          REST API (role-guarded route table) and embedded UI
+internal/web/static/   the UI: plain HTML + ES modules, no build step, no inline script/style
+internal/web/jstest/   `node --test` unit tests for the UI logic
 internal/peers/        graywolf per-peer retry settings (backup / restore)
 internal/gwfake/       in-memory fake of graywolf's Messages API + simulated RF channel (tests)
 internal/sim/          whole-node simulation: exactly-once and latency tests
@@ -60,6 +62,16 @@ echo 'a new admin password' | CB_DB_PATH=/path/to/checkin-board.db checkin-board
 
 This logs out every admin session and doesn't touch race data.
 
+## Pages
+
+| Page | Login | What it's for |
+|------|-------|---------------|
+| `/` | any | sends you to the right page for your login |
+| `/login.html` | none | first-run setup (setup code + admin password) and login |
+| `/keypad.html` | volunteer or admin | log bibs, void entries, set the race clock from the phone |
+| `/admin.html` | admin | race lifecycle and reset, station settings and graywolf callsign, outbox and export (checkpoint), checkpoints, roster, health and recovery imports (HQ), board branding (HQ), passwords |
+| `/board.html` | admin | HQ status board in the configured branding, printable |
+
 ## Development
 
 ```sh
@@ -67,6 +79,8 @@ make test     # unit tests with -race (no network, no RF)
 make cover    # coverage report
 make build    # bin/checkin-board
 make pi       # bin/checkin-board-armv6 for Pi Zero W
+make jstest   # UI logic tests (needs Node 20+; test-only)
+make e2e      # drives the real pages in headless Chrome (needs Chrome; test-only)
 go test -short ./...                                   # skip the long simulations
 CB_LATENCY_TABLE=1 go test -run TestLatencyTable ./internal/sim   # spec 9b table (~2 min)
 ```

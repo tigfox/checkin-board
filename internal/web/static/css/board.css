@@ -1,0 +1,25 @@
+/* Branded status board (spec 8.3). --brand-* come from /api/branding,
+   set through the CSSOM from validated #RRGGBB values only. */
+:root {
+  --brand-primary: #1f3a5f;
+  --brand-accent: #b85c00;
+  --brand-background: #ffffff;
+  --brand-text: #111111;
+}
+body.board { background: var(--brand-background); color: var(--brand-text); }
+body.board header.bar { background: var(--brand-primary); color: var(--brand-background); }
+body.board header.bar a, body.board header.bar button.link { color: var(--brand-background); }
+.brand-logo { max-height: 56px; width: auto; display: block; }
+.board-table { font-size: 0.95rem; }
+.board-table th, .board-table td { border-bottom-color: var(--line); white-space: nowrap; }
+.board-table td.latest { color: var(--brand-accent); font-weight: 700; }
+.board-table tr.unknown td:first-child::after { content: " (not on roster)"; font-weight: 400; color: var(--muted); }
+.health-list li { margin: 4px 0; }
+.health-list .flag { color: var(--bad); }
+footer.brand { padding: 16px; text-align: center; color: var(--brand-text); border-top: 1px solid var(--line); }
+.table-scroll { overflow-x: auto; }
+@media print {
+  body.board, body.board header.bar { background: none !important; color: #000 !important; }
+  .no-print { display: none !important; }
+  .board-table td.latest { color: #000; text-decoration: underline; }
+}
