@@ -142,11 +142,19 @@ func (s *Sim) Step() {
 	s.Radio.Deliver()
 	for _, n := range s.Nodes {
 		_ = n.Inbox.CatchUp(ctx)
-		switch n.Settings.Role {
+		// Re-read settings: the lifecycle (and the engine itself, on
+		// finishing a check-in) changes the race state.
+		cfg, err := n.Store.GetSettings(ctx)
+		if err != nil {
+			continue
+		}
+		switch cfg.Role {
 		case store.RoleCheckpoint:
-			_ = n.CP.Tick(ctx, n.Settings)
+			_ = n.CP.Tick(ctx, cfg)
 		case store.RoleHQ:
-			_ = n.HQ.Tick(ctx, n.Settings)
+			if cfg.RaceState == store.RaceActive || cfg.RaceState == store.RaceComplete {
+				_ = n.HQ.Tick(ctx, cfg)
+			}
 		}
 	}
 }
@@ -156,6 +164,23 @@ func (s *Sim) Run(d time.Duration) {
 	for end := s.Clock.Now().Add(d); s.Clock.Now().Before(end); {
 		s.Step()
 	}
+}
+
+// SetState moves a node's race state (as the lifecycle actions do).
+func (s *Sim) SetState(n *Node, state string) error {
+	cfg, err := n.Store.GetSettings(ctx)
+	if err != nil {
+		return err
+	}
+	cfg.RaceState = state
+	_, err = n.Store.SaveSettings(ctx, cfg)
+	return err
+}
+
+// State returns a node's current race state.
+func (s *Sim) State(n *Node) (string, error) {
+	cfg, err := n.Store.GetSettings(ctx)
+	return cfg.RaceState, err
 }
 
 // LogBib logs a bib on a checkpoint's keypad at the current time.

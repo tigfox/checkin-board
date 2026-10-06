@@ -395,3 +395,16 @@ func (s *Station) HasPrefsOverride(kind, key string) bool {
 	_, ok := s.prefs[kind+"/"+strings.ToUpper(key)]
 	return ok
 }
+
+// DeleteMessage implements graywolf.Client.DeleteMessage (a soft delete
+// in graywolf; here the row is simply removed).
+func (s *Station) DeleteMessage(ctx context.Context, id uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.rows[id]; !ok {
+		return apiErr(http.StatusNotFound, "message not found")
+	}
+	delete(s.rows, id)
+	delete(s.updated, id)
+	return nil
+}

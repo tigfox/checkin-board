@@ -215,6 +215,7 @@ func (s *Store) QueuedCodes(ctx context.Context) ([]string, error) {
 type ExportRow struct {
 	CP          string
 	Seq         uint32
+	GWMsgID     string // graywolf msgid of the batch's row, for cross-checking
 	Void        bool
 	Bib         Bib
 	TimeIn      time.Time
@@ -233,16 +234,18 @@ func (s *Store) ExportRows(ctx context.Context) ([]ExportRow, error) {
 		return nil, err
 	}
 	seqOf := make(map[uint]uint32, len(batches))
+	msgOf := make(map[uint]string, len(batches))
 	for _, b := range batches {
-		seqOf[b.ID] = b.Seq
+		seqOf[b.ID], msgOf[b.ID] = b.Seq, b.GWMsgID
 	}
 	out := make([]ExportRow, len(rows))
 	for i, r := range rows {
 		var seq uint32
+		var msg string
 		if r.BatchID != nil {
-			seq = seqOf[*r.BatchID]
+			seq, msg = seqOf[*r.BatchID], msgOf[*r.BatchID]
 		}
-		out[i] = ExportRow{CP: r.CPCode, Seq: seq, Void: r.VoidOf != nil, Bib: r.Bib,
+		out[i] = ExportRow{CP: r.CPCode, Seq: seq, GWMsgID: msg, Void: r.VoidOf != nil, Bib: r.Bib,
 			TimeIn: normTime(r.TimeIn), ClockSynced: r.ClockSynced}
 	}
 	return out, nil
@@ -543,6 +546,27 @@ func (s *Store) ExpediteUnacked(ctx context.Context, sentBefore, now time.Time) 
 	return int(res.RowsAffected), res.Error
 }
 
+// ExpediteAll makes every unconfirmed batch due now for a checkpoint's
+// final check-in at HQ (spec 4.7): pending and parked (rejected)
+// batches alike, with the retry ladder cut back to its first rung.
+// Rejected batches lose their graywolf binding, since graywolf keeps a
+// rejected row rejected across resends (spec 3.1); they go out as new
+// messages. Returns how many batches were made due.
+func (s *Store) ExpediteAll(ctx context.Context, now time.Time) (int, error) {
+	var n int
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Batch{}).Where("state = ?", BatchRejected).
+			Updates(map[string]any{"gw_message_id": nil, "gw_msg_id": "", "state": BatchPending}).Error; err != nil {
+			return err
+		}
+		res := tx.Model(&Batch{}).Where("state = ?", BatchPending).
+			Updates(map[string]any{"next_tx_at": normTime(now), "attempts": gorm.Expr("MIN(attempts, 1)")})
+		n = int(res.RowsAffected)
+		return res.Error
+	})
+	return n, err
+}
+
 // OutboxStats summarizes delivery state.
 func (s *Store) OutboxStats(ctx context.Context) (OutboxStats, error) {
 	var st OutboxStats
@@ -583,4 +607,21 @@ func normBatch(b *Batch) {
 	b.CreatedAt = normTime(b.CreatedAt)
 	b.LastTxAt = normTimePtr(b.LastTxAt)
 	b.AckedAt = normTimePtr(b.AckedAt)
+}
+
+// UnconfirmedRows returns the graywolf row ids bound to batches HQ has
+// not confirmed (pending or parked). Post-race cleanup must not delete
+// them: deleting a row cancels the resend that would deliver it.
+func (s *Store) UnconfirmedRows(ctx context.Context) (map[uint64]bool, error) {
+	var ids []uint64
+	if err := s.db.WithContext(ctx).Model(&Batch{}).
+		Where("state <> ? AND gw_message_id IS NOT NULL", BatchAcked).
+		Pluck("gw_message_id", &ids).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[uint64]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, nil
 }

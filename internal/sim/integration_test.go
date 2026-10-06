@@ -297,3 +297,60 @@ func TestSpoofedTrafficBoundsAirtime(t *testing.T) {
 		})
 	}
 }
+
+// The secured phase (spec 4.7): a checkpoint loses its link with
+// entries still unconfirmed, is packed up (no transmissions on the way),
+// carried back to HQ, and checks in: everything HQ lacks goes over at
+// once, HQ ends exactly-once, and the node reaches checked_in by itself.
+func TestSecureTravelAndFinalCheckIn(t *testing.T) {
+	s := newSim(t, 10, gwfake.Profile{Loss: 0.1, MaxDelay: 2 * time.Second})
+	hqNode := addNode(t, s, hqCall, HQSettings())
+	cp := addNode(t, s, "KK7CP-7", CheckpointSettings("AS3", hqCall))
+	for bib := store.Bib(1); bib <= 30; bib++ {
+		logBib(t, s, cp, bib)
+		s.Run(5 * time.Second)
+	}
+	s.Radio.SetDown(true) // the last runners' batches never get out
+	for bib := store.Bib(31); bib <= 50; bib++ {
+		logBib(t, s, cp, bib)
+		s.Run(10 * time.Second)
+	}
+	if err := s.SetState(cp, store.RaceComplete); err != nil {
+		t.Fatal(err)
+	}
+	s.Run(time.Minute)
+	if err := s.SetState(cp, store.RaceSecured); err != nil {
+		t.Fatal(err)
+	}
+	if allConfirmed(t, cp) {
+		t.Fatal("setup: expected unconfirmed entries")
+	}
+
+	// Two hours of driving back: the node must stay off the air.
+	before := len(cp.GW.Transmissions())
+	s.Run(2 * time.Hour)
+	if n := len(cp.GW.Transmissions()) - before; n != 0 {
+		t.Fatalf("secured node transmitted %d frames on the way back", n)
+	}
+
+	// At HQ: radio back in range, final check-in.
+	s.Radio.SetDown(false)
+	if err := s.SetState(cp, store.RaceCheckingIn); err != nil {
+		t.Fatal(err)
+	}
+	took := runUntilConfirmed(t, s, 30*time.Minute, cp)
+	for i := 0; i < 120; i++ {
+		if st, _ := s.State(cp); st == store.RaceCheckedIn {
+			break
+		}
+		s.Step()
+	}
+	if st, _ := s.State(cp); st != store.RaceCheckedIn {
+		t.Fatalf("state = %s, want checked_in", st)
+	}
+	t.Logf("final check-in delivered the backlog in %v", took)
+	if took > 5*time.Minute {
+		t.Errorf("check-in took %v at close range, want minutes at most", took)
+	}
+	assertExactlyOnce(t, hqNode, cp)
+}

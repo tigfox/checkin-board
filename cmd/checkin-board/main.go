@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -59,10 +60,14 @@ func run(logger *slog.Logger) error {
 	}
 	defer st.Close()
 
-	a, err := app.New(app.Config{Store: st, Graywolf: gw, Logger: logger, StartedAt: startedAt})
+	a, err := app.New(app.Config{
+		Store: st, Graywolf: gw, Logger: logger, StartedAt: startedAt,
+		DataDir: filepath.Dir(cfg.DBPath),
+	})
 	if err != nil {
 		return fmt.Errorf("assemble app: %w", err)
 	}
+	defer a.Close()
 	// TODO(phase 9): start the web server.
 	return a.Run(ctx)
 }

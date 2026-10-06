@@ -471,3 +471,49 @@ func TestOnlyListedCheckpointsAreChasedOnceAListExists(t *testing.T) {
 		t.Fatal("listed checkpoint AS5 not chased")
 	}
 }
+
+func TestResetClearsGapState(t *testing.T) {
+	h := newHarness(t)
+	h.receive("K1CP", "RC1 R AS5 2 @1300 2/00")
+	h.tick()
+	h.run(6 * time.Hour)
+	if len(h.e.unrecoverable("AS5")) != 1 {
+		t.Fatal("setup: seq 1 should be given up")
+	}
+	_, _ = h.e.Rearm(ctx, h.cfg, "AS5")
+	h.e.Reset()
+	if len(h.e.unrecoverable("AS5")) != 0 {
+		t.Fatal("given-up state survived Reset")
+	}
+	if _, err := h.e.Rearm(ctx, h.cfg, "AS5"); errors.Is(err, ErrTooSoon) {
+		t.Fatal("re-request rate limit survived Reset")
+	}
+}
+
+func TestRunGapRequestsOnlyWhileRacingOrComplete(t *testing.T) {
+	for _, state := range []string{store.RaceSetup, store.RaceActive, store.RaceComplete} {
+		h := newHarness(t)
+		var mu sync.Mutex
+		fast := t0
+		now := func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			fast = fast.Add(time.Minute)
+			return fast
+		}
+		e, _ := New(Config{Store: h.s, Graywolf: h.gw, Clock: raceclock.NewClock(now, nil), Now: now, Interval: 5 * time.Millisecond})
+		cfg := hqSettings()
+		cfg.RaceState = state
+		if _, err := h.s.SaveSettings(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+		h.receive("K1CP", "RC1 R AS5 2 @1300 2/00")
+		runCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+		_ = e.Run(runCtx)
+		cancel()
+		got := len(h.gaps()) > 0
+		if want := state != store.RaceSetup; got != want {
+			t.Errorf("%s: gap requests sent = %v, want %v", state, got, want)
+		}
+	}
+}

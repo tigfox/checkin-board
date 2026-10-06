@@ -729,3 +729,210 @@ func TestTurnsOffGraywolfRetriesForHQBeforeSending(t *testing.T) {
 		t.Fatalf("heartbeats = %d; a prefs failure blocked sending", n)
 	}
 }
+
+func TestNothingOnAirOutsideSendingStates(t *testing.T) {
+	for _, state := range []string{store.RaceSetup, store.RaceSecured, store.RaceCheckedIn} {
+		h := newHarness(t)
+		h.cfg.RaceState = state
+		h.log(101)
+		h.ft.Advance(time.Hour)
+		h.tick()
+		if n := len(h.gw.Transmissions()); n != 0 {
+			t.Errorf("%s: %d frames on air", state, n)
+		}
+	}
+}
+
+func TestCompleteFlushesWithoutWaiting(t *testing.T) {
+	h := newHarness(t)
+	h.cfg.RaceState = store.RaceComplete
+	h.log(101) // last runner, keypad now closed
+	h.tick()
+	if n := len(h.reports()); n != 1 {
+		t.Fatalf("reports = %d, want the lone entry sent at once", n)
+	}
+}
+
+func TestFinalCheckInDeliversEverythingThenCompletes(t *testing.T) {
+	h := newHarness(t)
+	called := 0
+	e, err := New(Config{Store: h.s, Graywolf: h.gw, Clock: raceclock.NewClock(h.ft.Now, func() bool { return true }),
+		Now: h.ft.Now, OnCheckedIn: func(context.Context) error { called++; return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e = e
+	for bib := store.Bib(1); bib <= 4; bib++ { // a full frame: sent at once
+		h.log(bib)
+	}
+	h.tick()
+	for bib := store.Bib(5); bib <= 8; bib++ {
+		h.log(bib)
+	}
+	h.tick() // two batches out, neither ACKed yet (out of range)
+	if n := len(distinctRows(h.reports())); n != 2 {
+		t.Fatalf("batches sent = %d", n)
+	}
+	h.ack(h.reports()[0].ID) // HQ got the first one
+
+	// Packed up for the trip back to HQ: radio quiet.
+	h.cfg.RaceState = store.RaceSecured
+	if _, err := h.s.SaveSettings(ctx, h.cfg); err != nil {
+		t.Fatal(err)
+	}
+	before := len(h.gw.Transmissions())
+	h.ft.Advance(2 * time.Hour)
+	h.tick()
+	if n := len(h.gw.Transmissions()) - before; n != 0 {
+		t.Fatalf("secured node transmitted %d frames", n)
+	}
+
+	// At HQ: final check-in.
+	h.cfg.RaceState = store.RaceCheckingIn
+	_, _ = h.s.SaveSettings(ctx, h.cfg)
+	before = len(h.gw.Transmissions())
+	h.tick()
+	sent := h.gw.Transmissions()[before:]
+	var resent, heartbeats int
+	for _, tx := range sent {
+		switch {
+		case strings.HasPrefix(tx.Text, "RC1 R "):
+			resent++
+		case strings.HasPrefix(tx.Text, "RC1 H "):
+			heartbeats++
+		}
+	}
+	if resent != 1 || heartbeats != 1 {
+		t.Fatalf("check-in sent %d batches and %d heartbeats, want the unconfirmed batch and a heartbeat at once", resent, heartbeats)
+	}
+	h.tick()
+	if got, _ := h.s.GetSettings(ctx); got.RaceState != store.RaceCheckingIn {
+		t.Fatalf("state = %s before HQ confirmed", got.RaceState)
+	}
+	h.ft.Advance(time.Second)
+	h.ack(h.reports()[len(h.reports())-1].ID)
+	h.tick()
+	if got, _ := h.s.GetSettings(ctx); got.RaceState != store.RaceCheckedIn || called != 1 {
+		t.Fatalf("state = %s, OnCheckedIn calls = %d", got.RaceState, called)
+	}
+}
+
+func TestCheckInNeedsFreshContactEvenWhenNothingIsPending(t *testing.T) {
+	h := newHarness(t)
+	h.log(101)
+	h.ft.Advance(20 * time.Second)
+	h.tick()
+	h.ack(h.reports()[0].ID) // all confirmed during the race
+	h.cfg.RaceState = store.RaceCheckingIn
+	_, _ = h.s.SaveSettings(ctx, h.cfg)
+	h.ft.Advance(time.Hour)
+	h.tick()
+	if got, _ := h.s.GetSettings(ctx); got.RaceState != store.RaceCheckingIn {
+		t.Fatal("checked in without hearing HQ since the check-in began")
+	}
+	hb := h.gw.TransmissionsWithPrefix("RC1 H ")
+	h.ack(hb[len(hb)-1].ID) // HQ answers the check-in heartbeat
+	h.tick()
+	if got, _ := h.s.GetSettings(ctx); got.RaceState != store.RaceCheckedIn {
+		t.Fatalf("state = %s, want checked_in", got.RaceState)
+	}
+}
+
+func TestReset(t *testing.T) {
+	h := newHarness(t)
+	h.log(101)
+	h.ft.Advance(20 * time.Second)
+	h.tick()
+	h.ack(h.reports()[0].ID)
+	h.e.Reset()
+	if !h.e.LastContact().IsZero() {
+		t.Fatal("contact survived Reset")
+	}
+	before := len(h.gw.TransmissionsWithPrefix("RC1 H "))
+	h.tick() // heartbeat schedule restarts
+	if n := len(h.gw.TransmissionsWithPrefix("RC1 H ")); n != before+1 {
+		t.Fatalf("heartbeats = %d, want one right after Reset", n-before)
+	}
+}
+
+// checkInReady sets up a checking_in node whose HQ just ACKed the
+// check-in heartbeat, so the next tick would finish the check-in.
+func checkInReady(t *testing.T, hook func(context.Context) error, gwLag time.Duration) *harness {
+	t.Helper()
+	h := newHarness(t)
+	e, err := New(Config{Store: h.s, Graywolf: h.gw, Clock: raceclock.NewClock(h.ft.Now, func() bool { return true }),
+		Now: h.ft.Now, OnCheckedIn: hook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e = e
+	h.gw.Now = func() time.Time { return h.ft.Now().Add(-gwLag) } // graywolf's own clock
+	h.cfg.RaceState = store.RaceCheckingIn
+	if _, err := h.s.SaveSettings(ctx, h.cfg); err != nil {
+		t.Fatal(err)
+	}
+	h.tick() // check-in starts: heartbeat out
+	h.ft.Advance(2 * time.Second)
+	hb := h.gw.TransmissionsWithPrefix("RC1 H ")
+	h.ack(hb[len(hb)-1].ID)
+	return h
+}
+
+func TestCheckInUsesThisNodesClockNotGraywolfs(t *testing.T) {
+	// graywolf's clock is 10 minutes behind: its acked_at predates the
+	// check-in, but HQ was heard after it began.
+	h := checkInReady(t, nil, 10*time.Minute)
+	h.tick()
+	if got, _ := h.s.GetSettings(ctx); got.RaceState != store.RaceCheckedIn {
+		t.Fatalf("state = %s; a lagging graywolf clock blocked the check-in", got.RaceState)
+	}
+}
+
+func TestFinishCheckInLosesToAConcurrentOperatorAction(t *testing.T) {
+	called := 0
+	h := checkInReady(t, func(context.Context) error { called++; return nil }, 0)
+	stale := h.cfg // the tick loaded checking_in...
+	// ...while the operator secures the node again.
+	if ok, err := h.s.SetRaceState(ctx, []string{store.RaceCheckingIn}, store.RaceSecured, nil); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if err := h.e.Tick(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := h.s.GetSettings(ctx); got.RaceState != store.RaceSecured || called != 0 {
+		t.Fatalf("state = %s, hook calls = %d; the engine overwrote the operator", got.RaceState, called)
+	}
+}
+
+func TestCheckedInHookRetriedUntilItSucceeds(t *testing.T) {
+	calls := 0
+	h := checkInReady(t, func(context.Context) error {
+		calls++
+		if calls == 1 {
+			return errors.New("graywolf prefs endpoint down")
+		}
+		return nil
+	}, 0)
+	if err := h.e.Tick(ctx, h.cfg); err == nil {
+		t.Fatal("expected the hook's error")
+	}
+	cfg, _ := h.s.GetSettings(ctx)
+	h.tick2(cfg)
+	h.tick2(cfg)
+	if calls != 2 {
+		t.Fatalf("hook calls = %d, want one retry then done", calls)
+	}
+	// After a restart in checked_in, the hook runs again (idempotent).
+	h.e.Reset()
+	h.tick2(cfg)
+	if calls != 3 {
+		t.Fatalf("hook calls after restart = %d", calls)
+	}
+}
+
+func (h *harness) tick2(cfg store.Settings) {
+	h.t.Helper()
+	if err := h.e.Tick(ctx, cfg); err != nil {
+		h.t.Fatalf("tick: %v", err)
+	}
+}

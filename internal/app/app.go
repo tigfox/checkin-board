@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"checkin-board/internal/graywolf"
 	"checkin-board/internal/hq"
 	"checkin-board/internal/inbox"
+	"checkin-board/internal/ops"
 	"checkin-board/internal/peers"
 	"checkin-board/internal/raceclock"
 	"checkin-board/internal/store"
@@ -30,6 +32,7 @@ type Graywolf interface {
 	checkpoint.Messages
 	inbox.Graywolf
 	peers.Prefs
+	cleanupClient
 	MessagePreferences(ctx context.Context) (graywolf.MessagePreferences, error)
 }
 
@@ -39,6 +42,9 @@ type Config struct {
 	Graywolf Graywolf
 	Clock    *raceclock.Clock // nil: browser-synced clock with no OS check
 	Logger   *slog.Logger
+	// DataDir holds the bib journal and reset backups (normally the
+	// database's directory).
+	DataDir string
 	// StartedAt is saved, on a node's first run only, as the inbox
 	// reader's starting point, so a fresh node doesn't replay old races
 	// from graywolf's history. Later runs keep the first value.
@@ -54,6 +60,12 @@ type App struct {
 	Checkpoint *checkpoint.Engine
 	HQ         *hq.Engine
 	Inbox      *inbox.Reader
+	Ops        *ops.Service
+}
+
+// Graywolf also needs DeleteMessage for post-race cleanup.
+type cleanupClient interface {
+	DeleteMessage(ctx context.Context, id uint64) error
 }
 
 // New wires the components. It does not start anything.
@@ -69,8 +81,20 @@ func New(cfg Config) (*App, error) {
 	if clock == nil {
 		clock = raceclock.NewClock(nil, nil)
 	}
+	if cfg.DataDir == "" {
+		return nil, errors.New("app: DataDir is required")
+	}
 	ensurer := peers.NewEnsurer(cfg.Graywolf, cfg.Store, nil)
-	cp, err := checkpoint.New(checkpoint.Config{Store: cfg.Store, Graywolf: cfg.Graywolf, Clock: clock, Peers: ensurer, Logger: log})
+	var opsSvc *ops.Service // set below; the check-in hook needs it
+	cp, err := checkpoint.New(checkpoint.Config{
+		Store: cfg.Store, Graywolf: cfg.Graywolf, Clock: clock, Peers: ensurer, Logger: log,
+		OnCheckedIn: func(ctx context.Context) error {
+			if opsSvc == nil {
+				return errors.New("app: not ready")
+			}
+			return opsSvc.RestorePeers(ctx)
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +108,21 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &App{cfg: cfg, log: log, Clock: clock, Peers: ensurer, Checkpoint: cp, HQ: hqe, Inbox: reader}, nil
+	opsSvc, err = ops.New(ops.Config{
+		Store: cfg.Store, Graywolf: cfg.Graywolf, Clock: clock, Peers: ensurer, Checkpoint: cp, HQ: hqe,
+		JournalPath: filepath.Join(cfg.DataDir, "race-journal.csv"),
+		BackupDir:   filepath.Join(cfg.DataDir, "backups"),
+		Logger:      log,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &App{cfg: cfg, log: log, Clock: clock, Peers: ensurer, Checkpoint: cp, HQ: hqe, Inbox: reader, Ops: opsSvc}, nil
+}
+
+// Close releases what the app holds open (the bib journal).
+func (a *App) Close() error {
+	return a.Ops.Close()
 }
 
 // Run starts every component and blocks until ctx is done. On a

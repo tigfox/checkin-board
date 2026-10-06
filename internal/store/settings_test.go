@@ -167,3 +167,62 @@ func TestValidStationCall(t *testing.T) {
 		}
 	}
 }
+
+func TestSetRaceStateIsCompareAndSet(t *testing.T) {
+	s := newTestStore(t)
+	cfg := validCheckpoint()
+	cfg.RaceState = RaceCheckingIn
+	if _, err := s.SaveSettings(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := s.SetRaceState(ctx, []string{RaceCheckingIn}, RaceCheckedIn, nil)
+	if err != nil || !ok {
+		t.Fatalf("CAS = %v, %v", ok, err)
+	}
+	// A second writer expecting the old state loses.
+	if ok, _ := s.SetRaceState(ctx, []string{RaceCheckingIn}, RaceSecured, nil); ok {
+		t.Fatal("stale transition applied")
+	}
+	started := t0.Add(500 * time.Millisecond)
+	if ok, _ := s.SetRaceState(ctx, []string{RaceCheckedIn}, RaceSetup, &started); !ok {
+		t.Fatal("valid transition refused")
+	}
+	got, _ := s.GetSettings(ctx)
+	if got.RaceState != RaceSetup || got.RaceStartedAt == nil || !got.RaceStartedAt.Equal(t0) || got.CheckpointCode != "AS5" {
+		t.Fatalf("settings = %+v", got)
+	}
+	if _, err := s.SetRaceState(ctx, []string{RaceSetup}, "racing", nil); err == nil {
+		t.Fatal("invalid state accepted")
+	}
+}
+
+func TestUpdateSettingsLeavesLifecycleAlone(t *testing.T) {
+	s := newTestStore(t)
+	// First save on a fresh node: lifecycle defaults to setup.
+	in := validCheckpoint()
+	in.RaceState = RaceActive // ignored
+	got, err := s.UpdateSettings(ctx, in)
+	if err != nil || got.RaceState != RaceSetup {
+		t.Fatalf("first update = %+v, %v", got, err)
+	}
+	started := t0
+	if ok, _ := s.SetRaceState(ctx, []string{RaceSetup}, RaceActive, &started); !ok {
+		t.Fatal("start")
+	}
+	// An edit made with a stale copy (state setup) must not undo Start.
+	edit := got
+	edit.FlushAfterSec = 30
+	got, err = s.UpdateSettings(ctx, edit)
+	if err != nil || got.RaceState != RaceActive || got.RaceStartedAt == nil || got.FlushAfterSec != 30 {
+		t.Fatalf("edit = %+v, %v", got, err)
+	}
+	// Validation still applies, against the stored lifecycle.
+	bad := got
+	bad.HQCall = ""
+	if _, err := s.UpdateSettings(ctx, bad); !errors.Is(err, ErrInvalidSettings) {
+		t.Fatalf("invalid edit err = %v", err)
+	}
+	if after, _ := s.GetSettings(ctx); after.FlushAfterSec != 30 || after.HQCall != "N0HQ-1" {
+		t.Fatalf("invalid edit applied: %+v", after)
+	}
+}

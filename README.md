@@ -17,6 +17,8 @@ internal/inbox/        follows graywolf's message feed, dispatches race traffic
 internal/checkpoint/   checkpoint engine: batching, outbox, retries, heartbeats
 internal/hq/           HQ engine: report ingest, gap requests, health view
 internal/app/          assembles the service; role-aware inbox dispatch
+internal/ops/          operator actions: keypad + journal, export/import, board, lifecycle
+internal/journal/      power-safe bib journal (plain CSV, fsynced before the DB write)
 internal/peers/        graywolf per-peer retry settings (backup / restore)
 internal/gwfake/       in-memory fake of graywolf's Messages API + simulated RF channel (tests)
 internal/sim/          whole-node simulation: exactly-once and latency tests

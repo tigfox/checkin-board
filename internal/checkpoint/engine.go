@@ -89,20 +89,26 @@ type Config struct {
 	// Peers, if set, turns graywolf's own retries off for HQ before the
 	// first send (spec 3.3). Failure is logged, not fatal: delivery
 	// still works, at a higher airtime cost.
-	Peers  *peers.Ensurer
-	Logger *slog.Logger
+	Peers *peers.Ensurer
+	// OnCheckedIn, if set, runs when a final check-in completes (e.g. to
+	// restore graywolf's per-peer settings). It is retried on later ticks
+	// in checked_in (also after a restart) until it returns nil, so it
+	// must be idempotent.
+	OnCheckedIn func(ctx context.Context) error
+	Logger      *slog.Logger
 }
 
 // Engine drives the checkpoint side. Tick is called once a second by
 // Run; HandleInbound/HandleOutbound are called by the inbox reader.
 type Engine struct {
-	store *store.Store
-	gw    Messages
-	peers *peers.Ensurer
-	clock *raceclock.Clock
-	now   func() time.Time
-	every time.Duration
-	log   *slog.Logger
+	store       *store.Store
+	gw          Messages
+	peers       *peers.Ensurer
+	onCheckedIn func(ctx context.Context) error
+	clock       *raceclock.Clock
+	now         func() time.Time
+	every       time.Duration
+	log         *slog.Logger
 
 	gwMaxText atomic.Int32
 
@@ -112,7 +118,24 @@ type Engine struct {
 	nextHeartbeat time.Time // zero: send on the first tick
 	lastPoll      time.Time
 	refusal       Refusal
-	peerErr       string // last Ensure error logged, to log each once
+	peerErr       string    // last Ensure error logged, to log each once
+	lastState     string    // race state seen by the previous Tick
+	checkInStart  time.Time // when the current final check-in began (local clock)
+	heardLocal    time.Time // when HQ was last heard, by this node's clock
+	lastRevive    time.Time // last re-expedite of parked batches during check-in
+	hookPending   bool      // OnCheckedIn still to run (or retry)
+}
+
+// reviveEvery spaces re-expediting parked batches during a check-in.
+const reviveEvery = 5 * time.Minute
+
+// Reset clears the engine's in-memory state, as after a node reset.
+func (e *Engine) Reset() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.lastContact, e.nextHeartbeat, e.lastPoll = time.Time{}, time.Time{}, time.Time{}
+	e.refusal, e.peerErr, e.lastState, e.checkInStart = Refusal{}, "", "", time.Time{}
+	e.heardLocal, e.lastRevive, e.hookPending = time.Time{}, time.Time{}, false
 }
 
 // ensurePeer turns graywolf's retries off for call before sending to it.
@@ -172,7 +195,8 @@ func New(cfg Config) (*Engine, error) {
 	if cfg.Store == nil || cfg.Graywolf == nil || cfg.Clock == nil {
 		return nil, errors.New("checkpoint: Store, Graywolf and Clock are required")
 	}
-	e := &Engine{store: cfg.Store, gw: cfg.Graywolf, peers: cfg.Peers, clock: cfg.Clock, now: cfg.Now, every: cfg.Interval, log: cfg.Logger}
+	e := &Engine{store: cfg.Store, gw: cfg.Graywolf, peers: cfg.Peers, onCheckedIn: cfg.OnCheckedIn,
+		clock: cfg.Clock, now: cfg.Now, every: cfg.Interval, log: cfg.Logger}
 	if e.now == nil {
 		e.now = time.Now
 	}
@@ -207,6 +231,7 @@ func (e *Engine) markContact(at time.Time) {
 	if at.After(e.lastContact) {
 		e.lastContact = at
 	}
+	e.heardLocal = e.now() // for the check-in test: this node's own clock
 }
 
 func (e *Engine) currentHQ() string {
@@ -257,16 +282,132 @@ func (e *Engine) safeTick(ctx context.Context) {
 // so an ACK the feed missed doesn't cost a resend), transmit what is
 // due, then heartbeat. Failures are joined and returned after the whole
 // round; nothing is lost.
+//
+// The race state gates it (spec 4.7): nothing goes on air in setup,
+// secured (packed up for the trip to HQ) or checked_in. Entering
+// checking_in (the final check-in at HQ) makes every unconfirmed batch
+// due at once and sends a heartbeat, so HQ can request anything it
+// lacks; once all is confirmed and HQ has been heard since the check-in
+// began, the node moves to checked_in by itself.
 func (e *Engine) Tick(ctx context.Context, cfg store.Settings) error {
+	now := e.now()
 	e.mu.Lock()
 	e.hqCall = cfg.HQCall
+	entering := cfg.RaceState != e.lastState
 	e.mu.Unlock()
-	now := e.now()
+
+	switch cfg.RaceState {
+	case store.RaceActive, store.RaceComplete:
+	case store.RaceCheckingIn:
+		if entering {
+			// Only a successful start counts as entering: a failed one
+			// is retried next tick.
+			if err := e.beginCheckIn(ctx, now); err != nil {
+				return err
+			}
+		} else if err := e.reviveParked(ctx, now); err != nil {
+			return err
+		}
+	case store.RaceCheckedIn:
+		e.setLastState(cfg.RaceState)
+		return e.runCheckedInHook(ctx, entering)
+	default:
+		e.setLastState(cfg.RaceState)
+		return nil
+	}
+	e.setLastState(cfg.RaceState)
 	if err := e.flush(ctx, cfg, now); err != nil {
 		return fmt.Errorf("checkpoint: flush: %w", err)
 	}
-	return errors.Join(e.recoverUnbound(ctx, cfg), e.poll(ctx, cfg, now),
+	err := errors.Join(e.recoverUnbound(ctx, cfg), e.poll(ctx, cfg, now),
 		e.transmit(ctx, cfg, now), e.heartbeat(ctx, cfg, now))
+	if cfg.RaceState == store.RaceCheckingIn {
+		err = errors.Join(err, e.finishCheckIn(ctx, cfg))
+	}
+	return err
+}
+
+func (e *Engine) setLastState(state string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.lastState = state
+}
+
+func (e *Engine) beginCheckIn(ctx context.Context, now time.Time) error {
+	n, err := e.store.ExpediteAll(ctx, now)
+	if err != nil {
+		return fmt.Errorf("checkpoint: begin check-in: %w", err)
+	}
+	e.mu.Lock()
+	e.checkInStart, e.nextHeartbeat, e.lastRevive = now, time.Time{}, now
+	e.mu.Unlock()
+	e.log.Info("checkpoint: final check-in started", "batches", n)
+	return nil
+}
+
+// reviveParked re-expedites during a long check-in, so a batch parked
+// mid check-in (e.g. REJected) doesn't block it forever.
+func (e *Engine) reviveParked(ctx context.Context, now time.Time) error {
+	e.mu.Lock()
+	due := now.Sub(e.lastRevive) >= reviveEvery
+	if due {
+		e.lastRevive = now
+	}
+	e.mu.Unlock()
+	if !due {
+		return nil
+	}
+	st, err := e.store.OutboxStats(ctx)
+	if err != nil || st.RejectedBatches == 0 {
+		return err
+	}
+	_, err = e.store.ExpediteAll(ctx, now)
+	return err
+}
+
+// finishCheckIn moves to checked_in once nothing is unconfirmed and HQ
+// has answered since the check-in began (both by this node's clock).
+// The move is a compare-and-set, so an operator's Secure or Reset at the
+// same moment wins.
+func (e *Engine) finishCheckIn(ctx context.Context, cfg store.Settings) error {
+	st, err := e.store.OutboxStats(ctx)
+	if err != nil {
+		return err
+	}
+	e.mu.Lock()
+	heard := !e.checkInStart.IsZero() && !e.heardLocal.Before(e.checkInStart)
+	e.mu.Unlock()
+	if st.Unconfirmed > 0 || st.PendingBatches > 0 || st.RejectedBatches > 0 || !heard {
+		return nil
+	}
+	ok, err := e.store.SetRaceState(ctx, []string{store.RaceCheckingIn}, store.RaceCheckedIn, nil)
+	if err != nil || !ok {
+		return err
+	}
+	e.log.Info("checkpoint: final check-in complete; everything confirmed by HQ")
+	e.setLastState(store.RaceCheckedIn)
+	return e.runCheckedInHook(ctx, true)
+}
+
+// runCheckedInHook runs OnCheckedIn on entering checked_in (including
+// after a restart) and retries it each tick until it succeeds.
+func (e *Engine) runCheckedInHook(ctx context.Context, entering bool) error {
+	e.mu.Lock()
+	if entering {
+		e.hookPending = true
+	}
+	pending := e.hookPending
+	e.mu.Unlock()
+	if !pending || e.onCheckedIn == nil {
+		return nil
+	}
+	if err := e.onCheckedIn(ctx); err != nil {
+		return fmt.Errorf("checkpoint: after check-in: %w", err)
+	}
+	e.mu.Lock()
+	e.hookPending = false
+	e.mu.Unlock()
+	return nil
 }
 
 // window returns the oldest max_in_flight of pending.
@@ -293,7 +434,9 @@ func (e *Engine) flush(ctx context.Context, cfg store.Settings, now time.Time) e
 		return err
 	}
 	maxLen := e.maxText(cfg)
-	aged := now.Sub(oldest) >= time.Duration(cfg.FlushAfterSec)*time.Second
+	// Once the keypad is closed nothing else will join the queue.
+	aged := cfg.RaceState != store.RaceActive ||
+		now.Sub(oldest) >= time.Duration(cfg.FlushAfterSec)*time.Second
 	if !aged && n < fullBatchEntries(maxLen) {
 		return nil
 	}

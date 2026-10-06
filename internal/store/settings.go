@@ -24,10 +24,24 @@ const (
 
 // Race lifecycle states (spec 4.7).
 const (
-	RaceSetup    = "setup"
-	RaceActive   = "active"
-	RaceComplete = "complete"
+	RaceSetup    = "setup"    // configuring; keypad and radio off
+	RaceActive   = "active"   // racing
+	RaceComplete = "complete" // keypad off; backlog still delivered
+	// RaceSecured: a checkpoint packed up for the trip back to HQ;
+	// transmissions paused, keypad off.
+	RaceSecured = "secured"
+	// RaceCheckingIn: back at HQ, the final check-in is sending whatever
+	// HQ still lacks.
+	RaceCheckingIn = "checking_in"
+	// RaceCheckedIn: everything confirmed by HQ; safe to reset.
+	RaceCheckedIn = "checked_in"
 )
+
+// validRaceStates lists the states each role can be in.
+var validRaceStates = map[string]bool{
+	RaceSetup: true, RaceActive: true, RaceComplete: true,
+	RaceSecured: true, RaceCheckingIn: true, RaceCheckedIn: true,
+}
 
 // Tunable bounds. Wide enough for field experimentation, tight enough
 // that a typo can't flood the channel or stall delivery.
@@ -125,10 +139,11 @@ func (c Settings) Validate() error {
 	if err := validateRole(c); err != nil {
 		return err
 	}
-	switch c.RaceState {
-	case RaceSetup, RaceActive, RaceComplete:
-	default:
-		return settingsErr("race_state %q must be setup, active, or complete", c.RaceState)
+	if !validRaceStates[c.RaceState] {
+		return settingsErr("race_state %q is not a lifecycle state", c.RaceState)
+	}
+	if c.Role == RoleHQ && (c.RaceState == RaceSecured || c.RaceState == RaceCheckingIn || c.RaceState == RaceCheckedIn) {
+		return settingsErr("race_state %q is for checkpoints only", c.RaceState)
 	}
 	if c.RaceState != RaceSetup && c.Role == RoleUnset {
 		return settingsErr("race_state %q needs a role", c.RaceState)
@@ -262,4 +277,52 @@ func (s *Store) SaveSettings(ctx context.Context, c Settings) (Settings, error) 
 		return Settings{}, err
 	}
 	return row, nil
+}
+
+// SetRaceState moves race_state to `to` only if it is currently one of
+// `from` (a compare-and-set), so an engine and an operator acting at the
+// same moment can't overwrite each other. startedAt, if non-nil, is
+// stored as race_started_at. It reports whether the state changed.
+func (s *Store) SetRaceState(ctx context.Context, from []string, to string, startedAt *time.Time) (bool, error) {
+	if !validRaceStates[to] {
+		return false, settingsErr("race_state %q is not a lifecycle state", to)
+	}
+	updates := map[string]any{"race_state": to, "updated_at": normTime(s.now())}
+	if startedAt != nil {
+		updates["race_started_at"] = normTime(*startedAt)
+	}
+	res := s.db.WithContext(ctx).Model(&Settings{}).Where("id = 1 AND race_state IN ?", from).Updates(updates)
+	return res.RowsAffected == 1, res.Error
+}
+
+// lifecycleColumns are owned by SetRaceState, not by settings edits.
+var lifecycleColumns = []string{"race_state", "race_started_at"}
+
+// UpdateSettings saves an admin's settings edit without touching the
+// race lifecycle (race_state, race_started_at), which only SetRaceState
+// changes, so an edit can't undo a concurrent state change. The stored
+// lifecycle is validated with the new settings and returned.
+func (s *Store) UpdateSettings(ctx context.Context, c Settings) (Settings, error) {
+	var out Settings
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		cur := DefaultSettings()
+		if err := tx.First(&cur, 1).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		row := c
+		row.ID, row.RaceState, row.RaceStartedAt = 1, cur.RaceState, normTimePtr(cur.RaceStartedAt)
+		if err := row.Validate(); err != nil {
+			return err
+		}
+		row.UpdatedAt = normTime(s.now())
+		if err := tx.Omit(lifecycleColumns...).Save(&row).Error; err != nil {
+			return err
+		}
+		if err := tx.First(&out, 1).Error; err != nil {
+			return err
+		}
+		out.UpdatedAt, out.RaceStartedAt = normTime(out.UpdatedAt), normTimePtr(out.RaceStartedAt)
+		return nil
+	})
+	return out, err
 }

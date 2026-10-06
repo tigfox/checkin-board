@@ -428,33 +428,72 @@ catch-up that stops at its page limit re-runs immediately.
 - On a 401 it logs in again once, then backs off. "graywolf unreachable"
   and "graywolf auth failed" both show on every app page.
 
-### 4.7 Race lifecycle: complete, cleanup, reset (new)
+### 4.7 Race lifecycle: complete, secure, check in, cleanup, reset
 
-The race has a state in `settings.race_state`: `setup` → `active` →
-`complete`. Admin actions move it forward. **Reset** returns the node to
-`setup`.
+The race has a state in `settings.race_state`. Admin actions move it
+forward, and **Reset** returns the node to `setup`. *As built in phase 8;
+the secured phase and final check-in were added at the user's request,
+2026-10-06.*
 
-1. **Start race** (`setup` → `active`): checks that the role, codes, HQ
-   call and graywolf connection are set, applies the `wait_for_ack` prefs
-   (3.3), and stamps `race_started_at`. The keypad works only in `active`.
-   Before that it shows "Race not started" so no entries are taken by
-   accident.
-2. **Complete race** (`active` → `complete`): the keypad stops taking
-   entries. At a checkpoint, anything still queued is batched, and the
-   outbox **keeps running** until every batch is confirmed or the admin
-   presses "Stop sending". This is shown as "N batches still unconfirmed".
-   HQ stops sending gap requests. The app restores each race peer's
-   graywolf conversation prefs to their saved pre-race values. Results
-   export and recovery import stay available.
-3. **graywolf cleanup** (only in `complete`): deletes from graywolf the
-   race message rows the app has recorded (its sent batches, heartbeats
-   and gap requests, plus ingested inbound `RC1` rows), using
-   `DELETE /api/messages/{id}` one row at a time, with progress. It only
-   deletes rows whose ids the app stored and whose text starts with
-   `RC1 `, and never deletes whole threads, so the operator's own
-   conversations with those callsigns survive. It's optional and
-   repeatable, and a 404 counts as already gone.
-4. **Reset** (any state; admin only): clears **all race data on this
+```
+setup ─Start→ active ─Complete→ complete
+checkpoint only:
+  active | complete | checking_in ─Secure→ secured        (packed up; radio quiet)
+  secured | complete ─Check in→ checking_in ─(all confirmed)→ checked_in
+any state ─Reset→ setup
+```
+
+| State | Keypad | Checkpoint transmits | HQ gap requests |
+|---|---|---|---|
+| `setup` | off | no | no |
+| `active` | on | yes | yes |
+| `complete` | off (voids still allowed) | yes: backlog flushed at once | **yes** (so later check-ins can recover a lost batch) |
+| `secured` | off | **no**, heartbeats included: packed up for the trip back | — |
+| `checking_in` | off | yes: everything unconfirmed due at once, heartbeat at once | — |
+| `checked_in` | off | no | — |
+
+1. **Start race** (`setup` → `active`): requires a role, and stamps
+   `race_started_at` from the race clock. The keypad works only in
+   `active`; before that it shows "Race not started", so no entries are
+   taken by accident. graywolf's retries are turned off for each peer
+   before the first send to it (3.3), not at Start.
+2. **Complete race** (`active` → `complete`): the keypad stops taking new
+   entries, but voids (typo fixes) still work. A checkpoint flushes
+   anything queued at once and keeps delivering. HQ keeps sending gap
+   requests, so a checkpoint's final check-in can still recover a batch HQ
+   lost after ACKing it. Results export and recovery imports stay
+   available.
+3. **Secure** (checkpoint: `active` | `complete` | `checking_in` →
+   `secured`): the operator packs the node up for the trip back to HQ.
+   Nothing is transmitted, not even heartbeats, until the final check-in.
+   The UI shows "N entries to deliver at check-in".
+4. **Final check-in** (checkpoint: `secured` | `complete` →
+   `checking_in`): back at HQ, with the radio in range, every unconfirmed
+   batch becomes due at once. Batches parked as rejected are revived as
+   new messages, because graywolf keeps a rejected row rejected (3.1). A
+   heartbeat goes out immediately, so HQ learns the last seq and requests
+   any batch it lost. The node moves to **`checked_in`** by itself once
+   nothing is unconfirmed **and** HQ has been heard since the check-in
+   began, judged by this node's own clock, not graywolf's ACK time. It
+   then restores graywolf's per-peer settings, retrying until that works.
+   Parked batches are re-sent every 5 minutes during a long check-in. If
+   RF can't
+   finish, **Export** (4.4) is the offline path: carry the file to HQ's
+   admin page. In simulation, a 20-entry backlog checks in within about a
+   minute at close range.
+5. **graywolf cleanup** (checkpoint: `complete` or later; HQ:
+   `complete`): deletes from graywolf the race message rows the app has
+   recorded (its sent batches, heartbeats and gap requests, plus ingested
+   inbound `RC1` rows), one row at a time with progress.
+   - It only deletes rows whose ids the app stored, re-checks that the text
+     starts `RC1 `, and never deletes whole threads, so the operator's own
+     conversations survive.
+   - It **never deletes a row whose batch HQ hasn't confirmed**: that would
+     cancel its resend.
+   - It's optional and repeatable; a 404 counts as already gone.
+   - Race rows survive a Reset in the app's records, so cleanup can still
+     run afterwards.
+6. **Reset** (any state; admin only): clears **all race data on this
    node** so it can be reused:
    - CP: local entries, batches, seq counter, outbox state.
    - HQ: received batches, event log, checkpoint status, gaps, bad
@@ -466,12 +505,19 @@ The race has a state in `settings.race_state`: `setup` → `active` →
      tuning), board branding (8.3), the HQ checkpoint list and the
      roster. Checkboxes clear those too, for a fresh event: one for the
      checkpoint list and roster, one for branding.
-   - Safety: the admin must type the race name to confirm. A reset during
-     `active`, or while unconfirmed batches exist, shows a stronger
-     warning. Before clearing, the app **always** writes a backup
-     (`backups/<race>-<timestamp>/`: a DB snapshot via `VACUUM INTO`, the
-     journal, and the CP export or results CSV) and rotates
-     `race-journal.csv` into it. The backup isn't deleted by the app.
+   - Safety: the admin must type the race name (or `RESET` if it has
+     none) to confirm. A checkpoint that hasn't checked in and still has
+     unconfirmed entries refuses the reset unless the admin explicitly
+     acknowledges it (the data stays in the backup). Before clearing, the
+     app **always** writes a backup (`backups/<race>-<timestamp>/`: a DB
+     snapshot via `VACUUM INTO`, the CP export or HQ results CSV) and
+     moves `race-journal.csv` into it, so the next race starts a fresh
+     journal. A failed snapshot aborts the reset; a failed export or
+     journal move is reported as a warning. The backup isn't deleted by
+     the app.
+   - Reset also restores graywolf's per-peer settings, moves the inbox
+     reader's starting point to now, and clears the race clock sync and
+     both engines' in-memory state (contact times, gap tracker).
    - Reset doesn't touch graywolf. Cleanup (3) is the graywolf side.
    - At HQ, a checkpoint that resets mid-race and restarts at seq 1 is
      already handled: it's new data, and `seq_reuse_count` flags it.
@@ -610,7 +656,9 @@ Admin interface (admin session only; a volunteer session gets 403):
 | Method | Path | Role |
 |---|---|---|
 | GET/PUT | `/api/admin/settings` | both (callsign is proxied to graywolf, 8.1) |
-| POST | `/api/admin/race/start`, `/complete`, `/stop-sending` | both (4.7) |
+| POST | `/api/admin/race/start`, `/complete` | both (4.7) |
+| POST | `/api/admin/race/secure`, `/check-in` | CP (4.7) |
+| POST | `/api/admin/peers/restore` | both: restore graywolf per-peer settings now |
 | POST | `/api/admin/race/cleanup-graywolf` | both, `complete` only |
 | POST | `/api/admin/race/reset` | both; body must include the race name |
 | GET | `/api/admin/outbox` | CP: batch status, graywolf link + auth health |
@@ -707,8 +755,9 @@ are two interfaces, each behind its own login (7.2).
   - The graywolf connection panel: version, reachable, authed, max text
     length, retention warning, and the peer callsigns with retries turned
     off (3.3).
-- **Race lifecycle:** Start / Complete / Stop sending / graywolf cleanup /
-  Reset (4.7), each with its state-dependent confirm.
+- **Race lifecycle:** Start / Complete / Secure / Final check-in (with live
+  "N to deliver" progress) / graywolf cleanup / Restore graywolf peer
+  settings / Reset (4.7), each with its state-dependent confirm.
 - **CP tools:** outbox view (batches, attempts, next retry, msgid), recovery
   export.
 - **HQ tools:** board (bibs only), bib search and history, checkpoint health
@@ -788,7 +837,7 @@ same at every event.
 | 5 | Checkpoint engine | Batcher, outbox on `/messages` + `/resend`, ACK watcher, fast retransmit, gap-request handler, heartbeat, crash-safe POST (4.1.7) | **Done** 2026-10-06. `internal/checkpoint` 89.7%, plus `internal/gwfake` (fake Messages API, 95.6%) and `internal/peers` (`wait_for_ack` backup and restore, 3.3). Review fixes: post-send writes on a detached context; ambiguous send outcomes kept and recovered instead of duplicated; Recover can't take an earlier race's row; poll before transmit; schedule writes conditional on the batch still being pending and unchanged; 400 alerts instead of parking; replayed ACKs aren't contact. Wiring into `main` waits for phase 6 (role-aware dispatcher) |
 | 6 | HQ engine | Ingest, bad-report capture, gap tracker + sender, heartbeat/skew, sender check | **Done** 2026-10-06. `internal/hq` 90.8% (ingest of graywolf-ACKed rows, bad reports, gap tracker, health view with sender mismatch and never-heard checkpoints, operator re-request). Also wired the service: `internal/app` (role-aware dispatcher, assembly, graywolf-prefs refresh) and `main`; cached `peers.Ensurer` used by both engines; gwfake feed and event stream now behave like graywolf's. Review fixes: an unconfigured node holds race traffic (`ErrNotReady`) instead of dropping it; the inbox starting point is saved once (migration 0002); gap requests only for listed checkpoints once a list exists; per-checkpoint send-failure backoff; 5 s HQ tick; faster prefs retry |
 | 7 | Integration test | Two app instances against a **fake graywolf**: an in-memory Messages API written from the published API (auto-ACK, dedup, `wait_for_ack`, a lossy link with drop / reorder / dup). Asserts eventual exactly-once at HQ; re-runs the 9b latency table and the spoofed-traffic airtime bounds | **Done** 2026-10-06. `internal/gwfake/radio.go` (shared lossy channel: graywolf-style dedup and auto-ACK; model verified) and `internal/sim` (whole nodes in simulated time). Eight scenarios pass exactly-once: mass start at 30% loss, voids, out-and-back, 40-min outage, three checkpoints, HQ restored from an old backup (heartbeat reveals the hole), HQ DB wiped (recovered from graywolf's inbox with no RF), and spoofing bounds. Latency results and the revised acceptance are in 9b |
-| 8 | Recovery, journal, lifecycle | Journal, CP export, HQ import, re-request; Start / Complete / Stop sending / graywolf cleanup / Reset with backup (4.7) | Not started |
+| 8 | Recovery, journal, lifecycle | Journal, CP export, HQ import, re-request; Start / Complete / Secure / Final check-in / graywolf cleanup / Reset with backup (4.7) | **Done** 2026-10-06. `internal/journal` (port, 84.9%) and `internal/ops` (86.1%): keypad with power-safe journal, CP export (now with graywolf msgid) and HQ export/journal imports, board, runner history and results CSV, lifecycle. New **secured** phase and **final check-in** (user request); simulated end to end (`TestSecureTravelAndFinalCheckIn`). Review fixes: every state change is a compare-and-set (`SetRaceState`), and admin edits use `UpdateSettings`, which never touches lifecycle columns, so the engine, operators and edits can't overwrite each other; check-in starts only on success and is judged by local time; parked batches revived during check-in; reset closes the keypad first, then backs up, wipes, rotates the journal and restores peers; cleanup is blocked during check-in; the after-check-in hook is retried |
 | 9 | App REST + auth | Handlers, DTO validation, volunteer/admin login and role middleware (table test: every route × no session / volunteer / admin), first-run setup, password change + session revocation, `reset-admin-password` CLI, rate limit, session expiry, graywolf credential handling. **Branding (8.3):** migration + store, validation (text rules, `#RRGGBB`, WCAG contrast), logo decode/re-encode (PNG/JPEG/WebP only, size and pixel caps), branding endpoints; fuzz the logo decoder with malformed images | Not started |
 | 10 | Web UI | Admin + volunteer interfaces; JS unit tests for logic; scripted browser run of the real binary against the fake graywolf. **Branded status board (8.3):** CSS custom properties from saved branding, header/footer/logo, branding editor with live preview and contrast readout, print stylesheet | Not started |
 | 11 | Packaging + docs | `GOARM=6` build, systemd unit (`After=graywolf.service`), install script, operator README incl. recovery and reset procedures | Not started |

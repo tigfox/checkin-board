@@ -133,6 +133,15 @@ func New(cfg Config) (*Engine, error) {
 	return e, nil
 }
 
+// Reset clears the gap tracker and re-request limits, as after a reset.
+func (e *Engine) Reset() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	clear(e.gaps)
+	clear(e.lastRearm)
+	e.peerErr = ""
+}
+
 // SetGraywolfMaxText records graywolf's current DM length limit.
 func (e *Engine) SetGraywolfMaxText(n int) { e.gwMaxText.Store(int32(n)) }
 
@@ -165,6 +174,11 @@ func (e *Engine) safeTick(ctx context.Context) {
 		return
 	}
 	if cfg.Role != store.RoleHQ {
+		return
+	}
+	// Gap requests run while racing and after the race is complete, so a
+	// checkpoint's final check-in can still recover a batch HQ lost.
+	if cfg.RaceState != store.RaceActive && cfg.RaceState != store.RaceComplete {
 		return
 	}
 	if err := e.Tick(tickCtx, cfg); err != nil {

@@ -67,10 +67,11 @@ func newApp(t *testing.T, gw *gwfake.Station, settings store.Settings) (*App, *s
 	if _, err := st.SaveSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
-	a, err := New(Config{Store: st, Graywolf: gw})
+	a, err := New(Config{Store: st, Graywolf: gw, DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = a.Close() })
 	return a, st
 }
 
@@ -201,7 +202,7 @@ func TestStartingPointSavedOnceAndReadsEarlierRows(t *testing.T) {
 	}
 	gw.Inbound("K1CP", "RC1 R AS5 1 @1300 101/05") // arrives while the app is down
 	// Restart: StartedAt is now, but the first run's starting point holds.
-	a, err := New(Config{Store: st, Graywolf: gw, StartedAt: time.Now().Add(time.Minute)})
+	a, err := New(Config{Store: st, Graywolf: gw, DataDir: t.TempDir(), StartedAt: time.Now().Add(time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}

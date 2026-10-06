@@ -118,3 +118,12 @@ func (c *Clock) Status() Status {
 	age := now.Sub(c.syncMono)
 	return Status{Source: SourceBrowser, Now: c.syncWall.Add(age), SyncAge: age}
 }
+
+// Reset forgets the browser sync, as after a node reset (spec 4.7): the
+// next race starts with "Clock not set" until a volunteer syncs again.
+func (c *Clock) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.synced = false
+	c.syncWall, c.syncMono = time.Time{}, time.Time{}
+}

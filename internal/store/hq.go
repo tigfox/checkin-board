@@ -524,3 +524,47 @@ func sortedKeys(m map[PassageKey]int) []PassageKey {
 	})
 	return out
 }
+
+// HQLocalEntry is one HQ keypad entry for the keypad's list.
+type HQLocalEntry struct {
+	ID     uint
+	CP     string
+	Bib    Bib
+	TimeIn time.Time
+	Voided bool
+}
+
+// ListHQLocal lists HQ keypad entries, newest first. A void at HQ cancels
+// a passage, not a row, so when one passage was logged twice (a double
+// tap) and voided once, the newest copy is the one shown as voided.
+func (s *Store) ListHQLocal(ctx context.Context, limit int) ([]HQLocalEntry, error) {
+	var events []ReceivedEntry
+	if err := s.db.WithContext(ctx).
+		Where("batch_seq IS NULL AND source_call = ''").
+		Order("id ASC").Find(&events).Error; err != nil {
+		return nil, err
+	}
+	voids := map[PassageKey]int{}
+	for _, e := range events {
+		if e.IsVoid {
+			voids[PassageKey{e.CPCode, e.Bib, normTime(e.TimeIn).Unix()}]++
+		}
+	}
+	var out []HQLocalEntry
+	for i := len(events) - 1; i >= 0; i-- { // newest first
+		e := events[i]
+		if e.IsVoid {
+			continue
+		}
+		k := PassageKey{e.CPCode, e.Bib, normTime(e.TimeIn).Unix()}
+		voided := voids[k] > 0
+		if voided {
+			voids[k]--
+		}
+		out = append(out, HQLocalEntry{ID: e.ID, CP: e.CPCode, Bib: e.Bib, TimeIn: normTime(e.TimeIn), Voided: voided})
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}

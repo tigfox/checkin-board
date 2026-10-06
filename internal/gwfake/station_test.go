@@ -171,3 +171,14 @@ func TestFeedRelistsChangedRowsAndStreams(t *testing.T) {
 		t.Errorf("MaxText = %d", p.MaxText())
 	}
 }
+
+func TestDeleteMessage(t *testing.T) {
+	s := New("K1CP")
+	m, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: "x"})
+	if err := s.DeleteMessage(ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteMessage(ctx, m.ID); !graywolf.IsNotFound(err) {
+		t.Fatalf("second delete err = %v", err)
+	}
+}

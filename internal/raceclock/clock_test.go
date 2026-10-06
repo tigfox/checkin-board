@@ -214,3 +214,17 @@ func TestClockConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestClockReset(t *testing.T) {
+	c, _ := newTestClock(false)
+	if err := c.Sync(time.Date(2026, 10, 10, 13, 0, 0, 0, time.UTC), 0); err != nil {
+		t.Fatal(err)
+	}
+	if c.Status().Source != SourceBrowser {
+		t.Fatal("sync not applied")
+	}
+	c.Reset()
+	if st := c.Status(); st.Source != SourceUnsynced {
+		t.Fatalf("after Reset source = %s", st.Source)
+	}
+}
