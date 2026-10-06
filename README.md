@@ -12,6 +12,7 @@ internal/config/       bootstrap env configuration
 internal/graywolf/     graywolf REST client (auth, messages, SSE, prefs, station)
 internal/wire/         RC1 message grammar (reports, heartbeats, gaps, link-check probes)
 internal/raceclock/    browser-synced race clock
+internal/store/        SQLite storage (pure Go), embedded migrations
 docs/specs/            design spec
 ```
 

@@ -119,7 +119,7 @@ internal/graywolf/        typed REST client: auth, messages, SSE, prefs, station
                           (replaces the skeleton's internal/apiclient)
 internal/wire/            RC1 codec: report/heartbeat/gap (port of pkg/race) + link-check P/Q
 internal/raceclock/       browser-synced race clock (port of pkg/race clock)
-internal/store/           SQLite (modernc.org/sqlite, no cgo), migrations, repositories
+internal/store/           SQLite via gorm + glebarez/sqlite (pure-Go modernc, no cgo), embedded SQL migrations, repositories
 internal/checkpoint/      batcher, outbox, ack watcher, heartbeat, gap-request handler
 internal/hq/              ingest, gap tracker, heartbeat/skew, board, roster, export
 internal/inbox/           graywolf inbox reader: SSE + cursor catch-up, dispatch to CP/HQ
@@ -131,7 +131,9 @@ web/                      static HTML/CSS/JS (embedded with go:embed)
 ```
 
 The Pi Zero W (ARMv6) is a target, so the build is pure Go (`CGO_ENABLED=0`,
-`GOARM=6`). That means `modernc.org/sqlite`, not `mattn/go-sqlite3`.
+`GOARM=6`). That means `modernc.org/sqlite` (through `glebarez/sqlite` for
+gorm, which keeps the `pkg/race` store code portable), not
+`mattn/go-sqlite3`.
 
 ### 2.2 graywolf API surface used
 
@@ -209,7 +211,13 @@ The original derived msgids from seq (`R`+base36). Through the Messages API
   retransmit is a `resend` of that row, so HQ's graywolf sees the same
   (from, msgid, text) and can ACK the copy without storing it again.
 - If the row is gone (`resend` returns 404), the outbox sends a **new**
-  message with the same text. HQ's own `(cp, seq, text)` dedup (section 5)
+  message with the same text.
+- graywolf's `resend` resets attempts but **not** the row's acked or
+  rejected state. A gap request for a batch that was already ACKed (or
+  REJected) therefore releases its old row and sends it as a new message.
+  Resending the old row would read as confirmed straight away, without HQ
+  getting it. `RequeueSeqs` does this. The slow contract test records the
+  actual behaviour as a FINDING. HQ's own `(cp, seq, text)` dedup (section 5)
   makes that idempotent, so a new msgid is harmless.
 - HQ never relies on graywolf's dedup. Any duplicate inbox row is dropped
   by the app's batch-level dedup.
@@ -475,13 +483,28 @@ checks toward HQ, and HQ can check toward any checkpoint's call.
 | `received_entries` | HQ | append-only event log: cp_code, bib, time_in, is_void, batch_seq (NULL = HQ keypad), source_call, received_at |
 | `cp_status` | HQ | cp_code, last_heard_at, last_call, heartbeat_at, heartbeat_last_seq, clock_skew_sec, max_seq, batches_received, seq_reuse_count, bad_reports |
 | `bad_reports` | HQ | gw_message_id, from_call, text, error, received_at |
-| `inbox_state` | both | cursor, last processed gw row id |
-| `link_checks` | both | run, role (prober/responder), peer_call, started_at, n, heard, acked, reply_received, rtt_median_ms, remote_lvl, local_lvl, via, verdict |
-| `auth` | both | bcrypt hashes of the admin and volunteer passwords, session secret |
-| `sessions` | both | token hash, role (`admin`/`volunteer`), created_at, expires_at; deleted on logout, on expiry, and for every session of a role when that role's password changes |
+| `inbox_state` | both | cursor (singleton) |
+| `link_checks` | both | run, role (prober/responder), peer_call, started_at, n, heard, acked, reply_received, rtt_median_ms, remote_lvl, local_lvl, via, verdict (phase 12) |
+| `auth` | both | bcrypt hashes of the admin and volunteer passwords, session secret (migration added in phase 9) |
+| `sessions` | both | token hash, role (`admin`/`volunteer`), created_at, expires_at; deleted on logout, on expiry, and for every session of a role when that role's password changes (phase 9) |
 
 The station **callsign** isn't stored in the app: graywolf's
 `/api/station/config` owns it (section 8.1).
+
+Each phase adds the tables it needs as a new numbered migration
+(`internal/store/migrations/NNNN_name.sql`, applied in order, each in one
+transaction). Migration 0001 (phase 3) creates everything above except
+`auth`, `sessions` and `link_checks`. Connections use `foreign_keys=ON`,
+WAL, `synchronous=FULL` (so a confirmed write survives a power cut on
+an SD card) and a single connection. gorm's automatic timestamps are
+off, so every timestamp comes from the store's injectable clock.
+
+ACK handling differs from `pkg/race`. A batch is matched to graywolf's
+ACK by the graywolf **message row id** it is bound to (`BindMessage`;
+partial unique index), not by a seq-derived msgid. Rebinding after a
+resend 404 replaces the row. `UnboundAttempted` lists batches whose POST
+may have succeeded before a crash (4.1.7). HQ records the inbox row in
+`gw_rows` in the same transaction as the batch ingest.
 
 Carried over unchanged: event-log netting per (cp, bib, time_in), with
 order-independent voids; seq reuse with different text treated as new data
@@ -657,7 +680,7 @@ pollers, unreachable banner.
 | 0 | Sign-off | This spec approved | Answers received 2026-10-05; awaiting final approval |
 | 1 | graywolf client + API spike | `internal/graywolf`: login/re-login, health, version, station get/put, send, get, resend, delete, list+cursor, SSE, conv prefs, preferences. `httptest` fakes for unit tests, plus an **opt-in contract test** (`GW_CONTRACT=1`) against a real graywolf 0.14.14 that proves: msgid is stable across resend; `wait_for_ack=false` stops the ladder and late ACKs still flip status; `client_id` round-trips (or not); the inbox cursor doesn't skip rows; single-row delete leaves the thread intact | **In progress** 2026-10-05. Client done, 96.3% coverage, reviewed (fixes: watchdog pauses during handler and covers connect; stalled-cursor detection; 30 s fail-fast after bad credentials; no credentials in URLs, errors or `%v`). Contract test written (`make contract`), **not yet run**: waiting on the graywolf test host |
 | 2 | Wire codec + race clock | Port `types/encode/decode/clock` from `pkg/race` into `internal/wire`, `internal/raceclock`; add `RC1 P/Q` link-check messages (4.8); table tests + `FuzzDecode` | **Done** 2026-10-05. wire 95.6%, raceclock 100% coverage; FuzzDecode 68M execs clean (now covering P/Q); gap-list parser shared with P/Q (behaviour unchanged, reviewed). Worst-case `RC1 Q` is exactly 67 chars, pinned by an exhaustive test. Clock types renamed `raceclock.Source`/`Status`; the OS-clock check (section 6) is injected later |
-| 3 | Storage | SQLite (modernc), embedded migrations, repositories, roster CSV + `FuzzParseRosterCSV` | Not started |
+| 3 | Storage | SQLite (modernc), embedded migrations, repositories, roster CSV + `FuzzParseRosterCSV` | **Done** 2026-10-06. 90.8% coverage; FuzzParseRosterCSV 60 s clean; builds for ARMv6 with `CGO_ENABLED=0`; `govulncheck` clean (bumped modernc sqlite to v1.60.1 / SQLite 3.53.4 and x/text). Review fixes: gap requests release acked/rejected rows (above, 3.1); bad reports recorded in `gw_rows` and counted only against known checkpoints; UTF-8-safe truncation; `hq_call` SSID limited to 0-15. Also fixed a ported test that checked the old `race_runners` table name and so passed vacuously |
 | 4 | Inbox reader | SSE + catch-up, cursor persistence, idempotent dispatch, reconnect/backoff | Not started |
 | 5 | Checkpoint engine | Batcher, outbox on `/messages` + `/resend`, ACK watcher, fast retransmit, gap-request handler, heartbeat, crash-safe POST (4.1.7) | Not started |
 | 6 | HQ engine | Ingest, bad-report capture, gap tracker + sender, heartbeat/skew, sender check | Not started |

@@ -308,4 +308,15 @@ func TestContractAckFlipsStatusWithoutLadder(t *testing.T) {
 		t.Fatalf("status = %s (%s), want acked", last.Status, last.FailureReason)
 	}
 	t.Logf("acked after %d attempt(s) at %v", last.Attempts, last.AckedAt)
+
+	// The store releases an acked batch's row before a gap-request
+	// resend, on the assumption that resend keeps the acked status.
+	if _, err := e.c.ResendMessage(ctx, m.ID); err != nil && !IsConflict(err) {
+		t.Fatalf("resend acked row: %v", err)
+	}
+	after, err := e.c.GetMessage(ctx, m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("FINDING resend of an acked row: status %s -> %s (store assumes it stays acked)", last.Status, after.Status)
 }
