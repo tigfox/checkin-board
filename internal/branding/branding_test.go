@@ -186,3 +186,17 @@ func FuzzProcessLogo(f *testing.F) {
 		}
 	})
 }
+
+// A polyglot (a valid PNG carrying an HTML/JS payload after its end, or
+// in a text chunk) is re-encoded, so nothing but pixels is ever served.
+func TestProcessLogoStripsPolyglotPayload(t *testing.T) {
+	payload := []byte("<html><script>alert(document.cookie)</script></html>")
+	raw := append(encode(t, "png", 40, 20), payload...)
+	logo, err := ProcessLogo(bytes.NewReader(raw))
+	if err != nil {
+		return // refusing it is also fine
+	}
+	if bytes.Contains(logo.PNG, []byte("<script")) || bytes.Contains(logo.PNG, payload) {
+		t.Fatal("stored logo still carries the payload")
+	}
+}

@@ -6,16 +6,19 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/log"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 
+	"checkin-board/internal/raceclock"
 	"checkin-board/internal/store"
 )
 
@@ -261,5 +264,75 @@ func TestE2ELinkCheckTab(t *testing.T) {
 	// The HQ health panel shows the link column.
 	b.run(chromedp.Click(`//nav[@id="tabs"]/button[text()="HQ"]`, chromedp.BySearch))
 	b.waitText("#tab-hq", "never checked")
+	b.noErrors()
+}
+
+// The bib reaches the node and is saved, but the reply is lost (Wi-Fi
+// drops on the way back). The keypad keeps the digits and the request
+// id; tapping LOG again must not log the bib twice.
+func TestE2EKeypadSurvivesLostReply(t *testing.T) {
+	e := newEnv(t, checkpointSettings(store.RaceActive))
+	b := newBrowser(t, e.srv.URL)
+	var drop atomic.Bool
+	drop.Store(true)
+	chromedp.ListenTarget(b.ctx, func(ev any) {
+		if ev, ok := ev.(*fetch.EventRequestPaused); ok {
+			go func() {
+				c := chromedp.FromContext(b.ctx)
+				ectx := cdp.WithExecutor(b.ctx, c.Target)
+				if ev.Request.Method == "POST" && drop.CompareAndSwap(true, false) {
+					_ = fetch.FailRequest(ev.RequestID, network.ErrorReasonInternetDisconnected).Do(ectx)
+					return
+				}
+				_ = fetch.ContinueRequest(ev.RequestID).Do(ectx)
+			}()
+		}
+	})
+	b.login(e.volunt)
+	b.run(chromedp.Navigate(e.srv.URL+"/keypad.html"),
+		chromedp.WaitEnabled(`#keys button[aria-label="7"]`, chromedp.ByQuery),
+		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{URLPattern: "*/api/entries", RequestStage: fetch.RequestStageResponse}}),
+		chromedp.Click(`#keys button[aria-label="7"]`, chromedp.ByQuery),
+		chromedp.Click(`#keys button[aria-label="7"]`, chromedp.ByQuery),
+		chromedp.Click("#keys .log", chromedp.ByQuery))
+	b.waitText("#log-result", "NOT confirmed yet")
+	b.waitText("#display", "77") // the digits stay for the retry
+	if all, _ := e.st.ListLocal(ctx, 10); len(all) != 1 {
+		t.Fatalf("the node didn't save the first attempt: %d entries", len(all))
+	}
+	b.run(chromedp.Click("#keys .log", chromedp.ByQuery))
+	b.waitText("#log-result", "77 logged")
+	if all, _ := e.st.ListLocal(ctx, 10); len(all) != 1 {
+		t.Fatalf("entries after retry = %d, want 1", len(all))
+	}
+	b.mu.Lock()
+	b.errs = nil // the dropped reply logs a load failure, as it should
+	b.mu.Unlock()
+}
+
+func TestE2EClockBannerSetsTime(t *testing.T) {
+	e := newEnvWith(t, checkpointSettings(store.RaceActive), func(d *Deps) { d.Clock = raceclock.NewClock(nil, nil) })
+	b := newBrowser(t, e.srv.URL)
+	b.login(e.volunt)
+	b.run(chromedp.Navigate(e.srv.URL + "/keypad.html"))
+	b.waitText("#clock-banner", "Clock not set")
+	b.run(chromedp.Click(`#clock-banner button`, chromedp.ByQuery))
+	b.run(chromedp.WaitNotVisible("#clock-banner", chromedp.ByQuery))
+	b.noErrors()
+}
+
+func TestE2EAdminStartsRace(t *testing.T) {
+	e := newEnv(t, checkpointSettings(store.RaceSetup))
+	b := newBrowser(t, e.srv.URL)
+	b.login(e.admin)
+	b.run(chromedp.Navigate(e.srv.URL + "/admin.html"))
+	b.waitText("#tab-race", "Race not started")
+	// confirm() (with the link-check warning) is accepted by the harness.
+	b.run(chromedp.Click(`//section[@id="tab-race"]//button[text()="Start race"]`, chromedp.BySearch))
+	b.waitText("#state", "Race active")
+	cfg, _ := e.st.GetSettings(ctx)
+	if cfg.RaceState != store.RaceActive {
+		t.Fatalf("state = %s", cfg.RaceState)
+	}
 	b.noErrors()
 }

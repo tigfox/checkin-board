@@ -163,3 +163,16 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	err := s.db.WithContext(ctx).Raw(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&v).Error
 	return v, err
 }
+
+// DBSize is the database's size in bytes (page count × page size), for
+// soak tests and diagnostics.
+func (s *Store) DBSize(ctx context.Context) (int64, error) {
+	var pages, size int64
+	if err := s.db.WithContext(ctx).Raw("PRAGMA page_count").Scan(&pages).Error; err != nil {
+		return 0, err
+	}
+	if err := s.db.WithContext(ctx).Raw("PRAGMA page_size").Scan(&size).Error; err != nil {
+		return 0, err
+	}
+	return pages * size, nil
+}

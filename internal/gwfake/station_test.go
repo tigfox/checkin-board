@@ -195,3 +195,23 @@ func TestStationConfigFakes(t *testing.T) {
 		t.Fatalf("get = %+v", c)
 	}
 }
+
+func TestAPIDownFailsCallsButRadioWorks(t *testing.T) {
+	s := New("AAA")
+	NewRadio(1, Profile{}, time.Now).Attach(s)
+	s.SetAPIDown(true)
+	if _, err := s.SendMessage(ctx, graywolf.SendRequest{To: "BBB", Text: "x"}); err == nil {
+		t.Fatal("send while down")
+	}
+	if _, err := s.CatchUp(ctx, graywolf.ListParams{}, func(graywolf.MessageChange) error { return nil }); err == nil {
+		t.Fatal("catch-up while down")
+	}
+	if _, err := s.ListPackets(ctx, graywolf.PacketQuery{}); err == nil {
+		t.Fatal("packets while down")
+	}
+	s.hear(Frame{From: "BBB", To: "AAA", Text: "hi", MsgID: "1"}) // RF still received
+	s.SetAPIDown(false)
+	if rows := s.Rows(); len(rows) != 1 {
+		t.Fatalf("rows = %d", len(rows))
+	}
+}

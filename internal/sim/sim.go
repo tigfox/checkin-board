@@ -95,6 +95,36 @@ func (s *Sim) build(n *Node) error {
 	if _, err := st.SaveSettings(ctx, n.Settings); err != nil {
 		return err
 	}
+	old := n.Store
+	if err := s.wire(n, st); err != nil {
+		return err
+	}
+	if old != nil {
+		_ = old.Close()
+	}
+	return nil
+}
+
+// Restart rebuilds n's engines over its existing database, as after the
+// process is killed (kill -9, power cut) and restarted: every in-memory
+// state is lost, the database and graywolf are not. It runs the same
+// startup recovery the app does.
+func (s *Sim) Restart(n *Node) error {
+	if err := s.wire(n, n.Store); err != nil {
+		return err
+	}
+	cfg, err := n.Store.GetSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if cfg.Role == store.RoleCheckpoint {
+		_ = n.CP.Recover(ctx, cfg) // best effort, as at app startup
+	}
+	return nil
+}
+
+// wire builds n's engines, link check and inbox reader over st.
+func (s *Sim) wire(n *Node, st *store.Store) error {
 	clock := raceclock.NewClock(s.Clock.Now, func() bool { return true })
 	ens := peers.NewEnsurer(n.GW, st, s.Clock.Now)
 	cp, err := checkpoint.New(checkpoint.Config{Store: st, Graywolf: n.GW, Clock: clock, Now: s.Clock.Now, Peers: ens})
@@ -112,9 +142,6 @@ func (s *Sim) build(n *Node) error {
 	reader, err := inbox.New(inbox.Config{Graywolf: n.GW, Store: st, Dispatcher: app.NewDispatcher(st, cp, hqe, lc)})
 	if err != nil {
 		return err
-	}
-	if n.Store != nil {
-		_ = n.Store.Close()
 	}
 	n.Store, n.CP, n.HQ, n.Inbox, n.Link, n.clock = st, cp, hqe, reader, lc, clock
 	return nil

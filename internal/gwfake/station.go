@@ -12,6 +12,7 @@ package gwfake
 import (
 	"cmp"
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -57,7 +58,29 @@ type Station struct {
 	heard      map[string]time.Time // (from, msgid, text) -> last heard, for dedup
 	packets    []graywolf.Packet    // packet log of frames heard (RX)
 	rxLevel    map[string]float64   // sender -> receive level; absent = no level (TNC)
+	apiDown    bool                 // the API is unreachable (graywolf restarting)
 }
+
+// SetAPIDown makes every API call fail as if graywolf were unreachable
+// (restarting, or the network to it down). The radio side keeps
+// working, as graywolf's modem does while only its API is out.
+func (s *Station) SetAPIDown(down bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.apiDown = down
+}
+
+// unavailable is the error an API call returns while the API is down.
+func (s *Station) unavailable() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.apiDown {
+		return errAPIDown
+	}
+	return nil
+}
+
+var errAPIDown = errors.New("gwfake: dial tcp 127.0.0.1:8080: connect: connection refused")
 
 // New returns a station with the given callsign.
 func New(call string) *Station {
@@ -116,6 +139,9 @@ func (s *Station) touch(id uint64, event string) {
 
 // SendMessage implements graywolf.Client.SendMessage.
 func (s *Station) SendMessage(ctx context.Context, req graywolf.SendRequest) (graywolf.Message, error) {
+	if err := s.unavailable(); err != nil {
+		return graywolf.Message{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.sendErrs) > 0 {
@@ -144,6 +170,9 @@ func (s *Station) SendMessage(ctx context.Context, req graywolf.SendRequest) (gr
 
 // ResendMessage implements graywolf.Client.ResendMessage.
 func (s *Station) ResendMessage(ctx context.Context, id uint64) (graywolf.Message, error) {
+	if err := s.unavailable(); err != nil {
+		return graywolf.Message{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.resendErrs) > 0 {
@@ -167,6 +196,9 @@ func (s *Station) ResendMessage(ctx context.Context, id uint64) (graywolf.Messag
 
 // GetMessage implements graywolf.Client.GetMessage.
 func (s *Station) GetMessage(ctx context.Context, id uint64) (graywolf.Message, error) {
+	if err := s.unavailable(); err != nil {
+		return graywolf.Message{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, ok := s.rows[id]
@@ -180,6 +212,9 @@ func (s *Station) GetMessage(ctx context.Context, id uint64) (graywolf.Message, 
 // update order, honouring Folder, Peer and Since. The cursor is the
 // last update sequence handled.
 func (s *Station) CatchUp(ctx context.Context, p graywolf.ListParams, fn func(graywolf.MessageChange) error) (string, error) {
+	if err := s.unavailable(); err != nil {
+		return "", err
+	}
 	type entry struct {
 		seq uint64
 		m   graywolf.Message
@@ -209,6 +244,9 @@ func (s *Station) CatchUp(ctx context.Context, p graywolf.ListParams, fn func(gr
 // it calls onOpen, then delivers a hint for every row change until ctx
 // is done.
 func (s *Station) StreamEventsWithOpen(ctx context.Context, onOpen func(), fn func(graywolf.Event) error) error {
+	if err := s.unavailable(); err != nil {
+		return err
+	}
 	ch := make(chan graywolf.Event, 64)
 	s.mu.Lock()
 	s.subs[ch] = struct{}{}
@@ -235,6 +273,9 @@ func (s *Station) StreamEventsWithOpen(ctx context.Context, onOpen func(), fn fu
 
 // MarkRead implements graywolf.Client.MarkRead (bumps the row's update).
 func (s *Station) MarkRead(ctx context.Context, id uint64) error {
+	if err := s.unavailable(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, ok := s.rows[id]
@@ -257,6 +298,9 @@ func (s *Station) SetMaxText(n int) {
 
 // MessagePreferences implements graywolf.Client.MessagePreferences.
 func (s *Station) MessagePreferences(ctx context.Context) (graywolf.MessagePreferences, error) {
+	if err := s.unavailable(); err != nil {
+		return graywolf.MessagePreferences{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return graywolf.MessagePreferences{MaxMessageTextOverride: s.maxText, RetryMaxAttempts: 4}, nil
@@ -360,6 +404,9 @@ func (s *Station) FailPrefs(err error) {
 // ConversationPrefs implements graywolf.Client.ConversationPrefs: no
 // stored override reads as the defaults (inherit, wait_for_ack=true).
 func (s *Station) ConversationPrefs(ctx context.Context, kind, key string) (graywolf.ConversationPrefs, error) {
+	if err := s.unavailable(); err != nil {
+		return graywolf.ConversationPrefs{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.prefsErr != nil {
@@ -375,6 +422,9 @@ func (s *Station) ConversationPrefs(ctx context.Context, kind, key string) (gray
 // SetConversationPrefs implements graywolf.Client.SetConversationPrefs.
 // Like graywolf, storing the defaults removes the override.
 func (s *Station) SetConversationPrefs(ctx context.Context, kind, key string, p graywolf.ConversationPrefs) (graywolf.ConversationPrefs, error) {
+	if err := s.unavailable(); err != nil {
+		return graywolf.ConversationPrefs{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.prefsErr != nil {
@@ -401,6 +451,9 @@ func (s *Station) HasPrefsOverride(kind, key string) bool {
 // DeleteMessage implements graywolf.Client.DeleteMessage (a soft delete
 // in graywolf; here the row is simply removed).
 func (s *Station) DeleteMessage(ctx context.Context, id uint64) error {
+	if err := s.unavailable(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.rows[id]; !ok {
@@ -413,11 +466,17 @@ func (s *Station) DeleteMessage(ctx context.Context, id uint64) error {
 
 // Version implements graywolf.Client.Version.
 func (s *Station) Version(ctx context.Context) (graywolf.Version, error) {
+	if err := s.unavailable(); err != nil {
+		return graywolf.Version{}, err
+	}
 	return graywolf.Version{Version: "0.14.14", Platform: "linux"}, nil
 }
 
 // StationConfig implements graywolf.Client.StationConfig.
 func (s *Station) StationConfig(ctx context.Context) (graywolf.StationConfig, error) {
+	if err := s.unavailable(); err != nil {
+		return graywolf.StationConfig{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return graywolf.StationConfig{Callsign: s.Call}, nil
@@ -425,6 +484,9 @@ func (s *Station) StationConfig(ctx context.Context) (graywolf.StationConfig, er
 
 // SetStationCallsign implements graywolf.Client.SetStationCallsign.
 func (s *Station) SetStationCallsign(ctx context.Context, call string) (graywolf.StationConfig, error) {
+	if err := s.unavailable(); err != nil {
+		return graywolf.StationConfig{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Call = strings.ToUpper(call)

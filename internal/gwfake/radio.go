@@ -216,6 +216,9 @@ func (s *Station) logRX(f Frame) {
 // ListPackets implements the packet-log read (GET /api/packets), oldest
 // first; Limit keeps the newest entries.
 func (s *Station) ListPackets(ctx context.Context, q graywolf.PacketQuery) ([]graywolf.Packet, error) {
+	if err := s.unavailable(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []graywolf.Packet

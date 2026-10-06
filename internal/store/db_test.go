@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -101,5 +102,22 @@ func TestForeignKeysEnforced(t *testing.T) {
 	err := s.db.Create(&LocalEntry{CPCode: "3", Bib: 1, TimeIn: t0, State: EntryQueued, BatchID: &bad, CreatedAt: t0}).Error
 	if err == nil {
 		t.Fatal("insert with a dangling batch_id succeeded; foreign keys are off")
+	}
+}
+
+func TestDBSizeGrowsWithData(t *testing.T) {
+	s := newTestStore(t)
+	before, err := s.DBSize(ctx)
+	if err != nil || before <= 0 {
+		t.Fatalf("size = %d, %v", before, err)
+	}
+	for i := range 200 {
+		if err := s.RecordBadReport(ctx, uint64(i+1), "K1CP", "AS5", strings.Repeat("x", 200), "bad", t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, _ := s.DBSize(ctx)
+	if after <= before {
+		t.Fatalf("size %d -> %d", before, after)
 	}
 }

@@ -1,4 +1,4 @@
-.PHONY: build pi dist run test jstest e2e cover contract vet fmt
+.PHONY: build pi dist run test jstest e2e soak fuzz cover contract vet fmt
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
@@ -28,6 +28,18 @@ jstest:
 
 e2e:
 	CB_E2E=1 go test -count=1 -run '^TestE2E' ./internal/web/
+
+soak:
+	CB_SOAK=1 go test -count=1 -run '^TestSoak$$' -v -timeout 60m ./internal/sim/
+
+# Long fuzz runs (spec 12b): FUZZTIME per target, default 30m.
+FUZZTIME ?= 30m
+fuzz:
+	go test -run XXX -fuzz FuzzDecode -fuzztime $(FUZZTIME) ./internal/wire/
+	go test -run XXX -fuzz FuzzParseRosterCSV -fuzztime $(FUZZTIME) ./internal/store/
+	go test -run XXX -fuzz FuzzProcessLogo -fuzztime $(FUZZTIME) ./internal/branding/
+	go test -run XXX -fuzz 'FuzzParse$$' -fuzztime $(FUZZTIME) ./internal/journal/
+	go test -run XXX -fuzz FuzzParseExport -fuzztime $(FUZZTIME) ./internal/ops/
 
 cover:
 	go test -coverprofile=coverage.out ./...
