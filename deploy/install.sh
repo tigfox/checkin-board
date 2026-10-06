@@ -51,7 +51,7 @@ fi
 # database aside before the new binary migrates it. If anything below
 # fails, the old version is started again so the node doesn't go dark.
 UPGRADE=no
-[ -f "$BIN" ] && UPGRADE=yes
+[ -f "$STATE/checkin-board.db" ] && UPGRADE=yes # a node that has run before
 STOPPED=no
 DONE=no
 restart_on_failure() {
