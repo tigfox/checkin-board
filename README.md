@@ -35,9 +35,11 @@ docs/operator-guide.md install, race day, recovery, reset (for station operators
 
 ## Install on a node
 
-`make dist` builds `dist/checkin-board-<version>-linux-armv6.tar.gz`
-(binary, systemd unit, env template, `install.sh`, operator guide). On
-the node: unpack and `sudo ./install.sh`. See
+`make dist` builds `dist/checkin-board-<version>-linux.tar.gz`: Linux
+binaries for armv6 (any Raspberry Pi), arm64 and amd64, the systemd
+unit, env template, `install.sh` and the operator guide. On the node,
+unpack it and run `sudo ./install.sh`, which picks the binary for that
+machine. See
 [`docs/operator-guide.md`](docs/operator-guide.md) for setup, race day,
 recovery and reset. The service runs as `checkin-board` with its data
 in `/var/lib/checkin-board` and starts after `graywolf.service`.

@@ -18,7 +18,7 @@ You need a node with graywolf already running, and shell access.
    log, and read (or, from Admin → Station, change) the station callsign.
 2. Copy the release bundle to the node and unpack it:
    ```sh
-   tar xzf checkin-board-<version>-linux-armv6.tar.gz
+   tar xzf checkin-board-<version>-linux.tar.gz
    cd checkin-board-<version>
    sudo ./install.sh
    ```

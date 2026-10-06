@@ -2,15 +2,26 @@
 # Install or upgrade checkin-board on a graywolf node (Raspberry Pi OS /
 # Debian with systemd). Run as root from the unpacked release directory:
 #
-#   sudo ./install.sh            # uses ./checkin-board
+#   sudo ./install.sh            # picks bin/checkin-board-<arch> for this machine
 #   sudo ./install.sh /path/to/checkin-board
 #
 # Safe to re-run: settings and the graywolf password are never
 # overwritten, and on upgrade the database is copied aside first.
 set -eu
 
-BIN_SRC=${1:-./checkin-board}
 HERE=$(cd "$(dirname "$0")" && pwd)
+
+# The bundle carries one binary per architecture; pick this machine's.
+default_binary() {
+	case "$(uname -m)" in
+	x86_64 | amd64) echo "$HERE/bin/checkin-board-linux-amd64" ;;
+	aarch64 | arm64) echo "$HERE/bin/checkin-board-linux-arm64" ;;
+	armv6l | armv7l | armv8l | arm*) echo "$HERE/bin/checkin-board-linux-armv6" ;;
+	*) echo "$HERE/checkin-board" ;;
+	esac
+}
+BIN_SRC=${1:-$(default_binary)}
+[ -f "$BIN_SRC" ] || [ -n "${1:-}" ] || BIN_SRC=$HERE/checkin-board
 USER_NAME=checkin-board
 BIN=/usr/local/bin/checkin-board
 ETC=/etc/checkin-board

@@ -10,12 +10,18 @@ build:
 pi:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/checkin-board-armv6 ./cmd/checkin-board
 
-# Release bundle for the Pi: binary + unit + install script.
-dist: pi
-	rm -rf dist/checkin-board-$(VERSION) && mkdir -p dist/checkin-board-$(VERSION)
-	cp bin/checkin-board-armv6 dist/checkin-board-$(VERSION)/checkin-board
-	cp deploy/checkin-board.service deploy/checkin-board.env deploy/install.sh docs/operator-guide.md docs/linkcheck-action.md dist/checkin-board-$(VERSION)/
-	COPYFILE_DISABLE=1 tar -C dist -czf dist/checkin-board-$(VERSION)-linux-armv6.tar.gz checkin-board-$(VERSION)
+# Install bundle: Linux binaries for armv6 (any Raspberry Pi), arm64 and
+# amd64, the unit, env template, install script and docs. install.sh
+# picks the binary for the machine it runs on.
+DIST := dist/checkin-board-$(VERSION)
+dist:
+	rm -rf $(DIST) && mkdir -p $(DIST)/bin
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/bin/checkin-board-linux-armv6 ./cmd/checkin-board
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/bin/checkin-board-linux-arm64 ./cmd/checkin-board
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/bin/checkin-board-linux-amd64 ./cmd/checkin-board
+	cp deploy/checkin-board.service deploy/checkin-board.env deploy/install.sh docs/operator-guide.md docs/linkcheck-action.md README.md $(DIST)/
+	cd $(DIST) && shasum -a 256 bin/* > SHA256SUMS
+	COPYFILE_DISABLE=1 tar -C dist -czf $(DIST)-linux.tar.gz checkin-board-$(VERSION)
 
 run:
 	go run ./cmd/checkin-board
