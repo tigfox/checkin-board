@@ -66,7 +66,7 @@ Results:
 
 ## (e) Security
 
-- **Route access:** the matrix covers every route (59) as nobody,
+- **Route access:** the matrix covers every route (55) as nobody,
   volunteer and admin. The link-check hook takes a token only, comes from
   loopback only, and is off by default.
 - **CSRF guards:** cross-site and cross-origin requests and non-JSON
