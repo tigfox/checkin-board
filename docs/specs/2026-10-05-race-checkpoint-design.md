@@ -156,11 +156,28 @@ All calls use the session cookie from `POST /api/auth/login` (section 7.2).
 | Post-race cleanup (4.7) | `DELETE /api/messages/{id}` (race rows only) |
 | Link health hints (optional) | `GET /api/stations`, `GET /api/packets?type=message` |
 
-**Actions / triggers / scripts** are an allowed integration path but aren't
-used by the MVP: inbound race traffic doesn't use the Actions `@@` trigger
-syntax, and the Messages API already covers it. They stay available for
-post-MVP needs, such as a graywolf Action that restarts `checkin-board`
-remotely.
+**Actions / triggers / scripts** are an allowed integration path. Race
+traffic doesn't use them: it doesn't use the Actions `@@` trigger syntax,
+and the Messages API already covers it. Where an Action does drive the
+app, it is a graywolf **webhook Action** calling a local hook on the app
+(decision 2026-10-06), never a command Action. The reasons:
+
+- graywolf's service runs with `NoNewPrivileges`, so a command Action
+  can't switch to the `checkin-board` user that owns the app's data.
+- A webhook keeps every trigger inside the app's own validation, limits
+  and audit.
+
+**Local hooks** (`/api/hook/...`):
+
+- They are off unless `CB_HOOK_TOKEN_FILE` is set.
+- They answer only loopback callers that send the bearer token.
+- They reply 200 with one short line, because graywolf relays only
+  "error: http NNN" for anything else.
+
+The first hook is the remote link check (4.8.7). The same path is meant
+for future triggers: physical buttons on a node (e.g. "log", "start race"
+or "link check" wired to GPIO and fed to graywolf as a trigger), and a
+remote restart or status query.
 
 Phase 1 must verify each row against the target graywolf version. One
 example: the conversation-prefs route answers on 0.14.14, but it's missing
@@ -573,10 +590,12 @@ checks toward HQ, and HQ can check toward any checkpoint's call.
    if a checkpoint has no PASS in the last 2 h.
 7. **Automation.** `checkin-board linkcheck [--to CALL] [--count N]
    [--json]` prints the result and exits 0 (PASS), 1 (MARGINAL) or 2
-   (FAIL), so deployment scripts can use it. Optional: a graywolf Action
-   (an allowed integration, section 0) on each checkpoint's graywolf that
-   runs it, so net control can trigger a check remotely with
-   `@@<otp>#linkcheck`. The README has the recipe. It's not required.
+   (FAIL), so deployment scripts can use it. Optional: a graywolf
+   **webhook Action** on each checkpoint's graywolf, posting to the app's
+   local hook `POST /api/hook/linkcheck` (2.2, "Local hooks"). It lets
+   net control trigger a check remotely with `@@<otp>#linkcheck`, and the
+   one-line result comes back as graywolf's reply. The recipe is in
+   `docs/linkcheck-action.md`. It's not required.
 
 **As built (phase 12, 2026-10-06).** Differences from the text above,
 and details it left open:
@@ -641,9 +660,8 @@ and details it left open:
   Both are cleared by Reset.
 - **Health panel and Start race.** HQ's health panel judges a run it only
   answered by what it heard and whether its reply was ACKed.
-- **Remote trigger.** graywolf runs Actions with `NoNewPrivileges`, so a
-  command Action can't switch to the app's user. The recipe uses a
-  **webhook** Action instead, posting to `POST /api/hook/linkcheck`:
+- **Remote trigger.** This uses a webhook Action, as described in 2.2,
+  "Local hooks":
   - The hook is off unless `CB_HOOK_TOKEN_FILE` is set.
   - It answers only loopback callers that send the bearer token.
   - It always replies 200 with one line: graywolf relays only "error:
@@ -1094,6 +1112,8 @@ an "advanced" toggle.
 
 Unchanged: cutoff times and overdue highlighting; `RC1 T` RF time
 broadcast; DNF / drops; time-out / dwell; roster push over RF; webhook push
-to timing software. New: the KISS/AGW transport (section 12); a graywolf
-Action for remote restart/status of `checkin-board`; per-person admin
+to timing software. New: the KISS/AGW transport (section 12);
+hardware buttons on a node (GPIO through graywolf triggers to webhook
+Actions and local hooks, 2.2); a webhook Action for remote restart and
+status of `checkin-board`; per-person admin
 accounts if one admin password per station proves too coarse.
