@@ -1,6 +1,6 @@
 # checkin-board: race checkpoint reporting -- design
 
-Status: DRAFT rev 3 (sign-off answers folded in, section 11; separate admin login). Not started
+Status: DRAFT rev 4 (adds deployment link check 4.8 and test-campaign phase 12). Not started
 (see section 9 for per-phase status).
 Date: 2026-10-05
 Derived from: graywolf `docs/superpowers/specs/2026-10-05-race-checkpoint-design.md`
@@ -117,7 +117,7 @@ cmd/checkin-board/        main: config, wiring, signal handling
 internal/config/          bootstrap config from env/file (exists in skeleton)
 internal/graywolf/        typed REST client: auth, messages, SSE, prefs, station, version
                           (replaces the skeleton's internal/apiclient)
-internal/wire/            RC1 codec: types, encode, decode, fuzz (port of pkg/race wire)
+internal/wire/            RC1 codec: report/heartbeat/gap (port of pkg/race) + link-check P/Q
 internal/raceclock/       browser-synced race clock (port of pkg/race clock)
 internal/store/           SQLite (modernc.org/sqlite, no cgo), migrations, repositories
 internal/checkpoint/      batcher, outbox, ack watcher, heartbeat, gap-request handler
@@ -180,6 +180,8 @@ APRS client, in graywolf's Messages page and in the packet log:
 | Report | CP -> HQ call | `RC1 R <cp> <seq> @HHMM bib/ss bib/ss @HHMM bib/ss ...` | HQ's graywolf, automatically |
 | Heartbeat | CP -> HQ call | `RC1 H <cp> <lastseq> <HHMMSS>` | HQ's graywolf, automatically |
 | Gap request | HQ -> CP call | `RC1 G <cp> 12,14-16` | CP's graywolf, automatically (ignored by HQ logic: HQ repeats until filled) |
+| Link probe (**new**, 4.8) | prober -> responder | `RC1 P <cp> <run> <i>/<n>` | responder's graywolf, automatically (the ACK is the round-trip measurement) |
+| Probe reply (**new**, 4.8) | responder -> prober | `RC1 Q <cp> <run> <heard> <lvl> <via>` | prober's graywolf, automatically |
 
 Unchanged: `<cp>` 1-6 `[A-Z0-9]`; `<seq>` per-checkpoint monotonic,
 persisted; bib `[0-9]{1,4}` normalised, `0` rejected; `@HHMM` **UTC**
@@ -187,6 +189,14 @@ minute groups; `bib/ss`; `-bib/ss` void; midnight rollover via
 `TimeOfDay.Resolve` (nearest instant, valid while latency < 12 h);
 `MaxGapSeqs` = 1000. The codec in `internal/wire` is pure, table-tested and
 fuzz-tested, and it is the single source of the grammar.
+
+Link-check fields (new): `<cp>` is the **prober's** station code. `<run>`
+is 1-9999, chosen by the prober per run. `<n>` is 1-20 and `<i>` is
+1..`<n>`. `<heard>` lists the probe indices the responder decoded, in
+the gap-list form (`1-3,5`, ascending, disjoint, canonical). `<lvl>` is
+the responder's median receive audio level for those probes in whole dBFS
+(`-23`, `0`), or `X` if unknown. `<via>` is `-` for direct, or the last
+digipeater's callsign. Decoding is text-canonical like every other type.
 
 ### 3.1 Msgids
 
@@ -394,6 +404,62 @@ The race has a state in `settings.race_state`: `setup` → `active` →
    - At HQ, a checkpoint that resets mid-race and restarts at seq 1 is
      already handled: it's new data, and `seq_reuse_count` flags it.
 
+### 4.8 Deployment link check (new)
+
+A quick automated test, run when a node is set up at its location, that
+confirms it has a **usable RF link** to HQ before the race depends on it.
+It runs from the admin page ("Link check") or headless from the host
+(`checkin-board linkcheck`). Either side can be the prober: a checkpoint
+checks toward HQ, and HQ can check toward any checkpoint's call.
+
+1. **Probes.** The prober sends `probe_count` (default 5) `RC1 P` DMs to
+   the responder, `probe_spacing` (default 10 s) apart, with graywolf's
+   retries off (3.3) so each probe is exactly one frame. graywolf's
+   automatic ACK of each probe proves a full round trip. The prober records
+   the RTT from the row's `sent_at` to `acked_at`.
+2. **Responder.** The responder's app records which probe indices it
+   decoded. For each probe it reads the frame's receive audio level and
+   digipeater path from its own graywolf (`GET /api/packets?type=message`,
+   matched on source call and text; the level is present only for frames
+   from graywolf's own modem). After it has heard index `<n>`, or 30 s
+   after the last probe it heard, it sends one `RC1 Q` reply. The reply is
+   resent up to twice at 30 s if not ACKed. A checkpoint answers probes
+   only from its configured HQ call. HQ answers any valid callsign, and
+   flags ones that aren't in its checkpoint list.
+3. **Measurements at the prober:**
+   - **uplink:** probes the responder heard (from `<heard>`).
+   - **round trip:** probes ACKed.
+   - **downlink:** whether the reply arrived.
+   - **RTT:** median.
+   - **Remote receive level:** `<lvl>`.
+   - **Local receive level:** of the responder's ACK and reply frames, from
+     the prober's own `/api/packets`.
+   - **Path:** `<via>`.
+4. **Verdict:**
+   - **PASS:** uplink ≥ n-1, round trip ≥ n-1, reply received, and median
+     RTT ≤ 20 s.
+   - **MARGINAL:** at least half the probes got through in each direction.
+     The race will work, but with retries and gap requests. The result
+     suggests antenna height, a relay or a digipeater path.
+   - **FAIL:** anything else.
+   Audio levels are advice, not part of the verdict. A level above -6 dBFS
+   is flagged as "too hot" and one below -40 as "very low". They measure
+   demodulated audio, not RF signal strength, and say so in the UI.
+5. **Limits.** One run at a time per node, at least 2 min between runs,
+   and roughly 12 frames of airtime per run. It's allowed in `setup` and,
+   after a confirm, in `active`. It's not allowed in `complete`.
+6. **Results.** Stored in `link_checks` on the prober. The responder keeps
+   what it heard. The checkpoint admin page shows the history. HQ's health
+   panel shows each checkpoint's latest result (time, verdict, u/n, level),
+   whichever side ran it. **Start race** shows a warning, without blocking,
+   if a checkpoint has no PASS in the last 2 h.
+7. **Automation.** `checkin-board linkcheck [--to CALL] [--count N]
+   [--json]` prints the result and exits 0 (PASS), 1 (MARGINAL) or 2
+   (FAIL), so deployment scripts can use it. Optional: a graywolf Action
+   (an allowed integration, section 0) on each checkpoint's graywolf that
+   runs it, so net control can trigger a check remotely with
+   `@@<otp>#linkcheck`. The README has the recipe. It's not required.
+
 ## 5. Storage (app-owned SQLite, embedded SQL migrations)
 
 | Table | Side | Key columns |
@@ -410,6 +476,7 @@ The race has a state in `settings.race_state`: `setup` → `active` →
 | `cp_status` | HQ | cp_code, last_heard_at, last_call, heartbeat_at, heartbeat_last_seq, clock_skew_sec, max_seq, batches_received, seq_reuse_count, bad_reports |
 | `bad_reports` | HQ | gw_message_id, from_call, text, error, received_at |
 | `inbox_state` | both | cursor, last processed gw row id |
+| `link_checks` | both | run, role (prober/responder), peer_call, started_at, n, heard, acked, reply_received, rtt_median_ms, remote_lvl, local_lvl, via, verdict |
 | `auth` | both | bcrypt hashes of the admin and volunteer passwords, session secret |
 | `sessions` | both | token hash, role (`admin`/`volunteer`), created_at, expires_at; deleted on logout, on expiry, and for every session of a role when that role's password changes |
 
@@ -470,6 +537,8 @@ Admin interface (admin session only; a volunteer session gets 403):
 | PUT | `/api/admin/password/admin` | both: change the admin password (needs the current one) |
 | PUT | `/api/admin/password/volunteer` | both: set or change the volunteer password |
 | GET | `/api/admin/gw` | graywolf version, callsign, reachable, authed, max text, retention |
+| POST | `/api/admin/linkcheck` | both: start a link check (`{to?, count?}`), 409 if one is running or rate-limited |
+| GET | `/api/admin/linkchecks`, `/api/admin/linkchecks/{id}` | both: history / live progress |
 
 The UI polls every 5 s. There are no WebSockets from the app to the
 browser.
@@ -587,7 +656,7 @@ pollers, unreachable banner.
 |---|---|---|---|
 | 0 | Sign-off | This spec approved | Answers received 2026-10-05; awaiting final approval |
 | 1 | graywolf client + API spike | `internal/graywolf`: login/re-login, health, version, station get/put, send, get, resend, delete, list+cursor, SSE, conv prefs, preferences. `httptest` fakes for unit tests, plus an **opt-in contract test** (`GW_CONTRACT=1`) against a real graywolf 0.14.14 that proves: msgid is stable across resend; `wait_for_ack=false` stops the ladder and late ACKs still flip status; `client_id` round-trips (or not); the inbox cursor doesn't skip rows; single-row delete leaves the thread intact | **In progress** 2026-10-05. Client done, 96.3% coverage, reviewed (fixes: watchdog pauses during handler and covers connect; stalled-cursor detection; 30 s fail-fast after bad credentials; no credentials in URLs, errors or `%v`). Contract test written (`make contract`), **not yet run**: waiting on the graywolf test host |
-| 2 | Wire codec + race clock | Port `types/encode/decode/clock` from `pkg/race` into `internal/wire`, `internal/raceclock`; table tests + `FuzzDecode` | Not started |
+| 2 | Wire codec + race clock | Port `types/encode/decode/clock` from `pkg/race` into `internal/wire`, `internal/raceclock`; add `RC1 P/Q` link-check messages (4.8); table tests + `FuzzDecode` | **Done** 2026-10-05. wire 95.6%, raceclock 100% coverage; FuzzDecode 68M execs clean (now covering P/Q); gap-list parser shared with P/Q (behaviour unchanged, reviewed). Worst-case `RC1 Q` is exactly 67 chars, pinned by an exhaustive test. Clock types renamed `raceclock.Source`/`Status`; the OS-clock check (section 6) is injected later |
 | 3 | Storage | SQLite (modernc), embedded migrations, repositories, roster CSV + `FuzzParseRosterCSV` | Not started |
 | 4 | Inbox reader | SSE + catch-up, cursor persistence, idempotent dispatch, reconnect/backoff | Not started |
 | 5 | Checkpoint engine | Batcher, outbox on `/messages` + `/resend`, ACK watcher, fast retransmit, gap-request handler, heartbeat, crash-safe POST (4.1.7) | Not started |
@@ -597,7 +666,8 @@ pollers, unreachable banner.
 | 9 | App REST + auth | Handlers, DTO validation, volunteer/admin login and role middleware (table test: every route × no session / volunteer / admin), first-run setup, password change + session revocation, `reset-admin-password` CLI, rate limit, session expiry, graywolf credential handling | Not started |
 | 10 | Web UI | Admin + volunteer interfaces; JS unit tests for logic; scripted browser run of the real binary against the fake graywolf | Not started |
 | 11 | Packaging + docs | `GOARM=6` build, systemd unit (`After=graywolf.service`), install script, operator README incl. recovery and reset procedures | Not started |
-| 12 | Field rehearsal | 3 nodes on the bench (graywolf over KISS-TCP or real radios), then a walk-around on the course | Not started |
+| 12 | Test campaign + deployment link check | **Link check (4.8):** `RC1 P/Q` behaviour on both sides, admin UI, HQ health column, Start-race warning, `checkin-board linkcheck` CLI with exit codes, Action recipe. **Test campaign:** (a) ≥80% coverage in every package; `go vet`, `staticcheck`, `govulncheck`. (b) Long fuzz runs (30 min each): `FuzzDecode`, roster CSV, journal reader. (c) Soak: simulated 12 h race, 500 runners, 8 checkpoints, 20% loss through the fake graywolf; asserts exactly-once, flat memory, bounded DB growth. (d) Fault injection: `kill -9` between POST and store and between batch and send; graywolf restart, password change and SSE drop mid-race; disk full; torn journal tail after a power cut; OS clock step; checkpoint reset mid-race (seq reuse). (e) Security: auth matrix, Content-Type guard, rate limits, CSV injection, upload limits. (f) Browser E2E at phone width: keypad log/void, network loss, clock banner, admin lifecycle. (g) Real-graywolf bench: contract tests (fast + slow) against the deployed version, then 2-3 graywolf nodes on real radios (low power / dummy loads) replaying a scripted 100-runner race, plus a link check between every node and HQ. (h) Pi Zero W: RSS < 100 MB, CPU during a 20 bibs/min surge, startup time. **Exit criteria:** all green, 9b latency within acceptance, link check PASS on every bench pair; results written to `docs/test-report-<date>.md` | Not started |
+| 13 | Field rehearsal | Deploy to real locations; **run the link check at every node first**; then a walk-around on the course | Not started |
 
 Phase 1 comes first on purpose: every later phase rests on graywolf
 behaviours that this design assumes but hasn't tested through the API.
@@ -625,6 +695,8 @@ RF.
 | Risk | Mitigation |
 |---|---|
 | graywolf API changes between versions | Version check at startup; contract test (phase 1) run before each race against the deployed graywolf version |
+| A deployed node can't reach HQ, discovered only once runners arrive | Deployment link check (4.8) at setup; Start race warns about any checkpoint without a recent PASS |
+| Link check probes are spoofed or replayed | Responder answers only expected callsigns (CP: HQ only); probes carry no data that changes race state; rate-limited per node |
 | `wait_for_ack=false` not available or behaves differently | Fallback in 3.3 (resend only on `timeout`), with an airtime warning |
 | Race peers' graywolf prefs left modified after a crash | Originals saved in `peer_prefs_backup`; restored on Complete; also listed on the admin page with a "Restore now" button |
 | graywolf ACKs reports the app then fails to ingest | graywolf's inbox is durable; the cursor only advances after commit; the next catch-up retries |

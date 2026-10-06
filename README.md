@@ -10,6 +10,8 @@ Design: [`docs/specs/2026-10-05-race-checkpoint-design.md`](docs/specs/2026-10-0
 cmd/checkin-board/     entrypoint
 internal/config/       bootstrap env configuration
 internal/graywolf/     graywolf REST client (auth, messages, SSE, prefs, station)
+internal/wire/         RC1 message grammar (reports, heartbeats, gaps, link-check probes)
+internal/raceclock/    browser-synced race clock
 docs/specs/            design spec
 ```
 
