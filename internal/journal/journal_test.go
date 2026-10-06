@@ -1,6 +1,7 @@
 package journal
 
 import (
+	"bytes"
 	"checkin-board/internal/wire"
 	"os"
 	"path/filepath"
@@ -232,3 +233,27 @@ func TestParseJournalStrictBoolAndBOM(t *testing.T) {
 var t0 = time.Date(2026, 10, 10, 13, 0, 0, 0, time.UTC)
 
 func at(d time.Duration) time.Time { return t0.Add(d) }
+
+// FuzzParse: any bytes (torn lines, binary junk, huge lines) parse
+// without error from memory, and every record kept round-trips exactly.
+func FuzzParse(f *testing.F) {
+	f.Add([]byte("2026-10-10T13:00:00Z,entry,AS5,142,2026-10-10T13:00:00Z,true\n"))
+	f.Add([]byte("\uFEFFlogged_at,event,cp,bib,time_in,clock_synced\n2026-10-10T13:00:00Z,void,AS5,9999,2026-10-10T12:59:00Z,false"))
+	f.Add([]byte("2026-10-10T13:00:00Z,entry,AS5,142,2026-10-10T13:00:00Z,t"))
+	f.Add([]byte("\"unterminated,quote\n,,,,,\n"))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		recs, skipped, err := Parse(bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("Parse from memory failed: %v", err)
+		}
+		if skipped < 0 {
+			t.Fatal("negative skipped count")
+		}
+		for _, r := range recs {
+			again, ok := parseJournalLine(strings.TrimSpace(formatJournalLine(r)))
+			if !ok || again != r {
+				t.Fatalf("round trip: %+v -> %+v (%v)", r, again, ok)
+			}
+		}
+	})
+}

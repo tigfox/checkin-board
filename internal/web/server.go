@@ -22,6 +22,7 @@ import (
 	"checkin-board/internal/graywolf"
 	"checkin-board/internal/hq"
 	"checkin-board/internal/inbox"
+	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/ops"
 	"checkin-board/internal/raceclock"
 	"checkin-board/internal/store"
@@ -71,6 +72,11 @@ type Deps struct {
 	Now        func() time.Time
 	// Static overrides the embedded UI (tests).
 	Static fs.FS
+	// HookToken enables the local automation hook (a graywolf webhook
+	// Action that runs a link check); "" leaves it off.
+	HookToken string
+	// LinkTiming bounds the hook's wait for a link check (zero: default).
+	LinkTiming linkcheck.Timing
 }
 
 type server struct {
@@ -124,6 +130,7 @@ const (
 	public    access = iota // login, setup
 	volunteer               // volunteer or admin session
 	admin                   // admin session only
+	hook                    // local automation: bearer token from loopback, no session
 )
 
 type ctxKey struct{}
@@ -141,6 +148,14 @@ func (s *server) guard(rt route) http.Handler {
 				writeError(w, r, s.log, &httpError{http.StatusForbidden, "forbidden", err.Error()})
 				return
 			}
+		}
+		if rt.access == hook {
+			if err := s.checkHook(r); err != nil {
+				writeError(w, r, s.log, err)
+				return
+			}
+			rt.h(w, r)
+			return
 		}
 		if rt.access != public {
 			role, err := s.Auth.Authenticate(r.Context(), sessionToken(r))

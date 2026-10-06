@@ -36,7 +36,12 @@ export async function renderRace(sec, ctx) {
     row.append(h("button", {
       type: "button", class: "primary",
       onclick: async () => {
-        if (!confirm(question)) return;
+        let ask = question;
+        if (a === "start") {
+          const r = await get("/api/admin/linkcheck/readiness").catch(() => ({ warnings: [] }));
+          if (r.warnings.length) ask = `${r.warnings.join("\n")}\n\n${question}`;
+        }
+        if (!confirm(ask)) return;
         await ctx.run(() => post(`/api/admin/race/${a}`), (r) =>
           a === "cleanup-graywolf" ? `graywolf cleanup: ${r.deleted} deleted, ${r.kept} kept (still needed), ${r.gone} already gone, ${r.failed} failed`
             : a === "secure" ? `Secured. ${r.unconfirmed} entries will go out at the final check-in.` : `${label}: done`);

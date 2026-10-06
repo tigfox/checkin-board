@@ -56,7 +56,7 @@ func TestCheckRejects(t *testing.T) {
 		"long header":   {HeaderText: strings.Repeat("x", MaxHeaderLen+1)},
 		"long footer":   {FooterText: strings.Repeat("x", MaxFooterLen+1)},
 		"control":       {HeaderText: "a\x07b"},
-		"bidi override": {FooterText: "abc‮dcba"},
+		"bidi override": {FooterText: "abc\u202edcba"},
 		"bad utf8":      {HeaderText: "a\xffb"},
 		"bad colour":    {Colors: Colors{Primary: "red"}},
 		"short hex":     {Colors: Colors{Text: "#FFF"}},

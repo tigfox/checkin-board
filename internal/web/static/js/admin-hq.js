@@ -22,12 +22,13 @@ export async function renderHQ(sec, ctx) {
     h("a", { href: "/api/admin/export.csv", download: "results.csv" }, "Download results CSV")));
 
   sec.append(h("div", { class: "card" }, h("h2", {}, "Checkpoint health"),
-    h("table", {}, h("thead", {}, h("tr", {}, ...["Checkpoint", "Heard", "Batches", "Problems", ""].map((t) => h("th", {}, t)))),
+    h("table", {}, h("thead", {}, h("tr", {}, ...["Checkpoint", "Heard", "Batches", "Problems", "Link check", ""].map((t) => h("th", {}, t)))),
       h("tbody", {}, ...status.checkpoints.map((c) => h("tr", {},
         h("td", {}, `${c.Name || c.CPCode} (${c.CPCode})`),
         h("td", {}, c.LastHeardAt ? L.formatAgo(now - new Date(c.LastHeardAt).getTime()) : "never"),
         h("td", {}, c.BatchesReceived ?? 0),
         h("td", {}, L.healthFlags(c, now).join("; ") || "OK"),
+        h("td", {}, L.linkSummary((status.links || {})[c.CPCode], now)),
         h("td", {}, (c.Missing && c.Missing.length) ? h("button", { type: "button", onclick: async () => {
           await ctx.run(() => post(`/api/admin/status/${encodeURIComponent(c.CPCode)}/rerequest`), (r) => `Asked ${c.CPCode} for ${r.requested} batch(es).`);
         } }, "Re-request") : ""),

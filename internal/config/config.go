@@ -26,6 +26,12 @@ const (
 	EnvTimeout          = "GW_TIMEOUT"
 	EnvDBPath           = "CB_DB_PATH"
 	EnvListen           = "CB_LISTEN"
+	// EnvHookTokenFile enables the local automation hook (the graywolf
+	// Action that runs a link check); unset leaves it off.
+	EnvHookTokenFile = "CB_HOOK_TOKEN_FILE"
+
+	// MinHookTokenLen is the shortest accepted hook token.
+	MinHookTokenLen = 24
 
 	maxPasswordFileSize = 4 << 10
 )
@@ -38,11 +44,16 @@ type Config struct {
 	Timeout          time.Duration
 	DBPath           string
 	Listen           string
+	HookToken        string // "" = automation hook off
 }
 
 // String never includes the password.
 func (c Config) String() string {
-	return fmt.Sprintf("graywolf=%s user=%s timeout=%s db=%s listen=%s", c.GraywolfURL, c.GraywolfUser, c.Timeout, c.DBPath, c.Listen)
+	hook := "off"
+	if c.HookToken != "" {
+		hook = "on"
+	}
+	return fmt.Sprintf("graywolf=%s user=%s timeout=%s db=%s listen=%s hook=%s", c.GraywolfURL, c.GraywolfUser, c.Timeout, c.DBPath, c.Listen, hook)
 }
 
 // Env abstracts the environment and filesystem so loading is testable.
@@ -82,10 +93,20 @@ func LoadFrom(env Env) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	hook := ""
+	if path := env.Getenv(EnvHookTokenFile); path != "" {
+		if hook, err = readSecretFile(env, EnvHookTokenFile, path); err != nil {
+			return Config{}, err
+		}
+		if len(hook) < MinHookTokenLen {
+			return Config{}, fmt.Errorf("%s: the token must be at least %d characters", EnvHookTokenFile, MinHookTokenLen)
+		}
+	}
 	return Config{
 		GraywolfURL: gwURL, GraywolfUser: user, GraywolfPassword: pass, Timeout: timeout,
-		DBPath: DBPathFrom(env.Getenv),
-		Listen: valueOr(strings.TrimSpace(env.Getenv(EnvListen)), DefaultListen),
+		DBPath:    DBPathFrom(env.Getenv),
+		Listen:    valueOr(strings.TrimSpace(env.Getenv(EnvListen)), DefaultListen),
+		HookToken: hook,
 	}, nil
 }
 
@@ -105,35 +126,41 @@ func loadPassword(env Env) (string, error) {
 		}
 		return "", fmt.Errorf("%s or %s is required", EnvGraywolfPassword, EnvGraywolfPassFile)
 	}
+	return readSecretFile(env, EnvGraywolfPassFile, path)
+}
+
+// readSecretFile reads a one-line secret from a file that must not be
+// readable by group or others.
+func readSecretFile(env Env, name, path string) (string, error) {
 	// Stat the open handle, not the path, so the checked file is the
 	// one that gets read.
 	f, err := env.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", EnvGraywolfPassFile, err)
+		return "", fmt.Errorf("%s: %w", name, err)
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", EnvGraywolfPassFile, err)
+		return "", fmt.Errorf("%s: %w", name, err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%s %s is not a regular file", EnvGraywolfPassFile, path)
+		return "", fmt.Errorf("%s %s is not a regular file", name, path)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("%s %s has mode %o; it must not be readable by group or others (chmod 600)", EnvGraywolfPassFile, path, info.Mode().Perm())
+		return "", fmt.Errorf("%s %s has mode %o; it must not be readable by group or others (chmod 600)", name, path, info.Mode().Perm())
 	}
 	raw, err := io.ReadAll(io.LimitReader(f, maxPasswordFileSize+1))
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", EnvGraywolfPassFile, err)
+		return "", fmt.Errorf("%s: %w", name, err)
 	}
 	if len(raw) > maxPasswordFileSize {
-		return "", fmt.Errorf("%s %s is too large", EnvGraywolfPassFile, path)
+		return "", fmt.Errorf("%s %s is too large", name, path)
 	}
-	pass := strings.TrimRight(string(raw), "\r\n")
-	if pass == "" {
-		return "", fmt.Errorf("%s %s is empty", EnvGraywolfPassFile, path)
+	secret := strings.TrimRight(string(raw), "\r\n")
+	if secret == "" {
+		return "", fmt.Errorf("%s %s is empty", name, path)
 	}
-	return pass, nil
+	return secret, nil
 }
 
 func parseTimeout(raw string) (time.Duration, error) {

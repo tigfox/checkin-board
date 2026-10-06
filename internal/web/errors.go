@@ -10,6 +10,7 @@ import (
 	"checkin-board/internal/branding"
 	"checkin-board/internal/graywolf"
 	"checkin-board/internal/hq"
+	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/ops"
 	"checkin-board/internal/store"
 )
@@ -36,7 +37,10 @@ type errorBody struct {
 func classify(err error) (int, string, string) {
 	var he *httpError
 	var rl *auth.RateLimitError
+	var soon *linkcheck.TooSoonError
 	switch {
+	case errors.As(err, &soon):
+		return http.StatusTooManyRequests, "too_soon", soon.Error()
 	case errors.As(err, &he):
 		return he.status, he.code, he.message
 	case errors.As(err, &rl):
@@ -70,6 +74,14 @@ func classify(err error) (int, string, string) {
 		return http.StatusConflict, "wrong_role", "not available in this node's role"
 	case errors.Is(err, ops.ErrUnsentData):
 		return http.StatusConflict, "unsent_data", err.Error()
+	case errors.Is(err, linkcheck.ErrNeedsConfirm):
+		return http.StatusConflict, "confirm_needed", "the race is active: confirm to spend airtime on a link check"
+	case errors.Is(err, linkcheck.ErrBusy):
+		return http.StatusConflict, "busy", "a link check is already running"
+	case errors.Is(err, linkcheck.ErrNotAllowed):
+		return http.StatusConflict, "not_allowed", err.Error()
+	case errors.Is(err, linkcheck.ErrInvalid):
+		return http.StatusBadRequest, "invalid", err.Error()
 	case errors.Is(err, hq.ErrTooSoon):
 		return http.StatusTooManyRequests, "too_soon", "just asked; try again in a minute"
 	case errors.Is(err, graywolf.ErrAuth):
@@ -100,6 +112,10 @@ func writeError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err er
 	var rl *auth.RateLimitError
 	if errors.As(err, &rl) {
 		w.Header().Set("Retry-After", strconv.Itoa(int(rl.RetryAfter.Seconds()+0.999)))
+	}
+	var soon *linkcheck.TooSoonError
+	if errors.As(err, &soon) {
+		w.Header().Set("Retry-After", strconv.Itoa(int(soon.RetryAfter.Seconds()+0.999)))
 	}
 	writeJSON(w, status, body)
 }

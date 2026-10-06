@@ -6,6 +6,9 @@
 //	checkin-board                         run the service
 //	checkin-board reset-admin-password    set a new admin password (reads it from stdin)
 //	checkin-board version                 print the build version
+//	checkin-board linkcheck [--to CALL] [--count N] [--json] [--yes]
+//	                                      run a deployment link check through the
+//	                                      running service; exit 0 PASS, 1 MARGINAL, 2 FAIL
 package main
 
 import (
@@ -29,6 +32,7 @@ import (
 	"checkin-board/internal/auth"
 	"checkin-board/internal/config"
 	"checkin-board/internal/graywolf"
+	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/store"
 	"checkin-board/internal/web"
 )
@@ -53,6 +57,11 @@ func main() {
 		err = resetAdminPassword(context.Background(), config.DBPathFrom(os.Getenv), os.Stdin, os.Stdout)
 	case len(os.Args) > 1 && os.Args[1] == "version":
 		printVersion(os.Stdout)
+	case len(os.Args) > 1 && os.Args[1] == "linkcheck":
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runLinkCheckCLI(ctx, config.DBPathFrom(os.Getenv), os.Args[2:], os.Stdout, linkcheck.DefaultTiming)
+		stop()
+		os.Exit(code)
 	default:
 		err = run(logger)
 	}
@@ -149,7 +158,7 @@ func run(logger *slog.Logger) error {
 	}
 	handler, err := web.NewHandler(web.Deps{
 		Store: st, Auth: authSvc, Ops: a.Ops, HQ: a.HQ, Checkpoint: a.Checkpoint, Inbox: a.Inbox,
-		Clock: a.Clock, Graywolf: gw, Logger: logger,
+		Clock: a.Clock, Graywolf: gw, Logger: logger, HookToken: cfg.HookToken,
 	})
 	if err != nil {
 		return fmt.Errorf("web handler: %w", err)

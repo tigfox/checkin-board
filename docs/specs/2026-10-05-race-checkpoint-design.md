@@ -578,6 +578,80 @@ checks toward HQ, and HQ can check toward any checkpoint's call.
    runs it, so net control can trigger a check remotely with
    `@@<otp>#linkcheck`. The README has the recipe. It's not required.
 
+**As built (phase 12, 2026-10-06).** Differences from the text above,
+and details it left open:
+
+- **Downlink in the verdict.** "At least half in each direction" means
+  uplink = probes heard out of probes sent, and downlink = ACKs received
+  out of probes heard. An ACK can only come back for a probe that got
+  there, and the earlier rule (ACKs out of probes sent) failed most runs
+  at 40% loss even though each direction delivered 60%. An ACKed probe
+  also counts as heard if the reply is lost. In simulation, over 20 seeds
+  each with 5 probes:
+
+  | Loss | Verdicts |
+  |---|---|
+  | 0% | all PASS |
+  | 10% | 14 PASS, 6 MARGINAL |
+  | 25% | mostly MARGINAL |
+  | 40% | MARGINAL or FAIL |
+  | 80% and 100% | all FAIL |
+
+  Near the line, 5 probes give a noisy verdict, so the UI suggests 10.
+- **Limits.** At most 10 probes per run. HQ's probes carry the station
+  code `HQ`.
+- **Responder.**
+  - It answers only in `setup` and `active`, so a secured checkpoint
+    stays quiet.
+  - It makes at most 40 reply transmissions per hour, resends
+    included, so forged probes can't fill the channel. graywolf's own
+    ACK of each DM is outside the app's control.
+  - It replies at once when it hears the last probe, otherwise 30 s
+    after the last probe it heard. It tries at most three times
+    (a first send and two resends), 30 s apart; a 409 in-flight
+    conflict counts as a try.
+  - It re-checks its role and HQ call before each send.
+  - A probe from the same station and run number more than 30 min
+    after the last one starts a fresh run. Responses are kept 7 days.
+- **Prober.**
+  - It finishes once the reply is in and every probe is ACKed (or 30 s
+    after the last probe was actually sent). Otherwise it stops 2.5 min
+    after the last probe.
+  - Probes keep their spacing from the actual last send, so a stall never
+    turns into a burst.
+  - A request the service didn't start within a minute expires. A run is
+    abandoned if it overruns its time by a minute, or if the race state
+    or HQ call changes.
+  - A run cancelled after it transmitted still counts for the 2-minute
+    spacing.
+  - The local level is read only from the peer's ACKs of this run's
+    msgids and from its reply.
+- **Concurrent writers.** The service tick, the inbox reader, the web UI
+  and the CLI (another process) change runs and responses only through
+  guarded updates (e.g. `WHERE state = 'running'`, `reply_acked_at IS
+  NULL`). So a cancel, a reply or an ACK is never overwritten by a stale
+  copy of the row.
+- **Trust.** A reply is matched by callsign, run number and station code
+  only. An on-air forger could fake a good result, as with any
+  unauthenticated APRS traffic. The link check is a deployment aid, not
+  a security control.
+- **Delivery to the app.** Requests are rows in `link_checks`, so the
+  CLI hands a run to the running service through the database and needs
+  no network endpoint. `link_responses` keeps what the responder heard.
+  Both are cleared by Reset.
+- **Health panel and Start race.** HQ's health panel judges a run it only
+  answered by what it heard and whether its reply was ACKed.
+- **Remote trigger.** graywolf runs Actions with `NoNewPrivileges`, so a
+  command Action can't switch to the app's user. The recipe uses a
+  **webhook** Action instead, posting to `POST /api/hook/linkcheck`:
+  - The hook is off unless `CB_HOOK_TOKEN_FILE` is set.
+  - It answers only loopback callers that send the bearer token.
+  - It always replies 200 with one line: graywolf relays only "error:
+    http NNN" for anything else.
+  - It never starts a run during the race.
+
+  See `docs/linkcheck-action.md`.
+
 ## 5. Storage (app-owned SQLite, embedded SQL migrations)
 
 | Table | Side | Key columns |
@@ -856,7 +930,19 @@ same at every event.
 | 9 | App REST + auth | Handlers, DTO validation, volunteer/admin login and role middleware (table test: every route × no session / volunteer / admin), first-run setup, password change + session revocation, `reset-admin-password` CLI, rate limit, session expiry, graywolf credential handling. **Branding (8.3):** migration + store, validation (text rules, `#RRGGBB`, WCAG contrast), logo decode/re-encode (PNG/JPEG/WebP only, size and pixel caps), branding endpoints; fuzz the logo decoder with malformed images | **Done** 2026-10-06. Migrations 0003 (auth, sessions) and 0004 (branding). `internal/auth` (89.0%), `internal/branding` (96.9%; logo decoder fuzzed 60 s; pixel cap lowered to 12 MP after a test showed a 4096² image slipped through), `internal/web` (81.2%: 55 routes in a role-guarded table; the access test walks every route as nobody, volunteer and admin). `main` serves the API on `CB_LISTEN` (default `:8090`) with timeouts and graceful shutdown, purges sessions hourly, and has a `reset-admin-password` command. Smoke-tested as a real binary. Security review: no bypass, CSRF or upload hole. Hardening applied: setup code, setup refuses before hashing, bcrypt concurrency cap, attempt-first lockout with IPv6 /64 keys that fails closed when full, `Sec-Fetch-Site` check, stricter CSP, large uploads spill to disk, the volunteer banner never shows raw graywolf errors, and a wrong current admin password returns 400, not 401. `cmd` coverage is 10.5% (wiring; covered by the smoke run) |
 | 10 | Web UI | Admin + volunteer interfaces; JS unit tests for logic; scripted browser run of the real binary against the fake graywolf. **Branded status board (8.3):** CSS custom properties from saved branding, header/footer/logo, branding editor with live preview and contrast readout, print stylesheet | **Done** 2026-10-06. Plain HTML + ES modules in `internal/web/static`, no build step, no inline script or style (CSP holds; branding colours go through CSSOM after a hex check). Pages: login/setup, keypad, admin (Race, Station, Outbox, HQ, Branding, Passwords; tabs by role), branded status board with print stylesheet. All text goes through `textContent`. UI logic in `logic.js`, 13 `node --test` tests (`make jstest`). Keypad retries are idempotent: a `request_id` per bib, reused while a save might have happened; the server answers a retry from a 10 min cache, refuses a reused id for a different bib (422) and holds its cap. Browser E2E in headless Chrome against the whole server on the fake graywolf (`make e2e`, opt-in, chromedp is test-only and not in the binary): login, keypad log / double tap / void, admin tabs and settings save, HQ checkpoints, branding save, board. `internal/web` 81.9%. Review fixes: keypad keeps the id on 5xx/409-in-progress/unreadable replies, blocks double saves, sequences list refreshes; admin renders tabs without interleaving, follows lifecycle changes by polling, and survives a failed first load |
 | 11 | Packaging + docs | `GOARM=6` build, systemd unit (`After=graywolf.service`), install script, operator README incl. recovery and reset procedures | **Done** 2026-10-06. `make pi` / `make dist` (ARMv6 bundle: binary, unit, env template, `install.sh`, operator guide); `checkin-board version` (ldflags version + VCS revision). `deploy/checkin-board.service`: own system user, `StateDirectory`, `After=graywolf.service` (no network-online wait; field nodes often have no uplink), strict sandboxing with a soft-fail syscall filter, `GOMEMLIMIT=80MiB`, start-limit on config errors. `install.sh` is idempotent: never overwrites settings or the password, copies the DB aside before an upgrade, restarts the old version if the upgrade fails, refuses to write through symlinks in the service-owned state dir. Tested in Debian containers (arm64, and the ARMv6 bundle on armhf under emulation): install, re-run, upgrade, symlink refusal. `docs/operator-guide.md`: install, first-run setup, race day by role, recovery, lost admin password, reset. Idle RSS on Linux arm64 ≈ 20 MB; the Pi Zero figure and a syscall-filter smoke test wait for 12(h) |
-| 12 | Test campaign + deployment link check | **Link check (4.8):** `RC1 P/Q` behaviour on both sides, admin UI, HQ health column, Start-race warning, `checkin-board linkcheck` CLI with exit codes, Action recipe. **Test campaign:** (a) ≥80% coverage in every package; `go vet`, `staticcheck`, `govulncheck`. (b) Long fuzz runs (30 min each): `FuzzDecode`, roster CSV, journal reader. (c) Soak: simulated 12 h race, 500 runners, 8 checkpoints, 20% loss through the fake graywolf; asserts exactly-once, flat memory, bounded DB growth. (d) Fault injection: `kill -9` between POST and store and between batch and send; graywolf restart, password change and SSE drop mid-race; disk full; torn journal tail after a power cut; OS clock step; checkpoint reset mid-race (seq reuse). (e) Security: auth matrix, Content-Type guard, rate limits, CSV injection, upload limits, hostile logo files (SVG, polyglots, decompression bombs) and branding text (HTML, bidi overrides). (f) Browser E2E at phone width: keypad log/void, network loss, clock banner, admin lifecycle. (g) Real-graywolf bench: contract tests (fast + slow) against the deployed version, then 2-3 graywolf nodes on real radios (low power / dummy loads) replaying a scripted 100-runner race, plus a link check between every node and HQ. (h) Pi Zero W: RSS < 100 MB, CPU during a 20 bibs/min surge, startup time. **Exit criteria:** all green, 9b latency within acceptance, link check PASS on every bench pair; results written to `docs/test-report-<date>.md` | Not started |
+| 12 | Test campaign + deployment link check | **Link check (4.8):** `RC1 P/Q` behaviour on both sides, admin UI, HQ health column, Start-race warning, `checkin-board linkcheck` CLI with exit codes, Action recipe. **Test campaign:** (a) ≥80% coverage in every package; `go vet`, `staticcheck`, `govulncheck`. (b) Long fuzz runs (30 min each): `FuzzDecode`, roster CSV, journal reader. (c) Soak: simulated 12 h race, 500 runners, 8 checkpoints, 20% loss through the fake graywolf; asserts exactly-once, flat memory, bounded DB growth. (d) Fault injection: `kill -9` between POST and store and between batch and send; graywolf restart, password change and SSE drop mid-race; disk full; torn journal tail after a power cut; OS clock step; checkpoint reset mid-race (seq reuse). (e) Security: auth matrix, Content-Type guard, rate limits, CSV injection, upload limits, hostile logo files (SVG, polyglots, decompression bombs) and branding text (HTML, bidi overrides). (f) Browser E2E at phone width: keypad log/void, network loss, clock banner, admin lifecycle. (g) Real-graywolf bench: contract tests (fast + slow) against the deployed version, then 2-3 graywolf nodes on real radios (low power / dummy loads) replaying a scripted 100-runner race, plus a link check between every node and HQ. (h) Pi Zero W: RSS < 100 MB, CPU during a 20 bibs/min surge, startup time. **Exit criteria:** all green, 9b latency within acceptance, link check PASS on every bench pair; results written to `docs/test-report-<date>.md` | **In progress** 2026-10-06. **Link check done** (4.8, as built):
+- `internal/linkcheck` (87.1%) is ticked by the app and simulated end to end. Verdicts track loss; a dead link fails with only its probes on air; reply airtime is budgeted.
+- Admin tab, HQ health column and Start-race warning.
+- `checkin-board linkcheck` CLI (exit 0/1/2, `--json`, `--brief`).
+- Optional graywolf webhook Action recipe through a token-guarded loopback hook.
+- Review fixes: guarded store transitions so concurrent writers can't resurrect a cancelled run or lose a reply; no probe bursts after a stall; stale requests expire; resends count against the budget.
+
+**Test campaign so far:**
+- (a) Every package ≥80% except `cmd` (wiring; CLI and version tested). `go vet` and `staticcheck` are clean. `govulncheck`: one advisory in `golang.org/x/crypto` with no fix yet, not called by the app.
+- (b) Fuzz targets: `FuzzDecode`, roster CSV, logo, and new journal reader and checkpoint-export parser. The 60 s smoke runs are clean; the 30-min runs are pending.
+- (f) Browser E2E covers login, keypad (log, double tap, void), admin tabs, settings, HQ checkpoints, branding, board and link check.
+
+**Waiting for hardware:** (g) and (h). Remaining non-hardware items: (b) long runs, (c) soak, (d) fault injection, (e) the extra security cases |
 | 13 | Field rehearsal | Deploy to real locations; **run the link check at every node first**; then a walk-around on the course | Not started |
 
 Phase 1 comes first on purpose: every later phase rests on graywolf

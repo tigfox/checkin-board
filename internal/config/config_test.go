@@ -159,3 +159,32 @@ func TestStringHidesPassword(t *testing.T) {
 		t.Errorf("String() leaks password: %s", cfg)
 	}
 }
+
+func TestHookTokenFile(t *testing.T) {
+	base := map[string]string{EnvGraywolfUser: "race", EnvGraywolfPassword: "pw"}
+	cfg, err := LoadFrom(envFrom(base))
+	if err != nil || cfg.HookToken != "" {
+		t.Fatalf("no token file: %q, %v", cfg.HookToken, err)
+	}
+	with := func(path string) map[string]string {
+		m := map[string]string{EnvHookTokenFile: path}
+		for k, v := range base {
+			m[k] = v
+		}
+		return m
+	}
+	tok := strings.Repeat("k", MinHookTokenLen)
+	cfg, err = LoadFrom(envFrom(with(writeSecret(t, tok+"\n", 0o600))))
+	if err != nil || cfg.HookToken != tok {
+		t.Fatalf("token = %q, %v", cfg.HookToken, err)
+	}
+	if !strings.Contains(cfg.String(), "hook=on") || strings.Contains(cfg.String(), tok) {
+		t.Fatalf("String() = %q", cfg.String())
+	}
+	if _, err := LoadFrom(envFrom(with(writeSecret(t, "short\n", 0o600)))); err == nil || !strings.Contains(err.Error(), "at least") {
+		t.Fatalf("short token: %v", err)
+	}
+	if _, err := LoadFrom(envFrom(with(writeSecret(t, tok, 0o644)))); err == nil || !strings.Contains(err.Error(), "chmod 600") {
+		t.Fatalf("readable token: %v", err)
+	}
+}

@@ -14,7 +14,7 @@ pi:
 dist: pi
 	rm -rf dist/checkin-board-$(VERSION) && mkdir -p dist/checkin-board-$(VERSION)
 	cp bin/checkin-board-armv6 dist/checkin-board-$(VERSION)/checkin-board
-	cp deploy/checkin-board.service deploy/checkin-board.env deploy/install.sh docs/operator-guide.md dist/checkin-board-$(VERSION)/
+	cp deploy/checkin-board.service deploy/checkin-board.env deploy/install.sh docs/operator-guide.md docs/linkcheck-action.md dist/checkin-board-$(VERSION)/
 	COPYFILE_DISABLE=1 tar -C dist -czf dist/checkin-board-$(VERSION)-linux-armv6.tar.gz checkin-board-$(VERSION)
 
 run:

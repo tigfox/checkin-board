@@ -117,3 +117,28 @@ test("keepPending keeps the request id whenever the save may have happened", () 
   assert.equal(L.keepPending(err(409, "wrong_state")), false);
   assert.equal(L.keepPending(err(422, "request_id_reused")), false);
 });
+
+test("linkSummary describes a checkpoint's latest link check", () => {
+  const now = Date.parse("2026-10-10T07:00:00Z");
+  assert.equal(L.linkSummary(null, now), "never checked");
+  assert.equal(
+    L.linkSummary({ verdict: "PASS", heard: 5, total: 5, level: -22, at: "2026-10-10T06:50:00Z", side: "hq" }, now),
+    "PASS 5/5, -22 dBFS, 10 min ago");
+  assert.equal(
+    L.linkSummary({ verdict: "FAIL", heard: 1, total: 5, at: "2026-10-10T06:59:55Z", side: "checkpoint" }, now),
+    "FAIL 1/5, just now");
+});
+
+test("levelNote flags audio that is too hot or very low", () => {
+  assert.equal(L.levelNote(-3), " (too hot)");
+  assert.equal(L.levelNote(-45), " (very low)");
+  assert.equal(L.levelNote(-20), "");
+  assert.equal(L.levelNote(undefined), "");
+});
+
+test("linkProgress describes a running check", () => {
+  assert.equal(L.linkProgress({ state: "requested" }), "Starting…");
+  assert.equal(L.linkProgress({ state: "running", probes_sent: 2, count: 5 }), "Probe 2 of 5 sent…");
+  assert.equal(L.linkProgress({ state: "running", probes_sent: 5, count: 5, reply_received: false }), "All probes sent; waiting for the reply…");
+  assert.equal(L.linkProgress({ state: "done", verdict: "PASS" }), "");
+});

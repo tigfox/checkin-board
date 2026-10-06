@@ -18,7 +18,8 @@ type ResetOptions struct {
 }
 
 // raceTables hold one race's data, in delete order.
-var raceTables = []string{"local_entries", "batches", "received_entries", "received_batches", "cp_status", "bad_reports"}
+var raceTables = []string{"local_entries", "batches", "received_entries", "received_batches", "cp_status", "bad_reports",
+	"link_probes", "link_checks", "link_responses"}
 
 // Backup writes a consistent snapshot of the database to path (SQLite
 // VACUUM INTO). path must not exist.

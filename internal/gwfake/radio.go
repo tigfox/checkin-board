@@ -1,6 +1,7 @@
 package gwfake
 
 import (
+	"context"
 	"math/rand/v2"
 	"slices"
 	"strings"
@@ -155,6 +156,7 @@ func (s *Station) air(f Frame) {
 func (s *Station) hear(f Frame) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.logRX(f)
 	if f.IsAck {
 		for _, m := range s.rows {
 			if m.Direction == "out" && m.MsgID == f.MsgID && strings.EqualFold(m.PeerCall, f.From) && m.Status != graywolf.StatusAcked {
@@ -178,4 +180,56 @@ func (s *Station) hear(f Frame) {
 	if f.MsgID != "" {
 		s.air(Frame{From: s.Call, To: f.From, MsgID: f.MsgID, IsAck: true})
 	}
+}
+
+// maxPacketLog bounds the fake's packet log, as graywolf's is bounded.
+const maxPacketLog = 5000
+
+// SetRXLevel sets the receive audio level reported for frames heard
+// from call (as graywolf's modem measures it).
+func (s *Station) SetRXLevel(call string, dbfs float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.rxLevel == nil {
+		s.rxLevel = map[string]float64{}
+	}
+	s.rxLevel[strings.ToUpper(call)] = dbfs
+}
+
+// logRX records a heard frame in the packet log. Caller holds s.mu.
+func (s *Station) logRX(f Frame) {
+	p := graywolf.Packet{
+		Timestamp: s.Now().UTC(), Direction: "RX", Type: "message",
+		Decoded: &graywolf.DecodedPacket{Source: f.From, Message: &graywolf.PacketMessage{
+			Addressee: f.To, Text: f.Text, MessageID: f.MsgID, IsAck: f.IsAck,
+		}},
+	}
+	if lvl, ok := s.rxLevel[strings.ToUpper(f.From)]; ok {
+		p.AudioLevel = &graywolf.AudioLevel{LevelDBFS: lvl}
+	}
+	s.packets = append(s.packets, p)
+	if len(s.packets) > maxPacketLog {
+		s.packets = slices.Clone(s.packets[len(s.packets)-maxPacketLog:])
+	}
+}
+
+// ListPackets implements the packet-log read (GET /api/packets), oldest
+// first; Limit keeps the newest entries.
+func (s *Station) ListPackets(ctx context.Context, q graywolf.PacketQuery) ([]graywolf.Packet, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []graywolf.Packet
+	for _, p := range s.packets {
+		switch {
+		case !q.Since.IsZero() && p.Timestamp.Before(q.Since),
+			q.Type != "" && p.Type != q.Type,
+			q.Direction != "" && p.Direction != q.Direction:
+			continue
+		}
+		out = append(out, p)
+	}
+	if q.Limit > 0 && len(out) > q.Limit {
+		out = out[len(out)-q.Limit:]
+	}
+	return out, nil
 }

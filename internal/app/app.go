@@ -13,6 +13,7 @@ import (
 	"checkin-board/internal/graywolf"
 	"checkin-board/internal/hq"
 	"checkin-board/internal/inbox"
+	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/ops"
 	"checkin-board/internal/peers"
 	"checkin-board/internal/raceclock"
@@ -33,6 +34,7 @@ type Graywolf interface {
 	inbox.Graywolf
 	peers.Prefs
 	cleanupClient
+	linkcheck.Graywolf
 	MessagePreferences(ctx context.Context) (graywolf.MessagePreferences, error)
 }
 
@@ -61,6 +63,7 @@ type App struct {
 	HQ         *hq.Engine
 	Inbox      *inbox.Reader
 	Ops        *ops.Service
+	LinkCheck  *linkcheck.Service
 }
 
 // Graywolf also needs DeleteMessage for post-race cleanup.
@@ -102,8 +105,12 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	lc, err := linkcheck.New(linkcheck.Config{Store: cfg.Store, Graywolf: cfg.Graywolf, Peers: ensurer, Logger: log})
+	if err != nil {
+		return nil, err
+	}
 	reader, err := inbox.New(inbox.Config{
-		Graywolf: cfg.Graywolf, Store: cfg.Store, Dispatcher: NewDispatcher(cfg.Store, cp, hqe), Logger: log,
+		Graywolf: cfg.Graywolf, Store: cfg.Store, Dispatcher: NewDispatcher(cfg.Store, cp, hqe, lc), Logger: log,
 	})
 	if err != nil {
 		return nil, err
@@ -117,7 +124,7 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &App{cfg: cfg, log: log, Clock: clock, Peers: ensurer, Checkpoint: cp, HQ: hqe, Inbox: reader, Ops: opsSvc}, nil
+	return &App{cfg: cfg, log: log, Clock: clock, Peers: ensurer, Checkpoint: cp, HQ: hqe, Inbox: reader, Ops: opsSvc, LinkCheck: lc}, nil
 }
 
 // Close releases what the app holds open (the bib journal).
@@ -144,6 +151,7 @@ func (a *App) Run(ctx context.Context) error {
 	wg.Go(func() { _ = a.Inbox.Run(ctx) })
 	wg.Go(func() { _ = a.Checkpoint.Run(ctx) })
 	wg.Go(func() { _ = a.HQ.Run(ctx) })
+	wg.Go(func() { _ = a.LinkCheck.Run(ctx) })
 	wg.Go(func() { a.refreshPrefs(ctx) })
 	wg.Wait()
 	return ctx.Err()

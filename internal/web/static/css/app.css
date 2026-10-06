@@ -65,6 +65,7 @@ label { display: block; font-weight: 600; margin: 10px 0 4px; }
 .ok { color: var(--ok); }
 
 table { border-collapse: collapse; width: 100%; }
+.scroll { overflow-x: auto; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-size: 0.9rem; color: var(--muted); }
 

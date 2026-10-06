@@ -25,6 +25,7 @@ internal/web/          REST API (role-guarded route table) and embedded UI
 internal/web/static/   the UI: plain HTML + ES modules, no build step, no inline script/style
 internal/web/jstest/   `node --test` unit tests for the UI logic
 internal/peers/        graywolf per-peer retry settings (backup / restore)
+internal/linkcheck/    deployment link check: RC1 P probes, RC1 Q replies, verdicts
 internal/gwfake/       in-memory fake of graywolf's Messages API + simulated RF channel (tests)
 internal/sim/          whole-node simulation: exactly-once and latency tests
 deploy/                systemd unit, env template, install script
@@ -52,6 +53,7 @@ in `/var/lib/checkin-board` and starts after `graywolf.service`.
 | `GW_TIMEOUT`       | `10s`                   | per-request timeout |
 | `CB_DB_PATH`       | `checkin-board.db`      | the app's SQLite database (keep it on persistent storage) |
 | `CB_LISTEN`        | `:8090`                 | address the web UI and API listen on |
+| `CB_HOOK_TOKEN_FILE` |                       | optional: token file (`chmod 600`, 24+ chars) that turns on the local hook a graywolf webhook Action uses to run a link check ([recipe](docs/linkcheck-action.md)) |
 
 The bib journal (`race-journal.csv`) and reset backups (`backups/`) live
 next to the database.
@@ -72,6 +74,21 @@ echo 'a new admin password' | CB_DB_PATH=/path/to/checkin-board.db checkin-board
 ```
 
 This logs out every admin session and doesn't touch race data.
+
+## Link check
+
+Before the race, each node checks its radio link (spec 4.8): Admin → Link
+check, or from the node's shell:
+
+```sh
+sudo -u checkin-board CB_DB_PATH=/var/lib/checkin-board/checkin-board.db checkin-board linkcheck
+```
+
+Exit code 0 PASS, 1 MARGINAL, 2 FAIL (or couldn't run); `--json`,
+`--brief`, `--count N`, `--to CALL` (HQ), `--yes` (during the race). The
+running service does the radio work; the command records the request in
+the database and waits. Net control can also trigger it by radio through
+a graywolf Action: [docs/linkcheck-action.md](docs/linkcheck-action.md).
 
 ## Pages
 

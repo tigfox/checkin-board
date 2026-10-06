@@ -164,3 +164,26 @@ func TestImportJournalReconciles(t *testing.T) {
 		t.Fatal("empty journal accepted")
 	}
 }
+
+// FuzzParseExport: a hostile or damaged export never panics, and every
+// batch it accepts is a valid RC1 report.
+func FuzzParseExport(f *testing.F) {
+	f.Add([]byte("cp,seq,bib,time_in,event,clock_synced,msg_id\nAS5,1,142,2026-10-10T13:00:00Z,entry,true,12\n"))
+	f.Add([]byte("cp,seq,bib,time_in,event,clock_synced\nAS5,1,142,2026-10-10T13:00:00Z,void,false\nAS5,1,143,2026-10-10T13:00:05Z,entry,true\n"))
+	f.Add([]byte("\"a,b\nAS5,99999999999,1,x,entry,true"))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		groups, err := parseExport(bytes.NewReader(data))
+		if err != nil {
+			return
+		}
+		for _, g := range groups {
+			if g.report == nil || len(g.times) != len(g.report.Entries) {
+				t.Fatalf("bad group %+v", g)
+			}
+			r := g.report
+			if _, n, err := wire.PackReport(r.CP, r.Seq, r.Entries, 1<<16); err != nil || n != len(r.Entries) {
+				t.Fatalf("accepted batch doesn't encode: %v, %d/%d (%+v)", err, n, len(r.Entries), r)
+			}
+		}
+	})
+}

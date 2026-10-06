@@ -23,6 +23,15 @@ func TestRouteAccessMatrix(t *testing.T) {
 	for _, rt := range s.routes() {
 		path := concretePath(rt.pattern)
 		e.freshSessions() // logout and password routes end sessions
+		if rt.access == hook {
+			// Token-only, and off unless a token is configured.
+			for _, tok := range []string{"", e.volunt, e.admin} {
+				if code := e.request(rt, path, tok).StatusCode; code != http.StatusNotFound {
+					t.Errorf("%s %s with a session = %d, want 404", rt.method, path, code)
+				}
+			}
+			continue
+		}
 		for _, who := range []struct {
 			name, token string
 			allowed     bool

@@ -88,6 +88,27 @@ Use **Admin → HQ** for these.
 - **Admin → Branding:** set the status board's header, footer, colours
   and logo. The editor refuses colour pairs that are hard to read.
 
+### Link check (each checkpoint, at its location)
+
+Before the race, once the checkpoint is set up where it will operate:
+**Admin → Link check → Run link check**. It sends 5 short test messages
+to HQ, 10 s apart. HQ's app answers them automatically, and after one to
+three minutes you get a verdict:
+
+- **PASS:** the link is good.
+- **MARGINAL:** usable, but expect retries and delays. Try a higher
+  antenna, a relay station or a digipeater path, then check again. On a
+  doubtful link, 10 probes give a steadier verdict than 5.
+- **FAIL:** not usable as it is. Check the frequency, the channel, the
+  HQ callsign and the antenna.
+
+The audio levels shown are the sound-card input level, not signal
+strength. "Too hot" or "very low" means adjust the radio's volume or the
+input gain. Runs are at least 2 minutes apart. HQ can also check any
+checkpoint from its own Link check tab, and its health panel shows each
+checkpoint's latest result. **Start race** warns about any link without
+a PASS in the last 2 hours. The warning doesn't block the start.
+
 ## 3. Race day
 
 | When | Checkpoint admin | HQ admin |

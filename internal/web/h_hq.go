@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"checkin-board/internal/linkcheck"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,7 +36,13 @@ func (s *server) getStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"checkpoints": health, "bad_reports": bad})
+	cps, checks, responses, err := s.linkInputs(r)
+	if err != nil {
+		writeError(w, r, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"checkpoints": health, "bad_reports": bad,
+		"links": linkcheck.Latest(cps, checks, responses)})
 }
 
 func (s *server) postRerequest(w http.ResponseWriter, r *http.Request) {

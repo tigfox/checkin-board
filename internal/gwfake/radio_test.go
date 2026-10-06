@@ -65,3 +65,34 @@ func TestRadioDeliversDMsAndACKs(t *testing.T) {
 		t.Fatalf("B rows = %d, want a new row after the dedup window", n)
 	}
 }
+
+func TestPacketLogRecordsHeardFramesWithLevel(t *testing.T) {
+	now := time.Date(2026, 10, 10, 13, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	r := NewRadio(1, Profile{}, clock)
+	a, b := New("AAA"), New("BBB")
+	a.Now, b.Now = clock, clock
+	r.Attach(a)
+	r.Attach(b)
+	b.SetRXLevel("AAA", -18) // A's frames reach B's modem at -18 dBFS; B's reach A with no level (TNC)
+	_, _ = a.SendMessage(ctx, graywolf.SendRequest{To: "BBB", Text: "RC1 P AS5 7 1/5"})
+	r.Deliver() // B hears the DM, ACKs
+	now = now.Add(time.Second)
+	r.Deliver() // A hears the ACK
+
+	pk, err := b.ListPackets(ctx, graywolf.PacketQuery{Type: "message", Direction: "RX"})
+	if err != nil || len(pk) != 1 {
+		t.Fatalf("B packets = %+v, %v", pk, err)
+	}
+	p := pk[0]
+	if p.AudioLevel == nil || p.AudioLevel.LevelDBFS != -18 || p.Decoded.Source != "AAA" || p.Decoded.Message.Text != "RC1 P AS5 7 1/5" {
+		t.Fatalf("B packet = %+v", p)
+	}
+	pa, _ := a.ListPackets(ctx, graywolf.PacketQuery{Direction: "RX"})
+	if len(pa) != 1 || !pa[0].Decoded.Message.IsAck || pa[0].AudioLevel != nil {
+		t.Fatalf("A packets = %+v", pa)
+	}
+	if late, _ := a.ListPackets(ctx, graywolf.PacketQuery{Since: now.Add(time.Second)}); len(late) != 0 {
+		t.Fatalf("since filter: %+v", late)
+	}
+}

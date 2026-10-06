@@ -10,6 +10,7 @@ import (
 	"checkin-board/internal/gwfake"
 	"checkin-board/internal/inbox"
 	"checkin-board/internal/store"
+	"checkin-board/internal/wire"
 )
 
 var ctx = context.Background()
@@ -37,7 +38,7 @@ func TestDispatcherRoutesByRole(t *testing.T) {
 		{store.RoleUnset, 0, 0},
 	} {
 		*cp, *hq = recorder{}, recorder{}
-		d := NewDispatcher(fixedSettings{s: store.Settings{Role: tc.role}}, cp, hq)
+		d := NewDispatcher(fixedSettings{s: store.Settings{Role: tc.role}}, cp, hq, nil)
 		errIn := d.HandleInbound(ctx, graywolf.Message{})
 		errOut := d.HandleOutbound(ctx, graywolf.Message{})
 		if wantNotReady := tc.role == store.RoleUnset; errors.Is(errIn, inbox.ErrNotReady) != wantNotReady || errors.Is(errOut, inbox.ErrNotReady) != wantNotReady {
@@ -48,12 +49,42 @@ func TestDispatcherRoutesByRole(t *testing.T) {
 		}
 	}
 	boom := errors.New("db down")
-	d := NewDispatcher(fixedSettings{err: boom}, cp, hq)
+	d := NewDispatcher(fixedSettings{err: boom}, cp, hq, nil)
 	if err := d.HandleInbound(ctx, graywolf.Message{}); !errors.Is(err, boom) {
 		t.Errorf("inbound err = %v", err)
 	}
 	if err := d.HandleOutbound(ctx, graywolf.Message{}); !errors.Is(err, boom) {
 		t.Errorf("outbound err = %v", err)
+	}
+}
+
+type linkRecorder struct{ in, out int }
+
+func (r *linkRecorder) HandleInbound(context.Context, graywolf.Message, wire.Message) error {
+	r.in++
+	return nil
+}
+func (r *linkRecorder) HandleOutbound(context.Context, graywolf.Message) error { r.out++; return nil }
+
+func TestDispatcherSendsLinkCheckTrafficToLinkCheck(t *testing.T) {
+	cp, hq, lc := &recorder{}, &recorder{}, &linkRecorder{}
+	d := NewDispatcher(fixedSettings{s: store.Settings{Role: store.RoleCheckpoint}}, cp, hq, lc)
+	for _, text := range []string{"RC1 P AS5 7 1/5", "RC1 Q AS5 7 1-5 -20 -"} {
+		if err := d.HandleInbound(ctx, graywolf.Message{Text: text}); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.HandleOutbound(ctx, graywolf.Message{Text: text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = d.HandleInbound(ctx, graywolf.Message{Text: "RC1 G AS5 3"})
+	if lc.in != 2 || lc.out != 2 || cp.in != 1 || cp.out != 0 {
+		t.Fatalf("lc=%+v cp=%+v", lc, cp)
+	}
+	// No link check wired: probes go nowhere, nothing breaks.
+	d = NewDispatcher(fixedSettings{s: store.Settings{Role: store.RoleHQ}}, cp, hq, nil)
+	if err := d.HandleInbound(ctx, graywolf.Message{Text: "RC1 P AS5 7 1/5"}); err != nil || hq.in != 0 {
+		t.Fatalf("err = %v, hq = %+v", err, hq)
 	}
 }
 

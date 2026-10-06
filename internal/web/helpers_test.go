@@ -63,6 +63,7 @@ type env struct {
 	auth   *auth.Service
 	cp     *checkpoint.Engine
 	inbox  *fakeInbox
+	deps   Deps
 	admin  string // session tokens
 	volunt string
 }
@@ -70,6 +71,12 @@ type env struct {
 // newEnv builds the whole server on the fake graywolf with the given
 // settings, an admin and a volunteer password, and a session for each.
 func newEnv(t *testing.T, cfg store.Settings) *env {
+	t.Helper()
+	return newEnvWith(t, cfg, nil)
+}
+
+// newEnvWith is newEnv with a chance to adjust the handler's Deps.
+func newEnvWith(t *testing.T, cfg store.Settings, adjust func(*Deps)) *env {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "checkin-board.db"))
@@ -93,13 +100,17 @@ func newEnv(t *testing.T, cfg store.Settings) *env {
 	t.Cleanup(func() { _ = opsSvc.Close() })
 	a := auth.New(st, nil, bcrypt.MinCost)
 	in := &fakeInbox{}
-	h, err := NewHandler(Deps{Store: st, Auth: a, Ops: opsSvc, HQ: hqe, Checkpoint: cp, Inbox: in, Clock: clock, Graywolf: gw})
+	deps := Deps{Store: st, Auth: a, Ops: opsSvc, HQ: hqe, Checkpoint: cp, Inbox: in, Clock: clock, Graywolf: gw}
+	if adjust != nil {
+		adjust(&deps)
+	}
+	h, err := NewHandler(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	e := &env{t: t, srv: srv, st: st, gw: gw, auth: a, cp: cp, inbox: in, ops: opsSvc, hq: hqe}
+	e := &env{t: t, srv: srv, st: st, gw: gw, auth: a, cp: cp, inbox: in, ops: opsSvc, hq: hqe, deps: deps}
 	code, _ := a.SetupCode(ctx)
 	if e.admin, err = a.Setup(ctx, code, adminPW); err != nil {
 		t.Fatal(err)

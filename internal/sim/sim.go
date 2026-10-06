@@ -10,10 +10,12 @@ import (
 	"sync"
 	"time"
 
+	"checkin-board/internal/app"
 	"checkin-board/internal/checkpoint"
 	"checkin-board/internal/gwfake"
 	"checkin-board/internal/hq"
 	"checkin-board/internal/inbox"
+	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/peers"
 	"checkin-board/internal/raceclock"
 	"checkin-board/internal/store"
@@ -52,6 +54,7 @@ type Node struct {
 	CP       *checkpoint.Engine
 	HQ       *hq.Engine
 	Inbox    *inbox.Reader
+	Link     *linkcheck.Service
 	clock    *raceclock.Clock
 }
 
@@ -102,18 +105,18 @@ func (s *Sim) build(n *Node) error {
 	if err != nil {
 		return err
 	}
-	var d inbox.Dispatcher = cp
-	if n.Settings.Role == store.RoleHQ {
-		d = hqe
+	lc, err := linkcheck.New(linkcheck.Config{Store: st, Graywolf: n.GW, Peers: ens, Now: s.Clock.Now})
+	if err != nil {
+		return err
 	}
-	reader, err := inbox.New(inbox.Config{Graywolf: n.GW, Store: st, Dispatcher: d})
+	reader, err := inbox.New(inbox.Config{Graywolf: n.GW, Store: st, Dispatcher: app.NewDispatcher(st, cp, hqe, lc)})
 	if err != nil {
 		return err
 	}
 	if n.Store != nil {
 		_ = n.Store.Close()
 	}
-	n.Store, n.CP, n.HQ, n.Inbox, n.clock = st, cp, hqe, reader, clock
+	n.Store, n.CP, n.HQ, n.Inbox, n.Link, n.clock = st, cp, hqe, reader, lc, clock
 	return nil
 }
 
@@ -144,6 +147,7 @@ func (s *Sim) Step() {
 		_ = n.Inbox.CatchUp(ctx)
 		// Re-read settings: the lifecycle (and the engine itself, on
 		// finishing a check-in) changes the race state.
+		_ = n.Link.Tick(ctx)
 		cfg, err := n.Store.GetSettings(ctx)
 		if err != nil {
 			continue

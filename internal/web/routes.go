@@ -38,6 +38,15 @@ func (s *server) routes() []route {
 		{method: "POST", pattern: "/api/admin/race/secure", access: admin, h: s.postSecure},
 		{method: "POST", pattern: "/api/admin/race/check-in", access: admin, h: s.postCheckIn},
 		{method: "POST", pattern: "/api/admin/race/cleanup-graywolf", access: admin, h: s.postCleanup},
+
+		// Admin: deployment link check (spec 4.8).
+		{method: "GET", pattern: "/api/admin/linkcheck", access: admin, h: s.getLinkChecks},
+		{method: "POST", pattern: "/api/admin/linkcheck", access: admin, h: s.postLinkCheck},
+		{method: "POST", pattern: "/api/admin/linkcheck/{id}/cancel", access: admin, h: s.postLinkCheckCancel},
+		{method: "GET", pattern: "/api/admin/linkcheck/readiness", access: admin, h: s.getLinkReadiness},
+
+		// Local automation (graywolf webhook Action), token from loopback only.
+		{method: "POST", pattern: "/api/hook/linkcheck", access: hook, h: s.postHookLinkCheck},
 		{method: "POST", pattern: "/api/admin/race/reset", access: admin, h: s.postReset},
 
 		// Admin: checkpoint tools.

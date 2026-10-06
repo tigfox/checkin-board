@@ -55,6 +55,8 @@ type Station struct {
 	maxText    int
 	radio      *Radio
 	heard      map[string]time.Time // (from, msgid, text) -> last heard, for dedup
+	packets    []graywolf.Packet    // packet log of frames heard (RX)
+	rxLevel    map[string]float64   // sender -> receive level; absent = no level (TNC)
 }
 
 // New returns a station with the given callsign.

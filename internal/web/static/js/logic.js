@@ -148,3 +148,28 @@ export function keepPending(err) {
   if (err.status >= 500 || err.status === 408 || err.status === 429) return true;
   return err.status === 409 && err.code === "in_progress";
 }
+
+// levelNote flags a receive level outside the useful range (spec 4.8.4).
+export function levelNote(dbfs) {
+  if (typeof dbfs !== "number") return "";
+  if (dbfs > -6) return " (too hot)";
+  if (dbfs < -40) return " (very low)";
+  return "";
+}
+
+// linkSummary is a checkpoint's latest link check for the health panel.
+export function linkSummary(s, nowMs) {
+  if (!s) return "never checked";
+  const parts = [`${s.verdict} ${s.heard}/${s.total}`];
+  if (typeof s.level === "number") parts.push(`${s.level} dBFS${levelNote(s.level)}`);
+  parts.push(formatAgo(nowMs - new Date(s.at).getTime()));
+  return parts.join(", ");
+}
+
+// linkProgress describes a link check still in progress ("" once done).
+export function linkProgress(c) {
+  if (c.state === "requested") return "Starting…";
+  if (c.state !== "running") return "";
+  if (c.probes_sent < c.count) return `Probe ${c.probes_sent} of ${c.count} sent…`;
+  return c.reply_received ? "Reply received; collecting ACKs…" : "All probes sent; waiting for the reply…";
+}
