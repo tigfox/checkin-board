@@ -5,6 +5,7 @@
 //
 //	checkin-board                         run the service
 //	checkin-board reset-admin-password    set a new admin password (reads it from stdin)
+//	checkin-board version                 print the build version
 package main
 
 import (
@@ -18,6 +19,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -34,6 +37,9 @@ import (
 // contract-tested against.
 const testedGraywolfVersion = "0.14.14"
 
+// version is set at build time: -ldflags "-X main.version=v1.0.0".
+var version = "dev"
+
 const (
 	sessionPurgeEvery = time.Hour
 	shutdownGrace     = 10 * time.Second
@@ -42,15 +48,38 @@ const (
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	var err error
-	if len(os.Args) > 1 && os.Args[1] == "reset-admin-password" {
+	switch {
+	case len(os.Args) > 1 && os.Args[1] == "reset-admin-password":
 		err = resetAdminPassword(context.Background(), config.DBPathFrom(os.Getenv), os.Stdin, os.Stdout)
-	} else {
+	case len(os.Args) > 1 && os.Args[1] == "version":
+		printVersion(os.Stdout)
+	default:
 		err = run(logger)
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+// printVersion prints the build and the graywolf release it was tested with.
+func printVersion(w io.Writer) {
+	rev, dirty := "", ""
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			switch {
+			case s.Key == "vcs.revision" && len(s.Value) >= 8:
+				rev = s.Value[:8]
+			case s.Key == "vcs.modified" && s.Value == "true":
+				dirty = "+dirty"
+			}
+		}
+	}
+	if rev != "" {
+		rev = " (" + rev + dirty + ")"
+	}
+	fmt.Fprintf(w, "checkin-board %s%s, %s %s/%s, tested with graywolf %s\n",
+		version, rev, runtime.Version(), runtime.GOOS, runtime.GOARCH, testedGraywolfVersion)
 }
 
 // resetAdminPassword sets a new admin password from the host (spec 7.2:
@@ -79,6 +108,7 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	startedAt := time.Now()
+	logger.Info("checkin-board starting", "version", version, "tested_graywolf", testedGraywolfVersion)
 
 	cfg, err := config.Load()
 	if err != nil {

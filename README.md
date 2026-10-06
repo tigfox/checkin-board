@@ -27,8 +27,19 @@ internal/web/jstest/   `node --test` unit tests for the UI logic
 internal/peers/        graywolf per-peer retry settings (backup / restore)
 internal/gwfake/       in-memory fake of graywolf's Messages API + simulated RF channel (tests)
 internal/sim/          whole-node simulation: exactly-once and latency tests
+deploy/                systemd unit, env template, install script
 docs/specs/            design spec
+docs/operator-guide.md install, race day, recovery, reset (for station operators)
 ```
+
+## Install on a node
+
+`make dist` builds `dist/checkin-board-<version>-linux-armv6.tar.gz`
+(binary, systemd unit, env template, `install.sh`, operator guide). On
+the node: unpack and `sudo ./install.sh`. See
+[`docs/operator-guide.md`](docs/operator-guide.md) for setup, race day,
+recovery and reset. The service runs as `checkin-board` with its data
+in `/var/lib/checkin-board` and starts after `graywolf.service`.
 
 ## Configuration
 

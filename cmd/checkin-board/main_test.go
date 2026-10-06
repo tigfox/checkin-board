@@ -41,3 +41,16 @@ func TestResetAdminPassword(t *testing.T) {
 		t.Fatal("weak password accepted")
 	}
 }
+
+func TestPrintVersion(t *testing.T) {
+	old := version
+	version = "1.2.3"
+	t.Cleanup(func() { version = old })
+	var out bytes.Buffer
+	printVersion(&out)
+	for _, want := range []string{"checkin-board 1.2.3", "graywolf " + testedGraywolfVersion, "go1."} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("version output %q lacks %q", out.String(), want)
+		}
+	}
+}
