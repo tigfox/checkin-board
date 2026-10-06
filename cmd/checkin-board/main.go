@@ -1,4 +1,5 @@
-// Command checkin-board talks to a locally running API.
+// Command checkin-board runs race checkpoint reporting next to a
+// graywolf station, talking to it only through graywolf's REST API.
 package main
 
 import (
@@ -9,9 +10,13 @@ import (
 	"os/signal"
 	"syscall"
 
-	"checkin-board/internal/apiclient"
 	"checkin-board/internal/config"
+	"checkin-board/internal/graywolf"
 )
+
+// testedGraywolfVersion is the graywolf release this build was
+// contract-tested against.
+const testedGraywolfVersion = "0.14.14"
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -29,19 +34,32 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	logger.Info("starting", "config", cfg.String())
 
-	client, err := apiclient.New(cfg.BaseURL, cfg.Timeout)
+	gw, err := graywolf.New(graywolf.Config{
+		BaseURL:  cfg.GraywolfURL,
+		Username: cfg.GraywolfUser,
+		Password: cfg.GraywolfPassword,
+		Timeout:  cfg.Timeout,
+		Logger:   logger,
+	})
 	if err != nil {
-		return fmt.Errorf("create api client: %w", err)
+		return fmt.Errorf("create graywolf client: %w", err)
 	}
 
-	logger.Info("checking api", "base_url", cfg.BaseURL)
-	health, err := client.Health(ctx)
+	ver, err := gw.Version(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("graywolf version: %w", err)
 	}
-	logger.Info("api reachable", "status", health.Status)
+	if ver.Version != testedGraywolfVersion {
+		logger.Warn("untested graywolf version", "have", ver.Version, "tested", testedGraywolfVersion)
+	}
+	station, err := gw.StationConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("graywolf station config: %w", err)
+	}
+	logger.Info("graywolf ready", "version", ver.Version, "callsign", station.Callsign)
 
-	// TODO: application logic goes here.
+	// TODO(phase 4+): start the inbox reader, engines and web server.
 	return nil
 }
