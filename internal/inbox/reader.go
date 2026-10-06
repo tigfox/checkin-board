@@ -48,6 +48,7 @@ type Graywolf interface {
 // Store is the subset of the store the reader uses.
 type Store interface {
 	InboxCursor(ctx context.Context) (string, error)
+	InboxSince(ctx context.Context) (time.Time, error)
 	SaveInboxCursor(ctx context.Context, cursor string) error
 	KnownGWRow(ctx context.Context, gwID uint64) (bool, error)
 	RecordGWRow(ctx context.Context, gwID uint64, kind string) (bool, error)
@@ -66,6 +67,12 @@ type Dispatcher interface {
 	HandleOutbound(ctx context.Context, m graywolf.Message) error
 }
 
+// ErrNotReady is returned by a Dispatcher that can't handle race
+// traffic yet (e.g. the node has no role). The catch-up stops at that
+// row without counting a failure or skipping it, so nothing is lost:
+// the row is processed once the node is ready.
+var ErrNotReady = errors.New("inbox: node not ready for race traffic")
+
 type permanentError struct{ err error }
 
 func (e permanentError) Error() string { return e.err.Error() }
@@ -79,10 +86,6 @@ type Config struct {
 	Graywolf   Graywolf
 	Store      Store
 	Dispatcher Dispatcher
-	// InitialSince limits the very first catch-up (no saved cursor) to
-	// rows created at or after it, so a fresh node doesn't replay old
-	// races from graywolf's history. Zero means everything.
-	InitialSince time.Time
 	// Backstop is the catch-up interval when no events arrive. Zero means 60 s.
 	Backstop time.Duration
 	// Backoff is the reconnect delay ladder. Nil means 1, 2, 5, 10, 30 s.
@@ -275,7 +278,15 @@ func (r *Reader) CatchUp(ctx context.Context) error {
 	}
 	params := graywolf.ListParams{Folder: graywolf.FolderAll, Cursor: saved, Limit: pageLimit}
 	if saved == "" {
-		params.Since = r.cfg.InitialSince
+		// A node with no cursor reads from its saved starting point
+		// (first run), so it doesn't replay old races from graywolf.
+		since, err := r.cfg.Store.InboxSince(ctx)
+		if err != nil {
+			err = fmt.Errorf("inbox: load starting point: %w", err)
+			r.setCatchUpError(err)
+			return err
+		}
+		params.Since = since
 	}
 	cursor, err := r.cfg.Graywolf.CatchUp(ctx, params, func(ch graywolf.MessageChange) error {
 		return r.process(ctx, ch)
@@ -341,6 +352,9 @@ func (r *Reader) dispatch(id uint64, fn func() error) error {
 	if err == nil {
 		delete(r.failures, id)
 		return nil
+	}
+	if errors.Is(err, ErrNotReady) {
+		return err // hold here; not a failure
 	}
 	r.failures[id]++
 	var perm permanentError

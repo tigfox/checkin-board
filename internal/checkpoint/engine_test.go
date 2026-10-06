@@ -11,6 +11,7 @@ import (
 
 	"checkin-board/internal/graywolf"
 	"checkin-board/internal/gwfake"
+	"checkin-board/internal/peers"
 	"checkin-board/internal/raceclock"
 	"checkin-board/internal/store"
 	"checkin-board/internal/wire"
@@ -697,5 +698,34 @@ func TestRunIdleUnlessCheckpointRole(t *testing.T) {
 	_ = e.Run(runCtx)
 	if n := len(h.gw.Transmissions()); n != 0 {
 		t.Fatalf("HQ node's checkpoint engine transmitted %d frames", n)
+	}
+}
+
+func TestTurnsOffGraywolfRetriesForHQBeforeSending(t *testing.T) {
+	h := newHarness(t)
+	e, err := New(Config{Store: h.s, Graywolf: h.gw, Clock: raceclock.NewClock(h.ft.Now, nil), Now: h.ft.Now,
+		Peers: peers.NewEnsurer(h.gw, h.s, h.ft.Now)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Tick(ctx, h.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := h.gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ"); p.WaitForAck {
+		t.Fatal("graywolf retries still on for HQ after the first send")
+	}
+	if b, _ := h.s.ListPeerPrefs(ctx); len(b) != 1 || !b[0].WaitForAck {
+		t.Fatalf("original prefs not backed up: %+v", b)
+	}
+	// A prefs failure doesn't block delivery.
+	h2 := newHarness(t)
+	h2.gw.FailPrefs(errors.New("prefs endpoint missing"))
+	e2, _ := New(Config{Store: h2.s, Graywolf: h2.gw, Clock: raceclock.NewClock(h2.ft.Now, nil), Now: h2.ft.Now,
+		Peers: peers.NewEnsurer(h2.gw, h2.s, h2.ft.Now)})
+	if err := e2.Tick(ctx, h2.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(h2.gw.TransmissionsWithPrefix("RC1 H ")); n != 1 {
+		t.Fatalf("heartbeats = %d; a prefs failure blocked sending", n)
 	}
 }

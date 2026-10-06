@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"checkin-board/internal/graywolf"
 	"checkin-board/internal/store"
@@ -73,4 +75,68 @@ func Restore(ctx context.Context, gw Prefs, st *store.Store) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// retryAfter is how long a failed Ensure for a call is not retried.
+const retryAfter = 5 * time.Minute
+
+// Ensurer caches Ensure per callsign so engines can call it before
+// every send to a peer at no cost after the first success. Safe for
+// concurrent use.
+type Ensurer struct {
+	gw  Prefs
+	st  *store.Store
+	now func() time.Time
+
+	mu      sync.Mutex
+	done    map[string]bool
+	failed  map[string]time.Time
+	lastErr map[string]error
+}
+
+// NewEnsurer returns an Ensurer. now nil means time.Now.
+func NewEnsurer(gw Prefs, st *store.Store, now func() time.Time) *Ensurer {
+	if now == nil {
+		now = time.Now
+	}
+	return &Ensurer{gw: gw, st: st, now: now, done: map[string]bool{}, failed: map[string]time.Time{}, lastErr: map[string]error{}}
+}
+
+// Ensure turns graywolf's retries off for call once. After a failure it
+// returns the same error without retrying for retryAfter.
+func (e *Ensurer) Ensure(ctx context.Context, call string) error {
+	call = strings.ToUpper(strings.TrimSpace(call))
+	e.mu.Lock()
+	if e.done[call] {
+		e.mu.Unlock()
+		return nil
+	}
+	if at, ok := e.failed[call]; ok && e.now().Sub(at) < retryAfter {
+		err := e.lastErr[call]
+		e.mu.Unlock()
+		return err
+	}
+	e.mu.Unlock()
+
+	err := Ensure(ctx, e.gw, e.st, []string{call})
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err != nil {
+		e.failed[call], e.lastErr[call] = e.now(), err
+		return err
+	}
+	e.done[call] = true
+	delete(e.failed, call)
+	delete(e.lastErr, call)
+	return nil
+}
+
+// Reset forgets every cached result, e.g. after Restore at race end, so
+// the next race's sends ensure their peers again.
+func (e *Ensurer) Reset() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	clear(e.done)
+	clear(e.failed)
+	clear(e.lastErr)
 }

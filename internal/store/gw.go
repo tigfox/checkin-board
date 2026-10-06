@@ -73,9 +73,10 @@ type PeerPrefs struct {
 func (PeerPrefs) TableName() string { return "peer_prefs_backup" }
 
 type inboxState struct {
-	ID        uint      `gorm:"column:id;primaryKey"`
-	Cursor    string    `gorm:"column:cursor"`
-	UpdatedAt time.Time `gorm:"column:updated_at"`
+	ID        uint       `gorm:"column:id;primaryKey"`
+	Cursor    string     `gorm:"column:cursor"`
+	Since     *time.Time `gorm:"column:since"`
+	UpdatedAt time.Time  `gorm:"column:updated_at;autoUpdateTime:false"`
 }
 
 func (inboxState) TableName() string { return "inbox_state" }
@@ -143,10 +144,50 @@ func (s *Store) InboxCursor(ctx context.Context) (string, error) {
 	return st.Cursor, err
 }
 
-// SaveInboxCursor persists the inbox cursor. Call it only after every
-// row before the cursor has been processed and committed.
+// SaveInboxCursor persists the inbox cursor (leaving the starting
+// point alone). Call it only after every row before the cursor has been
+// processed and committed.
 func (s *Store) SaveInboxCursor(ctx context.Context, cursor string) error {
-	return s.db.WithContext(ctx).Save(&inboxState{ID: 1, Cursor: cursor, UpdatedAt: normTime(s.now())}).Error
+	row := inboxState{ID: 1, Cursor: cursor, UpdatedAt: normTime(s.now())}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"cursor", "updated_at"}),
+	}).Create(&row).Error
+}
+
+// InboxSince returns the reader's saved starting point (zero if none).
+func (s *Store) InboxSince(ctx context.Context) (time.Time, error) {
+	var st inboxState
+	err := s.db.WithContext(ctx).First(&st, 1).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && st.Since == nil) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	return normTime(*st.Since), nil
+}
+
+// EnsureInboxSince saves t as the reader's starting point unless one is
+// already saved, so it is set once, on a node's first run.
+func (s *Store) EnsureInboxSince(ctx context.Context, t time.Time) error {
+	since := normTime(t)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).
+			Create(&inboxState{ID: 1, Since: &since, UpdatedAt: normTime(s.now())}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&inboxState{}).Where("id = 1 AND since IS NULL").Update("since", since).Error
+	})
+}
+
+// SetInboxSince replaces the starting point and clears the cursor, so
+// the reader re-reads graywolf's messages from t (an admin recovery
+// action, e.g. after a wiped database; spec 4.7). Rows already recorded
+// are skipped, so re-reading is safe.
+func (s *Store) SetInboxSince(ctx context.Context, t time.Time) error {
+	since := normTime(t)
+	return s.db.WithContext(ctx).Save(&inboxState{ID: 1, Since: &since, UpdatedAt: normTime(s.now())}).Error
 }
 
 // RecordBadReport keeps an undecodable RC1 text and records its

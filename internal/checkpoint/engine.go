@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"checkin-board/internal/graywolf"
+	"checkin-board/internal/peers"
 	"checkin-board/internal/raceclock"
 	"checkin-board/internal/store"
 	"checkin-board/internal/wire"
@@ -85,7 +86,11 @@ type Config struct {
 	Clock    *raceclock.Clock
 	Now      func() time.Time // nil: time.Now
 	Interval time.Duration    // Run's tick interval; zero: 1 s
-	Logger   *slog.Logger
+	// Peers, if set, turns graywolf's own retries off for HQ before the
+	// first send (spec 3.3). Failure is logged, not fatal: delivery
+	// still works, at a higher airtime cost.
+	Peers  *peers.Ensurer
+	Logger *slog.Logger
 }
 
 // Engine drives the checkpoint side. Tick is called once a second by
@@ -93,6 +98,7 @@ type Config struct {
 type Engine struct {
 	store *store.Store
 	gw    Messages
+	peers *peers.Ensurer
 	clock *raceclock.Clock
 	now   func() time.Time
 	every time.Duration
@@ -106,6 +112,30 @@ type Engine struct {
 	nextHeartbeat time.Time // zero: send on the first tick
 	lastPoll      time.Time
 	refusal       Refusal
+	peerErr       string // last Ensure error logged, to log each once
+}
+
+// ensurePeer turns graywolf's retries off for call before sending to it.
+func (e *Engine) ensurePeer(ctx context.Context, call string) {
+	if e.peers == nil {
+		return
+	}
+	err := e.peers.Ensure(ctx, call)
+	e.mu.Lock()
+	msg := errText(err)
+	changed := msg != e.peerErr
+	e.peerErr = msg
+	e.mu.Unlock()
+	if err != nil && changed {
+		e.log.Warn("checkpoint: could not turn off graywolf retries for HQ; race traffic will cost more airtime", "hq", call, "err", err)
+	}
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // Refusal is graywolf's most recent refusal (HTTP 400) of a send. It
@@ -142,7 +172,7 @@ func New(cfg Config) (*Engine, error) {
 	if cfg.Store == nil || cfg.Graywolf == nil || cfg.Clock == nil {
 		return nil, errors.New("checkpoint: Store, Graywolf and Clock are required")
 	}
-	e := &Engine{store: cfg.Store, gw: cfg.Graywolf, clock: cfg.Clock, now: cfg.Now, every: cfg.Interval, log: cfg.Logger}
+	e := &Engine{store: cfg.Store, gw: cfg.Graywolf, peers: cfg.Peers, clock: cfg.Clock, now: cfg.Now, every: cfg.Interval, log: cfg.Logger}
 	if e.now == nil {
 		e.now = time.Now
 	}
@@ -320,6 +350,7 @@ func (e *Engine) transmit(ctx context.Context, cfg store.Settings, now time.Time
 // graywolf, so the attempt is kept and recoverUnbound looks for the row
 // before the batch is sent again.
 func (e *Engine) send(ctx context.Context, cfg store.Settings, b store.Batch, sentAt time.Time) error {
+	e.ensurePeer(ctx, cfg.HQCall)
 	if b.GWMessageID != nil {
 		_, err := e.gw.ResendMessage(ctx, *b.GWMessageID)
 		switch {
@@ -427,6 +458,7 @@ func (e *Engine) heartbeat(ctx context.Context, cfg store.Settings, now time.Tim
 	if err != nil {
 		return err
 	}
+	e.ensurePeer(ctx, cfg.HQCall)
 	msg, sendErr := e.gw.SendMessage(ctx, e.request(cfg, cfg.HQCall, text, ""))
 	next := now.Add(time.Duration(cfg.HeartbeatSec) * time.Second)
 	if sendErr != nil {

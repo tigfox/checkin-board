@@ -166,6 +166,7 @@ type recorder struct {
 	outbound []string       // "id:status"
 	failIn   map[uint64]int // id -> remaining failures
 	permIn   map[uint64]bool
+	notReady bool
 	got      chan struct{}
 }
 
@@ -178,6 +179,9 @@ var errDispatch = errors.New("dispatch failed")
 func (r *recorder) HandleInbound(ctx context.Context, m graywolf.Message) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.notReady {
+		return ErrNotReady
+	}
 	if r.permIn[m.ID] {
 		return Permanent(errDispatch)
 	}

@@ -323,7 +323,18 @@ frames), so the app warns about it in status.
    shown in health as a red counter per sender.
 3. Gap tracker (unchanged): per missing seq, `gap_grace_sec` 90 s, then
    requests at +180 s and every 300 s, least-requested first, give up after
-   12, at most one request per tick. Requests are `POST /api/messages
+   12, at most one request per tick. **As built (phase 6):**
+   - Once HQ has a checkpoint list, only listed checkpoints are chased, so
+     spoofed reports for phantom codes can't turn into gap-request airtime.
+     With no list yet, every heard code is chased.
+   - Before the first gap request to a checkpoint, graywolf's own retries
+     are turned off for that call (3.3), so each request is one frame.
+   - A send failure backs that checkpoint off for 30 s, and the others are
+     still served.
+   - HQ ticks every 5 s.
+   - Known limitation: gap-tracker state (attempt counts, "given up") is
+     in memory, so an HQ restart re-arms every open gap. That's harmless
+     but repeats requests. Persisting it is a candidate for phase 8. Requests are `POST /api/messages
    {to: <cp's call>, text: "RC1 G ..."}`. The app needs the call to send
    to: `checkpoints.expected_call` if set, otherwise the most recent
    `from_call` heard for that `<cp>`.
@@ -404,6 +415,16 @@ catch-up that stops at its page limit re-runs immediately.
 - SSE events are only hints: on any event the reader fetches the row and
   handles it with the same code path as the catch-up. Processing is keyed
   on graywolf row id, so seeing a row twice is a no-op.
+- **Starting point.** A node with no cursor reads from a starting point
+  saved once, on its first run (`inbox_state.since`). A restart before
+  any race traffic therefore doesn't skip messages graywolf received
+  meanwhile. An admin "re-read graywolf messages since…" action
+  (`SetInboxSince`, phases 8-9) covers a wiped database; rows already
+  recorded are skipped.
+- **Not configured yet.** A node with no role holds its position
+  (`inbox.ErrNotReady`) instead of marking race traffic handled, so
+  reports graywolf ACKed before HQ was configured are ingested once it
+  is.
 - On a 401 it logs in again once, then backs off. "graywolf unreachable"
   and "graywolf auth failed" both show on every app page.
 
@@ -765,7 +786,7 @@ same at every event.
 | 3 | Storage | SQLite (modernc), embedded migrations, repositories, roster CSV + `FuzzParseRosterCSV` | **Done** 2026-10-06. 90.8% coverage; FuzzParseRosterCSV 60 s clean; builds for ARMv6 with `CGO_ENABLED=0`; `govulncheck` clean (bumped modernc sqlite to v1.60.1 / SQLite 3.53.4 and x/text). Review fixes: gap requests release acked/rejected rows (above, 3.1); bad reports recorded in `gw_rows` and counted only against known checkpoints; UTF-8-safe truncation; `hq_call` SSID limited to 0-15. Also fixed a ported test that checked the old `race_runners` table name and so passed vacuously |
 | 4 | Inbox reader | SSE + catch-up, cursor persistence, idempotent dispatch, reconnect/backoff | **Done** 2026-10-06. 95.1% coverage, stable over 30 `-race` runs. Review: no lost-row paths; fixed one bad row blocking the feed (skip after 10 failures or on `Permanent`), backlog drain, a truthful Connected flag (new `StreamEventsWithOpen` client hook), separate stream/catch-up errors, mark-read retry, cursor save on shutdown, and backoff reset only after a healthy stream |
 | 5 | Checkpoint engine | Batcher, outbox on `/messages` + `/resend`, ACK watcher, fast retransmit, gap-request handler, heartbeat, crash-safe POST (4.1.7) | **Done** 2026-10-06. `internal/checkpoint` 89.7%, plus `internal/gwfake` (fake Messages API, 95.6%) and `internal/peers` (`wait_for_ack` backup and restore, 3.3). Review fixes: post-send writes on a detached context; ambiguous send outcomes kept and recovered instead of duplicated; Recover can't take an earlier race's row; poll before transmit; schedule writes conditional on the batch still being pending and unchanged; 400 alerts instead of parking; replayed ACKs aren't contact. Wiring into `main` waits for phase 6 (role-aware dispatcher) |
-| 6 | HQ engine | Ingest, bad-report capture, gap tracker + sender, heartbeat/skew, sender check | Not started |
+| 6 | HQ engine | Ingest, bad-report capture, gap tracker + sender, heartbeat/skew, sender check | **Done** 2026-10-06. `internal/hq` 90.8% (ingest of graywolf-ACKed rows, bad reports, gap tracker, health view with sender mismatch and never-heard checkpoints, operator re-request). Also wired the service: `internal/app` (role-aware dispatcher, assembly, graywolf-prefs refresh) and `main`; cached `peers.Ensurer` used by both engines; gwfake feed and event stream now behave like graywolf's. Review fixes: an unconfigured node holds race traffic (`ErrNotReady`) instead of dropping it; the inbox starting point is saved once (migration 0002); gap requests only for listed checkpoints once a list exists; per-checkpoint send-failure backoff; 5 s HQ tick; faster prefs retry |
 | 7 | Integration test | Two app instances against a **fake graywolf**: an in-memory Messages API written from the published API (auto-ACK, dedup, `wait_for_ack`, a lossy link with drop / reorder / dup). Asserts eventual exactly-once at HQ; re-runs the 9b latency table and the spoofed-traffic airtime bounds | Not started |
 | 8 | Recovery, journal, lifecycle | Journal, CP export, HQ import, re-request; Start / Complete / Stop sending / graywolf cleanup / Reset with backup (4.7) | Not started |
 | 9 | App REST + auth | Handlers, DTO validation, volunteer/admin login and role middleware (table test: every route × no session / volunteer / admin), first-run setup, password change + session revocation, `reset-admin-password` CLI, rate limit, session expiry, graywolf credential handling. **Branding (8.3):** migration + store, validation (text rules, `#RRGGBB`, WCAG contrast), logo decode/re-encode (PNG/JPEG/WebP only, size and pixel caps), branding endpoints; fuzz the logo decoder with malformed images | Not started |

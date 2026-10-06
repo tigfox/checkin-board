@@ -5,6 +5,8 @@
 // Modelled behaviour: graywolf assigns row ids and numeric msgids;
 // resend keeps the msgid and does NOT reset an acked/rejected status;
 // a resend while one is in flight is a 409; an unknown row is a 404.
+// The list feed is ordered by last update, so a row reappears after a
+// status change; the event stream emits a hint on every change.
 package gwfake
 
 import (
@@ -47,12 +49,16 @@ type Station struct {
 	resendErrs []error
 	prefs      map[string]graywolf.ConversationPrefs
 	prefsErr   error
+	updSeq     uint64
+	updated    map[uint64]uint64 // row id -> update sequence
+	subs       map[chan graywolf.Event]struct{}
+	maxText    int
 }
 
 // New returns a station with the given callsign.
 func New(call string) *Station {
 	return &Station{Call: call, Now: time.Now, rows: map[uint64]*graywolf.Message{}, inFlight: map[uint64]bool{},
-		prefs: map[string]graywolf.ConversationPrefs{}}
+		prefs: map[string]graywolf.ConversationPrefs{}, updated: map[uint64]uint64{}, subs: map[chan graywolf.Event]struct{}{}}
 }
 
 func apiErr(code int, msg string) error {
@@ -87,7 +93,21 @@ func (s *Station) insert(m graywolf.Message) graywolf.Message {
 	m.CreatedAt = &now
 	s.rows[m.ID] = &m
 	s.order = append(s.order, m.ID)
+	s.touch(m.ID, graywolf.EventReceived)
 	return m
+}
+
+// touch moves row id to the end of the feed and notifies subscribers.
+// Caller holds s.mu.
+func (s *Station) touch(id uint64, event string) {
+	s.updSeq++
+	s.updated[id] = s.updSeq
+	for ch := range s.subs {
+		select {
+		case ch <- graywolf.Event{Type: event, Change: graywolf.MessageChange{ID: id}}:
+		default: // events are hints; a slow subscriber catches up via the feed
+		}
+	}
 }
 
 // SendMessage implements graywolf.Client.SendMessage.
@@ -135,6 +155,7 @@ func (s *Station) ResendMessage(ctx context.Context, id uint64) (graywolf.Messag
 	}
 	m.Attempts++ // status deliberately unchanged
 	s.tx = append(s.tx, Transmission{ID: id, To: m.ToCall, Text: m.Text, Resend: true})
+	s.touch(id, graywolf.EventUpdated)
 	return *m, nil
 }
 
@@ -150,27 +171,89 @@ func (s *Station) GetMessage(ctx context.Context, id uint64) (graywolf.Message, 
 }
 
 // CatchUp implements a single-page graywolf.Client.CatchUp over rows in
-// id order, honouring Folder, Peer and Since. The cursor is the last id.
+// update order, honouring Folder, Peer and Since. The cursor is the
+// last update sequence handled.
 func (s *Station) CatchUp(ctx context.Context, p graywolf.ListParams, fn func(graywolf.MessageChange) error) (string, error) {
+	type entry struct {
+		seq uint64
+		m   graywolf.Message
+	}
 	s.mu.Lock()
-	var page []graywolf.Message
+	var page []entry
 	after, _ := strconv.ParseUint(p.Cursor, 10, 64)
-	for _, id := range s.order {
-		m, ok := s.rows[id]
-		if !ok || id <= after || !matches(*m, p) {
-			continue
+	for id, m := range s.rows {
+		if seq := s.updated[id]; seq > after && matches(*m, p) {
+			page = append(page, entry{seq, *m})
 		}
-		page = append(page, *m)
 	}
 	s.mu.Unlock()
+	slices.SortFunc(page, func(a, b entry) int { return cmp.Compare(a.seq, b.seq) })
 	cursor := p.Cursor
-	for _, m := range page {
-		if err := fn(graywolf.MessageChange{ID: m.ID, Kind: "created", Message: &m}); err != nil {
+	for _, e := range page {
+		m := e.m
+		if err := fn(graywolf.MessageChange{ID: m.ID, Kind: "updated", Message: &m}); err != nil {
 			return cursor, err
 		}
-		cursor = strconv.FormatUint(m.ID, 10)
+		cursor = strconv.FormatUint(e.seq, 10)
 	}
 	return cursor, nil
+}
+
+// StreamEventsWithOpen implements the graywolf client's event stream:
+// it calls onOpen, then delivers a hint for every row change until ctx
+// is done.
+func (s *Station) StreamEventsWithOpen(ctx context.Context, onOpen func(), fn func(graywolf.Event) error) error {
+	ch := make(chan graywolf.Event, 64)
+	s.mu.Lock()
+	s.subs[ch] = struct{}{}
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.subs, ch)
+		s.mu.Unlock()
+	}()
+	if onOpen != nil {
+		onOpen()
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ev := <-ch:
+			if err := fn(ev); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// MarkRead implements graywolf.Client.MarkRead (bumps the row's update).
+func (s *Station) MarkRead(ctx context.Context, id uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.rows[id]
+	if !ok {
+		return apiErr(http.StatusNotFound, "message not found")
+	}
+	if m.Unread {
+		m.Unread = false
+		s.touch(id, graywolf.EventUpdated)
+	}
+	return nil
+}
+
+// SetMaxText sets the max_message_text_override MessagePreferences reports.
+func (s *Station) SetMaxText(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.maxText = n
+}
+
+// MessagePreferences implements graywolf.Client.MessagePreferences.
+func (s *Station) MessagePreferences(ctx context.Context) (graywolf.MessagePreferences, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return graywolf.MessagePreferences{MaxMessageTextOverride: s.maxText, RetryMaxAttempts: 4}, nil
 }
 
 func matches(m graywolf.Message, p graywolf.ListParams) bool {
@@ -205,6 +288,11 @@ func (s *Station) setStatus(id uint64, status string) {
 			now := s.Now().UTC()
 			m.AckedAt = &now
 		}
+		event := graywolf.EventAcked
+		if status == graywolf.StatusRejected {
+			event = graywolf.EventRejected
+		}
+		s.touch(id, event)
 	}
 }
 
@@ -213,6 +301,7 @@ func (s *Station) Delete(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.rows, id)
+	delete(s.updated, id)
 }
 
 // Inbound adds a DM from `from` to this station, as if heard on air.

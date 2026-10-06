@@ -174,3 +174,52 @@ func TestPeerPrefsBackupKeepsOriginal(t *testing.T) {
 		t.Errorf("second delete err = %v", err)
 	}
 }
+
+func TestInboxSince(t *testing.T) {
+	s := newTestStore(t)
+	if got, err := s.InboxSince(ctx); err != nil || !got.IsZero() {
+		t.Fatalf("initial = %v, %v", got, err)
+	}
+	// Cursor saved first (no row yet), then the starting point.
+	if err := s.SaveInboxCursor(ctx, "c1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnsureInboxSince(ctx, t0); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.InboxSince(ctx); !got.Equal(t0) {
+		t.Fatalf("since = %v, want %v", got, t0)
+	}
+	// Later starts don't move it, and cursor saves don't clear it.
+	_ = s.EnsureInboxSince(ctx, at(time.Hour))
+	_ = s.SaveInboxCursor(ctx, "c2")
+	if got, _ := s.InboxSince(ctx); !got.Equal(t0) {
+		t.Fatalf("since moved to %v", got)
+	}
+	if c, _ := s.InboxCursor(ctx); c != "c2" {
+		t.Fatalf("cursor = %q", c)
+	}
+	// The admin re-read resets both.
+	if err := s.SetInboxSince(ctx, at(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := s.InboxCursor(ctx); c != "" {
+		t.Fatalf("cursor after re-read = %q", c)
+	}
+	if got, _ := s.InboxSince(ctx); !got.Equal(at(-time.Hour)) {
+		t.Fatalf("since = %v", got)
+	}
+}
+
+func TestEnsureInboxSinceOnFreshNode(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.EnsureInboxSince(ctx, t0); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.InboxSince(ctx); !got.Equal(t0) {
+		t.Fatalf("since = %v", got)
+	}
+	if c, _ := s.InboxCursor(ctx); c != "" {
+		t.Fatalf("cursor = %q", c)
+	}
+}

@@ -15,6 +15,8 @@ internal/raceclock/    browser-synced race clock
 internal/store/        SQLite storage (pure Go), embedded migrations
 internal/inbox/        follows graywolf's message feed, dispatches race traffic
 internal/checkpoint/   checkpoint engine: batching, outbox, retries, heartbeats
+internal/hq/           HQ engine: report ingest, gap requests, health view
+internal/app/          assembles the service; role-aware inbox dispatch
 internal/peers/        graywolf per-peer retry settings (backup / restore)
 internal/gwfake/       in-memory fake of graywolf's Messages API (tests)
 docs/specs/            design spec
@@ -29,6 +31,7 @@ docs/specs/            design spec
 | `GW_PASSWORD`      |                         | graywolf password (or use `GW_PASSWORD_FILE`) |
 | `GW_PASSWORD_FILE` |                         | file holding the password; must be `chmod 600`; wins over `GW_PASSWORD` |
 | `GW_TIMEOUT`       | `10s`                   | per-request timeout |
+| `CB_DB_PATH`       | `checkin-board.db`      | the app's SQLite database (keep it on persistent storage) |
 
 ## Development
 

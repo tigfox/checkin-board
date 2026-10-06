@@ -150,22 +150,48 @@ func TestCursorSurvivesRestart(t *testing.T) {
 	}
 }
 
-func TestInitialSinceOnlyWithoutCursor(t *testing.T) {
+func TestStartingPointUsedOnlyWithoutCursor(t *testing.T) {
 	gw, st, rec := newFakeGW(), newTestStore(t), newRecorder()
-	gw.inbound(100, "RC1 H OLD 0 120000") // created before the app's start point
+	gw.inbound(100, "RC1 H OLD 0 120000") // created before the node's first run
 	gw.inbound(300, "RC1 H AS5 0 120000")
-	r, err := New(Config{Graywolf: gw, Store: st, Dispatcher: rec, InitialSince: time.Unix(200, 0)})
-	if err != nil {
+	if err := st.EnsureInboxSince(ctx, time.Unix(200, 0)); err != nil {
 		t.Fatal(err)
 	}
+	r := newTestReader(t, gw, st, rec)
 	if err := r.CatchUp(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got := rec.inboundIDs(); !slices.Equal(got, []uint64{300}) {
-		t.Fatalf("inbound = %v, want only rows since the start point", got)
+		t.Fatalf("inbound = %v, want only rows since the starting point", got)
 	}
 	if len(gw.sinces) != 1 || !gw.sinces[0].Equal(time.Unix(200, 0)) {
 		t.Fatalf("since params = %v", gw.sinces)
+	}
+}
+
+func TestNotReadyHoldsWithoutSkipping(t *testing.T) {
+	gw, st, rec := newFakeGW(), newTestStore(t), newRecorder()
+	r := newTestReader(t, gw, st, rec)
+	gw.inbound(1, "RC1 R AS5 1 @1300 1/00")
+	gw.inbound(2, "RC1 R AS5 2 @1300 2/00")
+	rec.notReady = true // e.g. HQ not configured yet
+	for range maxRowFailures + 2 {
+		if err := r.CatchUp(ctx); !errors.Is(err, ErrNotReady) {
+			t.Fatalf("err = %v, want ErrNotReady", err)
+		}
+	}
+	if s := r.Status(); s.SkippedRows != 0 {
+		t.Fatalf("rows skipped while not ready: %+v", s)
+	}
+	if known, _ := st.KnownGWRow(ctx, 1); known {
+		t.Fatal("row recorded as handled while not ready")
+	}
+	rec.notReady = false // operator sets the role
+	if err := r.CatchUp(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.inboundIDs(); !slices.Equal(got, []uint64{1, 2}) {
+		t.Fatalf("inbound = %v, want both once ready", got)
 	}
 }
 

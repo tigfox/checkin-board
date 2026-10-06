@@ -71,7 +71,7 @@ func TestCatchUpFilters(t *testing.T) {
 	var ids []uint64
 	collect := func(ch graywolf.MessageChange) error { ids = append(ids, ch.ID); return nil }
 	cursor, err := s.CatchUp(ctx, graywolf.ListParams{Folder: graywolf.FolderSent, Peer: "k1cp"}, collect)
-	if err != nil || len(ids) != 1 || ids[0] != out.ID || cursor != "2" {
+	if err != nil || len(ids) != 1 || ids[0] != out.ID || cursor == "" {
 		t.Fatalf("sent to K1CP = %v, cursor %q, %v", ids, cursor, err)
 	}
 	ids = nil
@@ -85,7 +85,7 @@ func TestCatchUpFilters(t *testing.T) {
 		t.Fatalf("since = %v, want the two later rows", ids)
 	}
 	ids = nil
-	_, _ = s.CatchUp(ctx, graywolf.ListParams{Cursor: "2"}, collect)
+	_, _ = s.CatchUp(ctx, graywolf.ListParams{Cursor: cursor}, collect)
 	if len(ids) != 1 || ids[0] != 3 {
 		t.Fatalf("after cursor = %v", ids)
 	}
@@ -120,5 +120,54 @@ func TestConversationPrefs(t *testing.T) {
 	}
 	if _, err := s.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ", graywolf.ConversationPrefs{}); err == nil {
 		t.Error("expected error")
+	}
+}
+
+func TestFeedRelistsChangedRowsAndStreams(t *testing.T) {
+	s := New("K1CP")
+	sent, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: "RC1 H AS5 0 120000"})
+	_, _ = s.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: "RC1 H AS5 0 120500"})
+	var ids []uint64
+	cursor, _ := s.CatchUp(ctx, graywolf.ListParams{}, func(ch graywolf.MessageChange) error { ids = append(ids, ch.ID); return nil })
+	if len(ids) != 2 {
+		t.Fatalf("ids = %v", ids)
+	}
+
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	opened := make(chan struct{})
+	events := make(chan graywolf.Event, 4)
+	go func() {
+		_ = s.StreamEventsWithOpen(streamCtx, func() { close(opened) }, func(ev graywolf.Event) error { events <- ev; return nil })
+	}()
+	<-opened
+	s.Ack(sent.ID)
+	select {
+	case ev := <-events:
+		if ev.Type != graywolf.EventAcked || ev.Change.ID != sent.ID {
+			t.Fatalf("event = %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no event for the ACK")
+	}
+	ids = nil
+	_, _ = s.CatchUp(ctx, graywolf.ListParams{Cursor: cursor}, func(ch graywolf.MessageChange) error { ids = append(ids, ch.ID); return nil })
+	if len(ids) != 1 || ids[0] != sent.ID {
+		t.Fatalf("after ACK the feed listed %v, want the acked row again", ids)
+	}
+
+	in := s.Inbound("N0HQ", "RC1 G AS5 1")
+	if err := s.MarkRead(ctx, in.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetMessage(ctx, in.ID); got.Unread {
+		t.Error("still unread")
+	}
+	if err := s.MarkRead(ctx, 999); !graywolf.IsNotFound(err) {
+		t.Errorf("missing row err = %v", err)
+	}
+	s.SetMaxText(150)
+	if p, _ := s.MessagePreferences(ctx); p.MaxText() != 150 {
+		t.Errorf("MaxText = %d", p.MaxText())
 	}
 }

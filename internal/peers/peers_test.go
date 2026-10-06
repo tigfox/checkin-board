@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"checkin-board/internal/graywolf"
 	"checkin-board/internal/gwfake"
@@ -11,6 +12,8 @@ import (
 )
 
 var ctx = context.Background()
+
+var t0 = time.Date(2026, 10, 10, 13, 0, 0, 0, time.UTC)
 
 func setup(t *testing.T) (*gwfake.Station, *store.Store) {
 	t.Helper()
@@ -101,5 +104,46 @@ func TestErrorsAreReturnedAndBackupKept(t *testing.T) {
 	}
 	if b, _ := st.ListPeerPrefs(ctx); len(b) != 1 {
 		t.Fatalf("backup dropped although the restore failed: %+v", b)
+	}
+}
+
+func TestEnsurerCachesSuccessAndBacksOffFailure(t *testing.T) {
+	gw, st := setup(t)
+	now := t0
+	e := NewEnsurer(gw, st, func() time.Time { return now })
+	if err := e.Ensure(ctx, "n0hq"); err != nil {
+		t.Fatal(err)
+	}
+	// Once ensured, graywolf isn't consulted again (even if it's down).
+	gw.FailPrefs(errors.New("down"))
+	if err := e.Ensure(ctx, "N0HQ"); err != nil {
+		t.Fatalf("cached call hit graywolf: %v", err)
+	}
+	// A failing call is not retried for a while...
+	if err := e.Ensure(ctx, "K2CP"); err == nil {
+		t.Fatal("expected error")
+	}
+	gw.FailPrefs(nil)
+	if err := e.Ensure(ctx, "K2CP"); err == nil {
+		t.Fatal("retried within the backoff window")
+	}
+	// ...then is.
+	now = now.Add(retryAfter)
+	if err := e.Ensure(ctx, "K2CP"); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "K2CP"); p.WaitForAck {
+		t.Fatal("K2CP retries still on")
+	}
+	// After a race-end Restore, Reset makes the next race ensure again.
+	if err := Restore(ctx, gw, st); err != nil {
+		t.Fatal(err)
+	}
+	e.Reset()
+	if err := e.Ensure(ctx, "N0HQ"); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ"); p.WaitForAck {
+		t.Fatal("N0HQ not ensured again after Reset")
 	}
 }

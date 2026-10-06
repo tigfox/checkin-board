@@ -4,14 +4,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"checkin-board/internal/app"
 	"checkin-board/internal/config"
 	"checkin-board/internal/graywolf"
+	"checkin-board/internal/store"
 )
 
 // testedGraywolfVersion is the graywolf release this build was
@@ -20,7 +24,7 @@ const testedGraywolfVersion = "0.14.14"
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if err := run(logger); err != nil {
+	if err := run(logger); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("fatal", "err", err)
 		os.Exit(1)
 	}
@@ -29,6 +33,7 @@ func main() {
 func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	startedAt := time.Now()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -46,20 +51,37 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create graywolf client: %w", err)
 	}
+	checkGraywolf(ctx, gw, logger)
 
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer st.Close()
+
+	a, err := app.New(app.Config{Store: st, Graywolf: gw, Logger: logger, StartedAt: startedAt})
+	if err != nil {
+		return fmt.Errorf("assemble app: %w", err)
+	}
+	// TODO(phase 9): start the web server.
+	return a.Run(ctx)
+}
+
+// checkGraywolf logs graywolf's version and callsign. It never stops
+// startup: graywolf may come up after us, and the engines retry.
+func checkGraywolf(ctx context.Context, gw *graywolf.Client, logger *slog.Logger) {
 	ver, err := gw.Version(ctx)
 	if err != nil {
-		return fmt.Errorf("graywolf version: %w", err)
+		logger.Warn("graywolf not reachable yet; will keep retrying", "err", err)
+		return
 	}
 	if ver.Version != testedGraywolfVersion {
 		logger.Warn("untested graywolf version", "have", ver.Version, "tested", testedGraywolfVersion)
 	}
 	station, err := gw.StationConfig(ctx)
 	if err != nil {
-		return fmt.Errorf("graywolf station config: %w", err)
+		logger.Warn("read graywolf station config", "err", err)
+		return
 	}
 	logger.Info("graywolf ready", "version", ver.Version, "callsign", station.Callsign)
-
-	// TODO(phase 4+): start the inbox reader, engines and web server.
-	return nil
 }
