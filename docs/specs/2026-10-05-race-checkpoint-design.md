@@ -787,7 +787,7 @@ same at every event.
 | 4 | Inbox reader | SSE + catch-up, cursor persistence, idempotent dispatch, reconnect/backoff | **Done** 2026-10-06. 95.1% coverage, stable over 30 `-race` runs. Review: no lost-row paths; fixed one bad row blocking the feed (skip after 10 failures or on `Permanent`), backlog drain, a truthful Connected flag (new `StreamEventsWithOpen` client hook), separate stream/catch-up errors, mark-read retry, cursor save on shutdown, and backoff reset only after a healthy stream |
 | 5 | Checkpoint engine | Batcher, outbox on `/messages` + `/resend`, ACK watcher, fast retransmit, gap-request handler, heartbeat, crash-safe POST (4.1.7) | **Done** 2026-10-06. `internal/checkpoint` 89.7%, plus `internal/gwfake` (fake Messages API, 95.6%) and `internal/peers` (`wait_for_ack` backup and restore, 3.3). Review fixes: post-send writes on a detached context; ambiguous send outcomes kept and recovered instead of duplicated; Recover can't take an earlier race's row; poll before transmit; schedule writes conditional on the batch still being pending and unchanged; 400 alerts instead of parking; replayed ACKs aren't contact. Wiring into `main` waits for phase 6 (role-aware dispatcher) |
 | 6 | HQ engine | Ingest, bad-report capture, gap tracker + sender, heartbeat/skew, sender check | **Done** 2026-10-06. `internal/hq` 90.8% (ingest of graywolf-ACKed rows, bad reports, gap tracker, health view with sender mismatch and never-heard checkpoints, operator re-request). Also wired the service: `internal/app` (role-aware dispatcher, assembly, graywolf-prefs refresh) and `main`; cached `peers.Ensurer` used by both engines; gwfake feed and event stream now behave like graywolf's. Review fixes: an unconfigured node holds race traffic (`ErrNotReady`) instead of dropping it; the inbox starting point is saved once (migration 0002); gap requests only for listed checkpoints once a list exists; per-checkpoint send-failure backoff; 5 s HQ tick; faster prefs retry |
-| 7 | Integration test | Two app instances against a **fake graywolf**: an in-memory Messages API written from the published API (auto-ACK, dedup, `wait_for_ack`, a lossy link with drop / reorder / dup). Asserts eventual exactly-once at HQ; re-runs the 9b latency table and the spoofed-traffic airtime bounds | Not started |
+| 7 | Integration test | Two app instances against a **fake graywolf**: an in-memory Messages API written from the published API (auto-ACK, dedup, `wait_for_ack`, a lossy link with drop / reorder / dup). Asserts eventual exactly-once at HQ; re-runs the 9b latency table and the spoofed-traffic airtime bounds | **Done** 2026-10-06. `internal/gwfake/radio.go` (shared lossy channel: graywolf-style dedup and auto-ACK; model verified) and `internal/sim` (whole nodes in simulated time). Eight scenarios pass exactly-once: mass start at 30% loss, voids, out-and-back, 40-min outage, three checkpoints, HQ restored from an old backup (heartbeat reveals the hole), HQ DB wiped (recovered from graywolf's inbox with no RF), and spoofing bounds. Latency results and the revised acceptance are in 9b |
 | 8 | Recovery, journal, lifecycle | Journal, CP export, HQ import, re-request; Start / Complete / Stop sending / graywolf cleanup / Reset with backup (4.7) | Not started |
 | 9 | App REST + auth | Handlers, DTO validation, volunteer/admin login and role middleware (table test: every route × no session / volunteer / admin), first-run setup, password change + session revocation, `reset-admin-password` CLI, rate limit, session expiry, graywolf credential handling. **Branding (8.3):** migration + store, validation (text rules, `#RRGGBB`, WCAG contrast), logo decode/re-encode (PNG/JPEG/WebP only, size and pixel caps), branding endpoints; fuzz the logo decoder with malformed images | Not started |
 | 10 | Web UI | Admin + volunteer interfaces; JS unit tests for logic; scripted browser run of the real binary against the fake graywolf. **Branded status board (8.3):** CSS custom properties from saved branding, header/footer/logo, branding editor with live preview and contrast readout, print stylesheet | Not started |
@@ -803,18 +803,65 @@ behaviours that this design assumes but hasn't tested through the API.
 The original's measured table (`pkg/race`, phase 5) applies only if the app
 reproduces the same on-air behaviour: window 4, fast retransmit,
 30/60/120/300 s ladder, one frame per (re)transmit. Section 3.3 is what
-keeps that true. Phase 7 re-runs the ported simulation (300-runner mass
-start, 10% dup, up to 3 s delay, 5 seeds) through the fake graywolf, and
-the table is filled in here. **Acceptance:** each loss row must be within
-25% of the original "Shipped" column. If the 3.3 fallback is active,
-dead-link airtime is reported separately.
+keeps that true. Phase 7 re-ran the simulation (300-runner mass start,
+10% dup, up to 3 s delay) through the fake graywolf
+(`CB_LATENCY_TABLE=1 go test -run TestLatencyTable ./internal/sim`).
+
+**Measured 2026-10-06, 100 seeds** (drain = last bib to all confirmed;
+± is the 95% CI of the mean):
+
+| Channel loss | checkin-board | Original "Shipped" (5 seeds) | Dead-link frames/h |
+|---|---|---|---|
+| 10% | 29 s ± 15 s | 22 s | 13 |
+| 20% | 1 m 47 s ± 42 s | 37 s | 17 |
+| 30% | 4 m 38 s ± 1 m 6 s | 3 m 2 s | 25 |
+| 40% | 21 m 0 s ± 2 m 25 s | 16 m 4 s | 30 |
+| 50% | 1 h 5 m ± 5 m | 42 m 41 s | 40 |
+
+Findings:
+- **Dead-link airtime** is within the original's 12-42 frames/h.
+- **Drain** is 1.3-1.6× the original's figures, except at 10%. Tracing the
+  slow runs showed the cause is **the last batch**. Nothing newer follows
+  it, so no confirming ACK can fast-retransmit it, and it rides the
+  30/60/120/300 s ladder. Each attempt needs both the frame and its ACK to
+  survive ((1-p)², 25% at 50% loss).
+- The drain distribution is therefore heavily skewed. A 5-seed mean is
+  dominated by whether a rare tail stall happens, and is biased low. The
+  original's 5-seed figures can't distinguish "slower" from "luckier": at
+  30%, a 30-seed run (3 m 43 s ± 1 m 47 s) contains the original 3 m 2 s.
+- The channel model was verified (delivered/sent = (1-loss)(1+dup)), and
+  the engine code paths match the original's. A definitive comparison
+  would need the original simulation re-run with 100 seeds. That run
+  touches the graywolf repo, so it's left for the user to decide.
+- **Acceptance (revised, pending user confirmation):** the test is a
+  regression guard against the 100-seed baseline above. It fails if a
+  loss rate's mean drain, minus its CI, exceeds 1.25× the baseline, or if
+  dead-link airtime exceeds 42 frames/h. The original "within 25% of the
+  5-seed figures" criterion was statistically unsound.
+- **Possible tail improvement (not done; a design change):** let a
+  heartbeat ACK, which proves the link works, expedite only the *oldest*
+  pending batch, at most once per heartbeat interval. That bounds spoofed
+  airtime the same way confirming ACKs do. Field data should decide this.
+- **Spoof bounds** (`TestSpoofedTrafficBoundsAirtime`, a fresh msgid per
+  forged frame): forged ACKs (unknown or replayed) cost 60 frames/h, the
+  normal ladder. Forged gap requests in HQ's name cost 252 frames/h
+  (bound 260, about 4/min from `requeueMinAge` × window, as designed).
+  Strangers' gap requests are ignored.
+- **To check on real graywolf (phase 12):** does graywolf's (from, msgid,
+  text) dedup window slide with each repeat (as the fake assumes) or is it
+  anchored to the first copy? It doesn't affect correctness: the app
+  dedups batches itself.
+
+Reference (original, shipped): 10% loss 22 s; 20% 37 s; 30% 3 m 2 s; 40%
+16 m 4 s; 50% 42 m 41 s. Dead link: 12-42 frames/h per checkpoint.
 
 Reference (original, shipped): 10% loss 22 s; 20% 37 s; 30% 3 m 2 s; 40%
 16 m 4 s; 50% 42 m 41 s. Dead link: 12-42 frames/h per checkpoint.
 
 Extra delay to account for: SSE notification plus a fetch on each ACK and
 each inbound row. That's milliseconds on localhost, negligible against
-RF.
+RF. (The simulation charges a full 1 s step per hop, which adds a few
+seconds at low loss.)
 
 ## 10. Risks
 

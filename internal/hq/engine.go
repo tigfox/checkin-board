@@ -92,7 +92,7 @@ type Config struct {
 	Logger *slog.Logger
 }
 
-// Engine drives HQ. Tick is called once a second by Run; HandleInbound
+// Engine drives HQ. Tick is called every few seconds by Run; HandleInbound
 // and HandleOutbound are called by the inbox reader.
 type Engine struct {
 	store *store.Store

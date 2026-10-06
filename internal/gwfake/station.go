@@ -53,6 +53,8 @@ type Station struct {
 	updated    map[uint64]uint64 // row id -> update sequence
 	subs       map[chan graywolf.Event]struct{}
 	maxText    int
+	radio      *Radio
+	heard      map[string]time.Time // (from, msgid, text) -> last heard, for dedup
 }
 
 // New returns a station with the given callsign.
@@ -132,6 +134,7 @@ func (s *Station) SendMessage(ctx context.Context, req graywolf.SendRequest) (gr
 	sent := s.Now().UTC()
 	s.rows[m.ID].SentAt = &sent
 	s.tx = append(s.tx, Transmission{ID: m.ID, To: to, Text: req.Text})
+	s.air(Frame{From: s.Call, To: to, Text: req.Text, MsgID: s.rows[m.ID].MsgID})
 	out := *s.rows[m.ID]
 	out.ClientID = req.ClientID // the POST response always echoes it
 	return out, nil
@@ -155,6 +158,7 @@ func (s *Station) ResendMessage(ctx context.Context, id uint64) (graywolf.Messag
 	}
 	m.Attempts++ // status deliberately unchanged
 	s.tx = append(s.tx, Transmission{ID: id, To: m.ToCall, Text: m.Text, Resend: true})
+	s.air(Frame{From: s.Call, To: m.ToCall, Text: m.Text, MsgID: m.MsgID})
 	s.touch(id, graywolf.EventUpdated)
 	return *m, nil
 }

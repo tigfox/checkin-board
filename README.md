@@ -18,7 +18,8 @@ internal/checkpoint/   checkpoint engine: batching, outbox, retries, heartbeats
 internal/hq/           HQ engine: report ingest, gap requests, health view
 internal/app/          assembles the service; role-aware inbox dispatch
 internal/peers/        graywolf per-peer retry settings (backup / restore)
-internal/gwfake/       in-memory fake of graywolf's Messages API (tests)
+internal/gwfake/       in-memory fake of graywolf's Messages API + simulated RF channel (tests)
+internal/sim/          whole-node simulation: exactly-once and latency tests
 docs/specs/            design spec
 ```
 
@@ -40,6 +41,8 @@ make test     # unit tests with -race (no network, no RF)
 make cover    # coverage report
 make build    # bin/checkin-board
 make pi       # bin/checkin-board-armv6 for Pi Zero W
+go test -short ./...                                   # skip the long simulations
+CB_LATENCY_TABLE=1 go test -run TestLatencyTable ./internal/sim   # spec 9b table (~2 min)
 ```
 
 ## graywolf contract tests (transmit on RF)
