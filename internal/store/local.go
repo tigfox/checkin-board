@@ -310,8 +310,11 @@ func (s *Store) ListPendingBatches(ctx context.Context) ([]Batch, error) {
 
 // MarkTransmitted records a transmission of batch id at `at` and
 // schedules the next retry for `next`.
+//
+// Only a pending batch is updated: one ACKed (or parked) since the
+// caller listed it returns ErrNotFound, so it isn't resent.
 func (s *Store) MarkTransmitted(ctx context.Context, id uint, at, next time.Time) error {
-	res := s.db.WithContext(ctx).Model(&Batch{}).Where("id = ?", id).Updates(map[string]any{
+	res := s.db.WithContext(ctx).Model(&Batch{}).Where("id = ? AND state = ?", id, BatchPending).Updates(map[string]any{
 		"attempts":   gorm.Expr("attempts + 1"),
 		"last_tx_at": normTime(at),
 		"next_tx_at": normTime(next),
@@ -452,12 +455,18 @@ func (s *Store) UnboundAttempted(ctx context.Context) ([]Batch, error) {
 // RestoreSchedule puts a batch's attempts, last_tx_at, and next_tx_at
 // back to the values in prev. The engine records an attempt before
 // transmitting and calls this if the send itself fails.
-func (s *Store) RestoreSchedule(ctx context.Context, prev Batch) error {
+//
+// It applies only while the batch is still pending and still carries
+// the attempt being undone (last_tx_at == sentAt): if an ACK, a gap
+// request or fast retransmit changed it meanwhile, that newer state
+// wins and ErrNotFound is returned.
+func (s *Store) RestoreSchedule(ctx context.Context, prev Batch, sentAt time.Time) error {
 	var lastTx any
 	if prev.LastTxAt != nil {
 		lastTx = normTime(*prev.LastTxAt)
 	}
-	return rowsOrNotFound(s.db.WithContext(ctx).Model(&Batch{}).Where("id = ?", prev.ID).Updates(map[string]any{
+	return rowsOrNotFound(s.db.WithContext(ctx).Model(&Batch{}).
+		Where("id = ? AND state = ? AND last_tx_at = ?", prev.ID, BatchPending, normTime(sentAt)).Updates(map[string]any{
 		"attempts":   prev.Attempts,
 		"last_tx_at": lastTx,
 		"next_tx_at": normTime(prev.NextTxAt),

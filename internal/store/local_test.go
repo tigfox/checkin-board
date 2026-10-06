@@ -411,7 +411,7 @@ func TestRestoreSchedule(t *testing.T) {
 	if err := s.MarkTransmitted(ctx, b.ID, at(time.Second), at(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RestoreSchedule(ctx, *b); err != nil {
+	if err := s.RestoreSchedule(ctx, *b, at(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	due, _ := s.DueBatches(ctx, t0, 1)
@@ -595,5 +595,31 @@ func TestRequeueReleasesAckedAndRejectedBindings(t *testing.T) {
 	// Released rows stay recorded for post-race cleanup.
 	if rows, _ := s.ListGWRows(ctx); len(rows) != 3 {
 		t.Errorf("gw rows = %d, want 3", len(rows))
+	}
+}
+
+func TestRestoreScheduleYieldsToNewerState(t *testing.T) {
+	s := newTestStore(t)
+	mustLog(t, s, "3", 1, t0)
+	b, _ := s.CreateBatch(ctx, "3", wire.DefaultMaxTextLen, t0)
+	_ = s.MarkTransmitted(ctx, b.ID, at(time.Second), at(time.Minute))
+	// Fast retransmit rescheduled it meanwhile (same last_tx_at kept, but
+	// a later attempt at a different time is a different attempt).
+	_ = s.MarkTransmitted(ctx, b.ID, at(2*time.Second), at(time.Minute))
+	if err := s.RestoreSchedule(ctx, *b, at(time.Second)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale restore err = %v, want ErrNotFound", err)
+	}
+	if due, _ := s.DueBatches(ctx, at(time.Hour), 1); len(due) != 1 || due[0].Attempts != 2 {
+		t.Fatalf("batch = %+v, want the newer attempt kept", due)
+	}
+}
+
+func TestMarkTransmittedSkipsNonPending(t *testing.T) {
+	s := newTestStore(t)
+	mustLog(t, s, "3", 1, t0)
+	b, _ := sendBatch(t, s, "3", t0)
+	ackSeq(t, s, "3", b.Seq, t0)
+	if err := s.MarkTransmitted(ctx, b.ID, at(time.Second), at(time.Minute)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound for an acked batch", err)
 	}
 }

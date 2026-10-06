@@ -275,10 +275,19 @@ frames), so the app warns about it in status.
    - **Fast retransmit** (unchanged): an ACK that confirms one of our
      batches proves the link works, so batches sent 20 s or more ago
      without an ACK are resent immediately, restarting at the 60 s rung.
-   - graywolf errors: a 503, or a network error to graywolf, means retry
-     next tick and show "graywolf unreachable". A 400 parks the batch as
-     `rejected` and shows it in the outbox (a bug or a config problem such
-     as a bad path). A 404 on resend sends it again as a new message.
+   - graywolf errors. An error **status** means nothing went on air, so
+     the attempt is rolled back and retried next tick. The exception is
+     400 (refused), which usually means a settings problem affecting
+     every batch (path, channel, length). The batch keeps its
+     retry-ladder slot instead of being parked; the refusal is shown as
+     an admin alert and clears on the next successful send. A
+     **transport** error (timeout, reset) is ambiguous: graywolf may have
+     created the row. The attempt is kept, and the engine looks the row
+     up (as in step 7) before the batch would be sent again. A 404 on
+     resend sends the batch as a new message.
+   - Status is polled (`GET /api/messages/{id}`) every 10 s for in-flight
+     batches *before* transmitting, covering ACKs the inbox feed skipped
+     (4.6) without a wasted resend.
 4. **ACK**: the inbox reader sees an SSE `acked` change for a row we sent,
    or the per-tick `GET /api/messages/{id}` poll does. The batch and its
    entries become `confirmed`. A `rejected` status from a real peer REJ
@@ -289,11 +298,14 @@ frames), so the app warns about it in status.
 6. **Heartbeat** every `heartbeat_sec` (default 300 s) and right after
    startup: `RC1 H` as a new DM. Heartbeats aren't resent: each one
    supersedes the last, and there's at most one outstanding heartbeat.
-7. **Crash safety around POST**: on startup, any batch with
+7. **Crash safety around POST**: on startup, and on any tick that finds one, any batch with
    `state=pending` and no `graywolf_message_id` is matched against
    `GET /api/messages?folder=sent&peer=<hq_call>` before it's sent again.
    It matches on `client_id` if phase 1 shows it's persisted, and
-   otherwise on exact text, which is unique per (cp, seq).
+   otherwise on exact text, which is unique per (cp, seq). Only rows
+   created after the batch, and not already recorded by the app, are
+   considered, so a row from an earlier race with identical text (after
+   a Reset restarts seq at 1) can't be taken.
 8. Void: `DELETE /api/entries/{id}`. A `queued` entry is removed locally.
    Otherwise a `-bib/ss` void entry is queued.
 
@@ -711,7 +723,7 @@ pollers, unreachable banner.
 | 2 | Wire codec + race clock | Port `types/encode/decode/clock` from `pkg/race` into `internal/wire`, `internal/raceclock`; add `RC1 P/Q` link-check messages (4.8); table tests + `FuzzDecode` | **Done** 2026-10-05. wire 95.6%, raceclock 100% coverage; FuzzDecode 68M execs clean (now covering P/Q); gap-list parser shared with P/Q (behaviour unchanged, reviewed). Worst-case `RC1 Q` is exactly 67 chars, pinned by an exhaustive test. Clock types renamed `raceclock.Source`/`Status`; the OS-clock check (section 6) is injected later |
 | 3 | Storage | SQLite (modernc), embedded migrations, repositories, roster CSV + `FuzzParseRosterCSV` | **Done** 2026-10-06. 90.8% coverage; FuzzParseRosterCSV 60 s clean; builds for ARMv6 with `CGO_ENABLED=0`; `govulncheck` clean (bumped modernc sqlite to v1.60.1 / SQLite 3.53.4 and x/text). Review fixes: gap requests release acked/rejected rows (above, 3.1); bad reports recorded in `gw_rows` and counted only against known checkpoints; UTF-8-safe truncation; `hq_call` SSID limited to 0-15. Also fixed a ported test that checked the old `race_runners` table name and so passed vacuously |
 | 4 | Inbox reader | SSE + catch-up, cursor persistence, idempotent dispatch, reconnect/backoff | **Done** 2026-10-06. 95.1% coverage, stable over 30 `-race` runs. Review: no lost-row paths; fixed one bad row blocking the feed (skip after 10 failures or on `Permanent`), backlog drain, a truthful Connected flag (new `StreamEventsWithOpen` client hook), separate stream/catch-up errors, mark-read retry, cursor save on shutdown, and backoff reset only after a healthy stream |
-| 5 | Checkpoint engine | Batcher, outbox on `/messages` + `/resend`, ACK watcher, fast retransmit, gap-request handler, heartbeat, crash-safe POST (4.1.7) | Not started |
+| 5 | Checkpoint engine | Batcher, outbox on `/messages` + `/resend`, ACK watcher, fast retransmit, gap-request handler, heartbeat, crash-safe POST (4.1.7) | **Done** 2026-10-06. `internal/checkpoint` 89.7%, plus `internal/gwfake` (fake Messages API, 95.6%) and `internal/peers` (`wait_for_ack` backup and restore, 3.3). Review fixes: post-send writes on a detached context; ambiguous send outcomes kept and recovered instead of duplicated; Recover can't take an earlier race's row; poll before transmit; schedule writes conditional on the batch still being pending and unchanged; 400 alerts instead of parking; replayed ACKs aren't contact. Wiring into `main` waits for phase 6 (role-aware dispatcher) |
 | 6 | HQ engine | Ingest, bad-report capture, gap tracker + sender, heartbeat/skew, sender check | Not started |
 | 7 | Integration test | Two app instances against a **fake graywolf**: an in-memory Messages API written from the published API (auto-ACK, dedup, `wait_for_ack`, a lossy link with drop / reorder / dup). Asserts eventual exactly-once at HQ; re-runs the 9b latency table and the spoofed-traffic airtime bounds | Not started |
 | 8 | Recovery, journal, lifecycle | Journal, CP export, HQ import, re-request; Start / Complete / Stop sending / graywolf cleanup / Reset with backup (4.7) | Not started |
