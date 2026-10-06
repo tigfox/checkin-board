@@ -54,7 +54,8 @@ func newSvc(t *testing.T) (*Service, *fakeTime) {
 func setUp(t *testing.T) (*Service, *fakeTime) {
 	t.Helper()
 	s, ft := newSvc(t)
-	if _, err := s.Setup(ctx, adminPW); err != nil {
+	code, _ := s.SetupCode(ctx)
+	if _, err := s.Setup(ctx, code, adminPW); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetVolunteerPassword(ctx, volPW); err != nil {
@@ -69,18 +70,31 @@ func TestFirstRunSetup(t *testing.T) {
 	if !st.NeedsSetup || st.VolunteerSet {
 		t.Fatalf("status = %+v", st)
 	}
-	if _, err := s.Setup(ctx, "short"); !errors.Is(err, ErrWeakPassword) {
+	code, err := s.SetupCode(ctx)
+	if err != nil || len(code) != 9 {
+		t.Fatalf("setup code = %q, %v", code, err)
+	}
+	if again, _ := s.SetupCode(ctx); again != code {
+		t.Fatal("setup code changed between calls")
+	}
+	if _, err := s.Setup(ctx, "WRONG-CODE", adminPW); !errors.Is(err, ErrBadSetupCode) {
+		t.Fatalf("wrong code err = %v", err)
+	}
+	if _, err := s.Setup(ctx, code, "short"); !errors.Is(err, ErrWeakPassword) {
 		t.Fatalf("weak err = %v", err)
 	}
-	tok, err := s.Setup(ctx, adminPW)
+	tok, err := s.Setup(ctx, strings.ToLower(code), adminPW)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if role, err := s.Authenticate(ctx, tok); err != nil || role != store.RoleAdmin {
 		t.Fatalf("setup session = %q, %v", role, err)
 	}
-	if _, err := s.Setup(ctx, "another long password"); !errors.Is(err, ErrSetupDone) {
+	if _, err := s.Setup(ctx, code, "another long password"); !errors.Is(err, ErrSetupDone) {
 		t.Fatalf("second setup err = %v", err)
+	}
+	if c, _ := s.SetupCode(ctx); c != "" {
+		t.Fatalf("setup code after setup = %q", c)
 	}
 	// Volunteers can't log in until the admin sets their password.
 	if _, err := s.Login(ctx, store.RoleVolunteer, "anything", "1.2.3.4"); !errors.Is(err, ErrNotConfigured) {
@@ -230,11 +244,13 @@ func TestLimiterBackoffDoublesAndCaps(t *testing.T) {
 	l := NewLimiter(ft.Now)
 	var lockouts []time.Duration
 	for range 6 {
-		for range maxFailures {
-			l.Fail("k")
-		}
 		var rl *RateLimitError
-		if err := l.Allow("k"); !errors.As(err, &rl) {
+		for range maxFailures + 1 {
+			if err := l.Attempt("k"); err != nil {
+				errors.As(err, &rl)
+			}
+		}
+		if rl == nil {
 			t.Fatal("not locked")
 		}
 		lockouts = append(lockouts, rl.RetryAfter)
@@ -246,30 +262,54 @@ func TestLimiterBackoffDoublesAndCaps(t *testing.T) {
 			t.Fatalf("lockouts = %v, want %v", lockouts, want)
 		}
 	}
-	// Failures spread beyond the window don't lock.
-	l.Succeed("s")
-	for range maxFailures {
-		l.Fail("s")
+	// Attempts spread beyond the window don't lock.
+	for range maxFailures + 2 {
+		if err := l.Attempt("s"); err != nil {
+			t.Fatalf("spread attempts locked: %v", err)
+		}
 		ft.Advance(window)
-	}
-	if err := l.Allow("s"); err != nil {
-		t.Fatalf("spread failures locked: %v", err)
 	}
 	if !strings.Contains((&RateLimitError{RetryAfter: 90 * time.Second}).Error(), "1m30s") {
 		t.Fatal("error text")
 	}
 }
 
-func TestLimiterBoundsMemory(t *testing.T) {
+func TestLimiterCountsParallelAttempts(t *testing.T) {
 	ft := &fakeTime{t: t0}
 	l := NewLimiter(ft.Now)
-	for i := range maxKeys + 50 {
-		l.Fail(string(rune(i)) + "|admin")
-		if i%1000 == 0 {
-			ft.Advance(window)
-		}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	allowed := 0
+	for range 50 {
+		wg.Go(func() {
+			if l.Attempt("p") == nil {
+				mu.Lock()
+				allowed++
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
+	if allowed != maxFailures {
+		t.Fatalf("parallel guesses allowed = %d, want %d", allowed, maxFailures)
+	}
+}
+
+func TestLimiterBoundsMemoryAndFailsClosed(t *testing.T) {
+	ft := &fakeTime{t: t0}
+	l := NewLimiter(ft.Now)
+	for i := range maxKeys {
+		_ = l.Attempt(string(rune(i)) + "|admin")
 	}
 	if len(l.keys) > maxKeys {
-		t.Fatalf("keys = %d, want <= %d", len(l.keys), maxKeys)
+		t.Fatalf("keys = %d", len(l.keys))
+	}
+	// Full of recent attempts: a new client is refused, nothing forgotten.
+	if err := l.Attempt("new|admin"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("new client err = %v", err)
+	}
+	ft.Advance(window)
+	if err := l.Attempt("new|admin"); err != nil {
+		t.Fatalf("after the window: %v", err)
 	}
 }

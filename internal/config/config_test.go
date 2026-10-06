@@ -51,12 +51,12 @@ func TestLoadFrom(t *testing.T) {
 		{
 			name: "defaults",
 			vars: base,
-			want: Config{GraywolfURL: DefaultGraywolfURL, GraywolfUser: "race", GraywolfPassword: "pw", Timeout: DefaultTimeout, DBPath: DefaultDBPath},
+			want: Config{GraywolfURL: DefaultGraywolfURL, GraywolfUser: "race", GraywolfPassword: "pw", Timeout: DefaultTimeout, DBPath: DefaultDBPath, Listen: DefaultListen},
 		},
 		{
 			name: "overrides",
-			vars: with(map[string]string{EnvGraywolfURL: "http://10.0.0.2:8080", EnvTimeout: "3s", EnvDBPath: "/var/lib/cb/race.db"}),
-			want: Config{GraywolfURL: "http://10.0.0.2:8080", GraywolfUser: "race", GraywolfPassword: "pw", Timeout: 3 * time.Second, DBPath: "/var/lib/cb/race.db"},
+			vars: with(map[string]string{EnvGraywolfURL: "http://10.0.0.2:8080", EnvTimeout: "3s", EnvDBPath: "/var/lib/cb/race.db", EnvListen: "127.0.0.1:9000"}),
+			want: Config{GraywolfURL: "http://10.0.0.2:8080", GraywolfUser: "race", GraywolfPassword: "pw", Timeout: 3 * time.Second, DBPath: "/var/lib/cb/race.db", Listen: "127.0.0.1:9000"},
 		},
 		{name: "bad scheme", vars: with(map[string]string{EnvGraywolfURL: "ftp://x"}), wantErr: "scheme"},
 		{name: "missing host", vars: with(map[string]string{EnvGraywolfURL: "http://"}), wantErr: "host"},

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"checkin-board/internal/inbox"
 	"checkin-board/internal/ops"
 	"checkin-board/internal/store"
 	"checkin-board/internal/wire"
@@ -34,12 +35,24 @@ type journalView struct {
 	LastError string `json:"last_error,omitempty"`
 }
 
+// graywolfState is the volunteer banner: a plain problem summary, never
+// raw error text (which carries graywolf's internal address).
 type graywolfState struct {
-	Connected    bool   `json:"connected"`
-	AuthFailed   bool   `json:"auth_failed"`
-	StreamError  string `json:"stream_error,omitempty"`
-	CatchUpError string `json:"catch_up_error,omitempty"`
-	SkippedRows  int    `json:"skipped_rows"`
+	Connected   bool   `json:"connected"`
+	AuthFailed  bool   `json:"auth_failed"`
+	Problem     string `json:"problem,omitempty"`
+	SkippedRows int    `json:"skipped_rows"`
+}
+
+func bannerFor(is inbox.Status) graywolfState {
+	g := graywolfState{Connected: is.Connected, AuthFailed: is.AuthFailed, SkippedRows: is.SkippedRows}
+	switch {
+	case is.AuthFailed:
+		g.Problem = "graywolf rejected the app's login"
+	case is.StreamError != "" || is.CatchUpError != "":
+		g.Problem = "graywolf unreachable"
+	}
+	return g
 }
 
 // getStation is the volunteer header: race, state, delivery and
@@ -67,9 +80,7 @@ func (s *server) getStation(w http.ResponseWriter, r *http.Request) {
 	}
 	js := s.Ops.JournalStatus()
 	v.Journal = journalView{Enabled: js.Enabled, LastError: js.LastError}
-	is := s.Inbox.Status()
-	v.Graywolf = graywolfState{Connected: is.Connected, AuthFailed: is.AuthFailed,
-		StreamError: is.StreamError, CatchUpError: is.CatchUpError, SkippedRows: is.SkippedRows}
+	v.Graywolf = bannerFor(s.Inbox.Status())
 	writeJSON(w, http.StatusOK, v)
 }
 

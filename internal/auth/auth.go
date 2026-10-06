@@ -8,10 +8,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -40,6 +44,9 @@ var (
 	ErrSetupDone = errors.New("auth: setup already done")
 	// ErrNoSession: missing, unknown or expired session.
 	ErrNoSession = errors.New("auth: not logged in")
+	// ErrBadSetupCode: first-run setup needs the code printed in the
+	// server's log on the node.
+	ErrBadSetupCode = errors.New("auth: wrong setup code (it is printed in the server log on the node)")
 	// ErrWeakPassword: a new password breaks the rules.
 	ErrWeakPassword = errors.New("auth: password does not meet the rules")
 	// ErrSamePassword: admin and volunteer passwords must differ.
@@ -58,12 +65,20 @@ type Store interface {
 	PurgeExpiredSessions(ctx context.Context, now time.Time) (int, error)
 }
 
+// maxConcurrentHashes caps bcrypt work so login floods can't starve the
+// race engines of CPU on a Pi.
+const maxConcurrentHashes = 2
+
 // Service implements logins and sessions.
 type Service struct {
 	store   Store
 	now     func() time.Time
 	cost    int
 	limiter *Limiter
+	hashSem chan struct{}
+
+	setupMu   sync.Mutex
+	setupCode string
 }
 
 // New returns a Service. now nil means time.Now; cost 0 means bcrypt's
@@ -75,7 +90,37 @@ func New(st Store, now func() time.Time, cost int) *Service {
 	if cost == 0 {
 		cost = bcrypt.DefaultCost
 	}
-	return &Service{store: st, now: now, cost: cost, limiter: NewLimiter(now)}
+	return &Service{store: st, now: now, cost: cost, limiter: NewLimiter(now), hashSem: make(chan struct{}, maxConcurrentHashes)}
+}
+
+// SetupCode returns the one-time code first-run setup requires, making
+// one if needed. It proves the person setting the admin password can see
+// the node's log (spec 7.2), so a stranger on the hotspot can't claim a
+// fresh node. "" once setup is done.
+func (s *Service) SetupCode(ctx context.Context) (string, error) {
+	st, err := s.Status(ctx)
+	if err != nil || !st.NeedsSetup {
+		return "", err
+	}
+	s.setupMu.Lock()
+	defer s.setupMu.Unlock()
+	if s.setupCode == "" {
+		raw := make([]byte, 5)
+		if _, err := rand.Read(raw); err != nil {
+			return "", fmt.Errorf("auth: setup code: %w", err)
+		}
+		code := base32.StdEncoding.EncodeToString(raw)
+		s.setupCode = code[:4] + "-" + code[4:]
+	}
+	return s.setupCode, nil
+}
+
+func (s *Service) checkSetupCode(code string) bool {
+	s.setupMu.Lock()
+	defer s.setupMu.Unlock()
+	want := s.setupCode
+	norm := strings.ToUpper(strings.TrimSpace(code))
+	return want != "" && subtle.ConstantTimeCompare([]byte(norm), []byte(want)) == 1
 }
 
 // Status is what the login page needs to know.
@@ -94,8 +139,19 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 }
 
 // Setup sets the first admin password and logs the admin in. It works
-// only while no admin password exists.
-func (s *Service) Setup(ctx context.Context, password string) (string, error) {
+// only while no admin password exists, and only with the setup code.
+func (s *Service) Setup(ctx context.Context, code, password string) (string, error) {
+	// Cheap checks first: no bcrypt work for a finished or forged setup.
+	st, err := s.Status(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !st.NeedsSetup {
+		return "", ErrSetupDone
+	}
+	if !s.checkSetupCode(code) {
+		return "", ErrBadSetupCode
+	}
 	if err := checkPassword(password, MinAdminLen); err != nil {
 		return "", err
 	}
@@ -119,7 +175,8 @@ func (s *Service) Login(ctx context.Context, role, password, client string) (str
 		return "", ErrBadCredentials
 	}
 	key := client + "|" + role
-	if err := s.limiter.Allow(key); err != nil {
+	// Counted before checking, so parallel guesses can't exceed the budget.
+	if err := s.limiter.Attempt(key); err != nil {
 		return "", err
 	}
 	h, err := s.store.PasswordHashes(ctx)
@@ -133,8 +190,7 @@ func (s *Service) Login(ctx context.Context, role, password, client string) (str
 	if hash == "" {
 		return "", ErrNotConfigured
 	}
-	if len(password) > MaxPassword || bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
-		s.limiter.Fail(key)
+	if len(password) > MaxPassword || !s.compare(hash, password) {
 		return "", ErrBadCredentials
 	}
 	s.limiter.Succeed(key)
@@ -184,7 +240,7 @@ func (s *Service) ChangeAdminPassword(ctx context.Context, current, next string)
 	if err != nil {
 		return err
 	}
-	if h.AdminHash == "" || bcrypt.CompareHashAndPassword([]byte(h.AdminHash), []byte(current)) != nil {
+	if h.AdminHash == "" || !s.compare(h.AdminHash, current) {
 		return ErrBadCredentials
 	}
 	return s.setPassword(ctx, store.RoleAdmin, next, h.VolunteerHash)
@@ -224,7 +280,7 @@ func (s *Service) setPassword(ctx context.Context, role, next, otherHash string)
 	if err := checkPassword(next, minLen); err != nil {
 		return err
 	}
-	if otherHash != "" && bcrypt.CompareHashAndPassword([]byte(otherHash), []byte(next)) == nil {
+	if otherHash != "" && s.compare(otherHash, next) {
 		return ErrSamePassword
 	}
 	hash, err := s.hash(next)
@@ -242,7 +298,16 @@ func checkPassword(p string, minLen int) error {
 	return nil
 }
 
+// compare checks a password against a hash, within the bcrypt cap.
+func (s *Service) compare(hash, password string) bool {
+	s.hashSem <- struct{}{}
+	defer func() { <-s.hashSem }()
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+}
+
 func (s *Service) hash(p string) (string, error) {
+	s.hashSem <- struct{}{}
+	defer func() { <-s.hashSem }()
 	h, err := bcrypt.GenerateFromPassword([]byte(p), s.cost)
 	if err != nil {
 		return "", fmt.Errorf("auth: hash: %w", err)

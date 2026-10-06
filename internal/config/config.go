@@ -17,6 +17,7 @@ const (
 	DefaultGraywolfURL = "http://localhost:8080"
 	DefaultTimeout     = 10 * time.Second
 	DefaultDBPath      = "checkin-board.db"
+	DefaultListen      = ":8090"
 
 	EnvGraywolfURL      = "GW_BASE_URL"
 	EnvGraywolfUser     = "GW_USER"
@@ -24,6 +25,7 @@ const (
 	EnvGraywolfPassFile = "GW_PASSWORD_FILE"
 	EnvTimeout          = "GW_TIMEOUT"
 	EnvDBPath           = "CB_DB_PATH"
+	EnvListen           = "CB_LISTEN"
 
 	maxPasswordFileSize = 4 << 10
 )
@@ -35,11 +37,12 @@ type Config struct {
 	GraywolfPassword string
 	Timeout          time.Duration
 	DBPath           string
+	Listen           string
 }
 
 // String never includes the password.
 func (c Config) String() string {
-	return fmt.Sprintf("graywolf=%s user=%s timeout=%s db=%s", c.GraywolfURL, c.GraywolfUser, c.Timeout, c.DBPath)
+	return fmt.Sprintf("graywolf=%s user=%s timeout=%s db=%s listen=%s", c.GraywolfURL, c.GraywolfUser, c.Timeout, c.DBPath, c.Listen)
 }
 
 // Env abstracts the environment and filesystem so loading is testable.
@@ -81,8 +84,15 @@ func LoadFrom(env Env) (Config, error) {
 	}
 	return Config{
 		GraywolfURL: gwURL, GraywolfUser: user, GraywolfPassword: pass, Timeout: timeout,
-		DBPath: valueOr(strings.TrimSpace(env.Getenv(EnvDBPath)), DefaultDBPath),
+		DBPath: DBPathFrom(env.Getenv),
+		Listen: valueOr(strings.TrimSpace(env.Getenv(EnvListen)), DefaultListen),
 	}, nil
+}
+
+// DBPathFrom reads only the database path (for host commands that don't
+// talk to graywolf, such as reset-admin-password).
+func DBPathFrom(getenv func(string) string) string {
+	return valueOr(strings.TrimSpace(getenv(EnvDBPath)), DefaultDBPath)
 }
 
 // loadPassword prefers GW_PASSWORD_FILE (which must not be readable by

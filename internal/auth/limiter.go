@@ -48,23 +48,11 @@ func NewLimiter(now func() time.Time) *Limiter {
 	return &Limiter{now: now, keys: map[string]*limiterEntry{}}
 }
 
-// Allow reports whether key may try now.
-func (l *Limiter) Allow(key string) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	e := l.keys[key]
-	if e == nil {
-		return nil
-	}
-	if now := l.now(); now.Before(e.lockedUntil) {
-		return &RateLimitError{RetryAfter: e.lockedUntil.Sub(now)}
-	}
-	return nil
-}
-
-// Fail records a failed attempt, locking key out after maxFailures in
-// window.
-func (l *Limiter) Fail(key string) {
+// Attempt records a login attempt for key and reports whether it may
+// proceed. Every attempt counts against the budget until a success
+// clears it (Succeed), so parallel guesses can't outrun the count.
+// maxFailures attempts within window lock the key, doubling each time.
+func (l *Limiter) Attempt(key string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
@@ -73,8 +61,16 @@ func (l *Limiter) Fail(key string) {
 		if len(l.keys) >= maxKeys {
 			l.evictLocked(now)
 		}
+		if len(l.keys) >= maxKeys {
+			// Still full of active entries: under a spray, refuse new
+			// clients rather than forget existing lockouts.
+			return &RateLimitError{RetryAfter: window}
+		}
 		e = &limiterEntry{}
 		l.keys[key] = e
+	}
+	if now.Before(e.lockedUntil) {
+		return &RateLimitError{RetryAfter: e.lockedUntil.Sub(now)}
 	}
 	recent := e.failures[:0]
 	for _, t := range e.failures {
@@ -83,11 +79,13 @@ func (l *Limiter) Fail(key string) {
 		}
 	}
 	e.failures = append(recent, now)
-	if len(e.failures) >= maxFailures {
+	if len(e.failures) > maxFailures {
 		e.lockout = min(max(firstLockout, 2*e.lockout), maxLockout)
 		e.lockedUntil = now.Add(e.lockout)
 		e.failures = nil
+		return &RateLimitError{RetryAfter: e.lockout}
 	}
+	return nil
 }
 
 // Succeed clears key after a successful login.
@@ -98,18 +96,11 @@ func (l *Limiter) Succeed(key string) {
 }
 
 // evictLocked drops entries that are neither locked nor recently
-// failing; if that frees nothing, it drops everything unlocked.
+// attempting.
 func (l *Limiter) evictLocked(now time.Time) {
 	for k, e := range l.keys {
 		if !now.Before(e.lockedUntil) && (len(e.failures) == 0 || now.Sub(e.failures[len(e.failures)-1]) >= window) {
 			delete(l.keys, k)
-		}
-	}
-	if len(l.keys) >= maxKeys {
-		for k, e := range l.keys {
-			if !now.Before(e.lockedUntil) {
-				delete(l.keys, k)
-			}
 		}
 	}
 }

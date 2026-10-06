@@ -1,13 +1,16 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 
+	"checkin-board/internal/auth"
 	"checkin-board/internal/store"
 )
 
-type passwordBody struct {
-	Password string `json:"password"`
+type setupBody struct {
+	SetupCode string `json:"setup_code"`
+	Password  string `json:"password"`
 }
 
 type loginBody struct {
@@ -31,12 +34,12 @@ func (s *server) getSetup(w http.ResponseWriter, r *http.Request) {
 // postSetup sets the first admin password and logs the admin in. It
 // only works while no admin password exists.
 func (s *server) postSetup(w http.ResponseWriter, r *http.Request) {
-	var b passwordBody
+	var b setupBody
 	if err := decodeJSON(r, &b); err != nil {
 		writeError(w, r, s.log, err)
 		return
 	}
-	token, err := s.Auth.Setup(r.Context(), b.Password)
+	token, err := s.Auth.Setup(r.Context(), b.SetupCode, b.Password)
 	if err != nil {
 		writeError(w, r, s.log, err)
 		return
@@ -93,7 +96,12 @@ func (s *server) putAdminPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, err)
 		return
 	}
-	if err := s.Auth.ChangeAdminPassword(r.Context(), b.Current, b.New); err != nil {
+	err := s.Auth.ChangeAdminPassword(r.Context(), b.Current, b.New)
+	if errors.Is(err, auth.ErrBadCredentials) {
+		// Not a 401: the session is fine; the typed current password isn't.
+		err = &httpError{http.StatusBadRequest, "wrong_current_password", "the current admin password is wrong"}
+	}
+	if err != nil {
 		writeError(w, r, s.log, err)
 		return
 	}

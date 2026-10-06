@@ -47,6 +47,8 @@ func classify(err error) (int, string, string) {
 		return http.StatusUnauthorized, "login_required", "log in first"
 	case errors.Is(err, auth.ErrNotConfigured):
 		return http.StatusConflict, "not_configured", "not set up yet: ask the station operator"
+	case errors.Is(err, auth.ErrBadSetupCode):
+		return http.StatusForbidden, "bad_setup_code", err.Error()
 	case errors.Is(err, auth.ErrSetupDone):
 		return http.StatusConflict, "setup_done", "setup is already done; log in"
 	case errors.Is(err, auth.ErrWeakPassword), errors.Is(err, auth.ErrSamePassword):

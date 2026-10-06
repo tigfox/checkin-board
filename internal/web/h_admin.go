@@ -139,6 +139,11 @@ type graywolfView struct {
 	RetentionDays    int      `json:"retention_days"`
 	RetryMaxAttempts int      `json:"retry_max_attempts,omitempty"`
 	Warnings         []string `json:"warnings,omitempty"`
+	// Inbox reader detail, for the admin only.
+	StreamError  string `json:"stream_error,omitempty"`
+	CatchUpError string `json:"catch_up_error,omitempty"`
+	SkippedRows  int    `json:"skipped_rows"`
+	LastSkipped  string `json:"last_skipped,omitempty"`
 }
 
 // getGraywolf is the admin page's graywolf connection panel.
@@ -146,6 +151,7 @@ func (s *server) getGraywolf(w http.ResponseWriter, r *http.Request) {
 	v := graywolfView{}
 	is := s.Inbox.Status()
 	v.Connected, v.AuthFailed = is.Connected, is.AuthFailed
+	v.StreamError, v.CatchUpError, v.SkippedRows, v.LastSkipped = is.StreamError, is.CatchUpError, is.SkippedRows, is.LastSkipped
 	ver, err := s.Graywolf.Version(r.Context())
 	if err != nil {
 		v.Warnings = append(v.Warnings, "graywolf not reachable: "+safeErr(err))

@@ -19,6 +19,9 @@ internal/hq/           HQ engine: report ingest, gap requests, health view
 internal/app/          assembles the service; role-aware inbox dispatch
 internal/ops/          operator actions: keypad + journal, export/import, board, lifecycle
 internal/journal/      power-safe bib journal (plain CSV, fsynced before the DB write)
+internal/auth/         app logins: bcrypt, sessions, lockout
+internal/branding/     status-board branding: contrast rules, logo processing
+internal/web/          REST API (role-guarded route table) and embedded UI
 internal/peers/        graywolf per-peer retry settings (backup / restore)
 internal/gwfake/       in-memory fake of graywolf's Messages API + simulated RF channel (tests)
 internal/sim/          whole-node simulation: exactly-once and latency tests
@@ -35,6 +38,27 @@ docs/specs/            design spec
 | `GW_PASSWORD_FILE` |                         | file holding the password; must be `chmod 600`; wins over `GW_PASSWORD` |
 | `GW_TIMEOUT`       | `10s`                   | per-request timeout |
 | `CB_DB_PATH`       | `checkin-board.db`      | the app's SQLite database (keep it on persistent storage) |
+| `CB_LISTEN`        | `:8090`                 | address the web UI and API listen on |
+
+The bib journal (`race-journal.csv`) and reset backups (`backups/`) live
+next to the database.
+
+## Logins
+
+On first visit, set the **admin** password (10+ characters). The setup
+page asks for a one-time setup code, which the server prints in its log
+at startup (`journalctl -u checkin-board | grep setup_code`). The admin
+then sets the shared **volunteer** password (6+ characters) for the
+keypad. Volunteers can only log bibs, void entries and set the clock;
+everything else needs the admin login.
+
+Lost the admin password? On the node itself:
+
+```sh
+echo 'a new admin password' | CB_DB_PATH=/path/to/checkin-board.db checkin-board reset-admin-password
+```
+
+This logs out every admin session and doesn't touch race data.
 
 ## Development
 

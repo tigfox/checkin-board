@@ -164,6 +164,9 @@ func (s *server) guard(rt route) http.Handler {
 // which a cross-site HTML form can't send as JSON, and any Origin header
 // must match the host.
 func sameSite(r *http.Request, upload bool) error {
+	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		return errors.New("cross-site request refused")
+	}
 	if origin := r.Header.Get("Origin"); origin != "" {
 		u, err := url.Parse(origin)
 		if err != nil || u.Host != r.Host {
@@ -196,13 +199,18 @@ func roleOf(r *http.Request) string {
 }
 
 // clientKey identifies the client for login rate limiting: the TCP peer
-// address. Proxy headers aren't trusted (the app is served directly).
+// address, with IPv6 grouped by /64 (one host can hold a whole /64).
+// Proxy headers aren't trusted: the app is served directly.
 func clientKey(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
-	return host
+	ip := net.ParseIP(host)
+	if ip == nil || ip.To4() != nil {
+		return host
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 func setSessionCookie(w http.ResponseWriter, r *http.Request, token, role string) {
@@ -228,7 +236,8 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; "+
+			"object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			h.Set("Cache-Control", "no-store")
 		}
@@ -265,8 +274,19 @@ func decodeJSON(r *http.Request, v any) error {
 	return nil
 }
 
+// uploadMemory is how much of an upload is held in RAM; the rest spills
+// to a temp file (a Pi Zero has 512 MB).
+const uploadMemory = 1 << 20
+
 // uploadedFile returns the "file" part of a multipart upload.
 func uploadedFile(r *http.Request) (io.ReadCloser, error) {
+	if err := r.ParseMultipartForm(uploadMemory); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			return nil, &httpError{http.StatusRequestEntityTooLarge, "too_large", "file too large"}
+		}
+		return nil, &httpError{http.StatusBadRequest, "no_file", "upload a file in the \"file\" field"}
+	}
 	f, _, err := r.FormFile("file")
 	if err != nil {
 		var mbe *http.MaxBytesError
