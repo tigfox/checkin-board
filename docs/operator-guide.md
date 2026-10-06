@@ -12,10 +12,21 @@ installed beside it. Volunteers use their phones on the node's Wi-Fi.
 
 You need a node with graywolf already running, and shell access.
 
-1. **Create a graywolf login for the app.** In graywolf's web UI, add a
-   user (e.g. `checkin-board`) and note its password. The app logs in
-   to graywolf's API with it to send and read messages, read the packet
-   log, and read (or, from Admin → Station, change) the station callsign.
+1. **Create a graywolf login for the app.** This is a login inside
+   graywolf, not a Linux user (`install.sh` creates the `checkin-board`
+   Linux user itself). graywolf's web UI can't add users, so use its
+   command on the node. It creates the user if it doesn't exist, and asks
+   for a password (8+ characters):
+   ```sh
+   sudo -u graywolf graywolf auth set-password --user checkin-board -config /var/lib/graywolf/graywolf.db
+   ```
+   Running it as `graywolf` keeps graywolf's database files owned by
+   graywolf. The app uses this login to send and read messages, read
+   the packet log, and read the station callsign (or change it, from
+   Admin → Station). graywolf logins have no permission levels, so this
+   one can do anything graywolf's admin can. Keeping it separate lets you
+   change or revoke the app's password without touching yours. Using
+   your own graywolf login also works: set `GW_USER` to it in step 3.
 2. Copy the release bundle to the node and unpack it:
    ```sh
    tar xzf checkin-board-<version>-linux.tar.gz
