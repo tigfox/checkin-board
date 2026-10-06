@@ -1,6 +1,6 @@
 # checkin-board: race checkpoint reporting -- design
 
-Status: DRAFT rev 4 (adds deployment link check 4.8 and test-campaign phase 12). Not started
+Status: DRAFT rev 5 (adds configurable status-board branding, 8.3). Not started
 (see section 9 for per-phase status).
 Date: 2026-10-05
 Derived from: graywolf `docs/superpowers/specs/2026-10-05-race-checkpoint-design.md`
@@ -85,6 +85,7 @@ Decisions (carried over from the 2026-10-05 Q&A unless marked **new**):
 | UI split | **new:** admin interface (settings, HQ tools, lifecycle; admin login) + volunteer interface (keypad, recent entries; volunteer login) |
 | graywolf messages | **new:** race messages are left in graywolf until the race is marked complete; then an explicit cleanup |
 | Reset | **new:** admin action that clears all race data on a node |
+| Branding | **new (2026-10-06):** the status board's logo, colour scheme, header and footer text are configurable in the admin panel (8.3) |
 | graywolf version | **new:** built and tested against graywolf `0.14.14` (`main` at `559fc9ae`). Startup checks `GET /api/version` and warns on an untested version |
 
 Non-goals (MVP; unchanged): cutoff times / overdue highlighting, time-out /
@@ -441,8 +442,9 @@ The race has a state in `settings.race_state`: `setup` → `active` →
      re-ingested; the race clock sync is cleared; `race_state` returns to
      `setup`.
    - Kept by default: settings (role, callsign, tactical name, HQ call,
-     tuning), the HQ checkpoint list and the roster. Two checkboxes clear
-     those too, for a fresh event.
+     tuning), board branding (8.3), the HQ checkpoint list and the
+     roster. Checkboxes clear those too, for a fresh event: one for the
+     checkpoint list and roster, one for branding.
    - Safety: the admin must type the race name to confirm. A reset during
      `active`, or while unconfirmed batches exist, shows a stronger
      warning. Before clearing, the app **always** writes a backup
@@ -515,6 +517,8 @@ checks toward HQ, and HQ can check toward any checkpoint's call.
 |---|---|---|
 | `settings` | both (singleton) | role, race_name, race_state, race_started_at, station_tactical, checkpoint_code, hq_local_codes, hq_call, gw_channel, path, max_text_len, flush_after_sec, max_in_flight, heartbeat_sec, gap_grace_sec |
 | `peer_prefs_backup` | both | callsign, original wait_for_ack/send_path (restored on Complete) |
+| `branding` | HQ (singleton) | header_text, footer_text, color_primary, color_accent, color_background, color_text (each `#RRGGBB`), updated_at (8.3; migration added in phase 9) |
+| `branding_logo` | HQ (singleton) | image bytes (re-encoded, see 8.3), content_type, width, height, sha256, updated_at |
 | `checkpoints` | HQ | code (unique), name, course_order, expected_call |
 | `runners` | HQ | bib (unique), category; deliberately no personal-data columns |
 | `local_entries` | CP | cp_code, bib, time_in, clock_synced, state (queued/sent/confirmed), void_of, batch_id |
@@ -601,6 +605,9 @@ Admin interface (admin session only; a volunteer session gets 403):
 | PUT | `/api/admin/password/admin` | both: change the admin password (needs the current one) |
 | PUT | `/api/admin/password/volunteer` | both: set or change the volunteer password |
 | GET | `/api/admin/gw` | graywolf version, callsign, reachable, authed, max text, retention |
+| GET/PUT | `/api/admin/branding` | HQ: board branding (header, footer, colours); PUT validates (8.3) |
+| PUT/DELETE | `/api/admin/branding/logo` | HQ: upload (multipart, ≤ 1 MB) or remove the logo |
+| GET | `/api/branding`, `/api/branding/logo` | HQ, any session: what the board renders. The logo is served with its stored type, `X-Content-Type-Options: nosniff` and an ETag (its sha256) |
 | POST | `/api/admin/linkcheck` | both: start a link check (`{to?, count?}`), 409 if one is running or rate-limited |
 | GET | `/api/admin/linkchecks`, `/api/admin/linkchecks/{id}` | both: history / live progress |
 
@@ -687,6 +694,7 @@ are two interfaces, each behind its own login (7.2).
   (clock skew, missing / given-up batches with Re-request, wrong-sender and
   bad-report counters), results export, roster import, checkpoint editor,
   recovery and journal import.
+- **Board branding (HQ):** the editor described in 8.3.
 - Passwords: change the admin password (needs the current one); set or
   change the volunteer password. Either change logs out every session of
   that role.
@@ -714,6 +722,39 @@ UI behaviour carried over from phase 8: Enter on other controls never
 logs, no lost or duplicated bibs on network failure, non-overlapping
 pollers, unreachable banner.
 
+### 8.3 Status-board branding (new, 2026-10-06)
+
+The HQ status board (the board, runner lookup and checkpoint health
+views) can carry the event's own look. It is configured on the admin
+page and applies to those views only. The keypad and admin pages keep
+the app's neutral, high-contrast theme, so volunteers' screens look the
+same at every event.
+
+| Setting | Rules | Default |
+|---|---|---|
+| Logo | PNG, JPEG or WebP, ≤ 1 MB upload, ≤ 4096 px per side. **No SVG** (it can carry script). The server decodes the image and stores a re-encoded PNG scaled to at most 512 px tall, so a crafted file never reaches the browser as uploaded | none |
+| Header text | 0-80 characters of printable text (same rules as names: no control or bidi-override characters); plain text, never HTML | the race name |
+| Footer text | 0-200 characters, same rules | empty |
+| Colours | primary (header bar), accent (highlights, latest passage), background, text. Each is `#RRGGBB`. | the app's neutral theme |
+
+- **Readability is enforced, not left to taste.** Text on background, and
+  header text on the primary colour, must reach WCAG AA contrast (4.5:1).
+  The save is rejected otherwise, and the editor shows the ratio as you
+  pick, because the board is read on a tablet outdoors.
+- **Live preview.** The editor renders a sample board with the pending
+  values before saving. **Reset to default** restores the neutral theme.
+- **Rendering.** Colours become CSS custom properties on the board page,
+  set from the validated values only (never raw input in a style
+  attribute). Header and footer are inserted as text nodes. The logo is
+  an `<img>` from `/api/branding/logo` with alt text set to the header
+  text.
+- **Scope.** Branding is HQ data, because the board lives at HQ.
+  Checkpoints don't need it, and it never goes over RF. Reset keeps it
+  unless its checkbox is ticked (4.7).
+- **Exports.** The results CSV is unbranded (it's data for the timing
+  crew). Printing the board uses the branding, with background colours
+  dropped for paper.
+
 ## 9. Delivery phases (each one PR-sized, TDD, 80%+ coverage, `-race`)
 
 | # | Phase | Output | Status |
@@ -727,10 +768,10 @@ pollers, unreachable banner.
 | 6 | HQ engine | Ingest, bad-report capture, gap tracker + sender, heartbeat/skew, sender check | Not started |
 | 7 | Integration test | Two app instances against a **fake graywolf**: an in-memory Messages API written from the published API (auto-ACK, dedup, `wait_for_ack`, a lossy link with drop / reorder / dup). Asserts eventual exactly-once at HQ; re-runs the 9b latency table and the spoofed-traffic airtime bounds | Not started |
 | 8 | Recovery, journal, lifecycle | Journal, CP export, HQ import, re-request; Start / Complete / Stop sending / graywolf cleanup / Reset with backup (4.7) | Not started |
-| 9 | App REST + auth | Handlers, DTO validation, volunteer/admin login and role middleware (table test: every route × no session / volunteer / admin), first-run setup, password change + session revocation, `reset-admin-password` CLI, rate limit, session expiry, graywolf credential handling | Not started |
-| 10 | Web UI | Admin + volunteer interfaces; JS unit tests for logic; scripted browser run of the real binary against the fake graywolf | Not started |
+| 9 | App REST + auth | Handlers, DTO validation, volunteer/admin login and role middleware (table test: every route × no session / volunteer / admin), first-run setup, password change + session revocation, `reset-admin-password` CLI, rate limit, session expiry, graywolf credential handling. **Branding (8.3):** migration + store, validation (text rules, `#RRGGBB`, WCAG contrast), logo decode/re-encode (PNG/JPEG/WebP only, size and pixel caps), branding endpoints; fuzz the logo decoder with malformed images | Not started |
+| 10 | Web UI | Admin + volunteer interfaces; JS unit tests for logic; scripted browser run of the real binary against the fake graywolf. **Branded status board (8.3):** CSS custom properties from saved branding, header/footer/logo, branding editor with live preview and contrast readout, print stylesheet | Not started |
 | 11 | Packaging + docs | `GOARM=6` build, systemd unit (`After=graywolf.service`), install script, operator README incl. recovery and reset procedures | Not started |
-| 12 | Test campaign + deployment link check | **Link check (4.8):** `RC1 P/Q` behaviour on both sides, admin UI, HQ health column, Start-race warning, `checkin-board linkcheck` CLI with exit codes, Action recipe. **Test campaign:** (a) ≥80% coverage in every package; `go vet`, `staticcheck`, `govulncheck`. (b) Long fuzz runs (30 min each): `FuzzDecode`, roster CSV, journal reader. (c) Soak: simulated 12 h race, 500 runners, 8 checkpoints, 20% loss through the fake graywolf; asserts exactly-once, flat memory, bounded DB growth. (d) Fault injection: `kill -9` between POST and store and between batch and send; graywolf restart, password change and SSE drop mid-race; disk full; torn journal tail after a power cut; OS clock step; checkpoint reset mid-race (seq reuse). (e) Security: auth matrix, Content-Type guard, rate limits, CSV injection, upload limits. (f) Browser E2E at phone width: keypad log/void, network loss, clock banner, admin lifecycle. (g) Real-graywolf bench: contract tests (fast + slow) against the deployed version, then 2-3 graywolf nodes on real radios (low power / dummy loads) replaying a scripted 100-runner race, plus a link check between every node and HQ. (h) Pi Zero W: RSS < 100 MB, CPU during a 20 bibs/min surge, startup time. **Exit criteria:** all green, 9b latency within acceptance, link check PASS on every bench pair; results written to `docs/test-report-<date>.md` | Not started |
+| 12 | Test campaign + deployment link check | **Link check (4.8):** `RC1 P/Q` behaviour on both sides, admin UI, HQ health column, Start-race warning, `checkin-board linkcheck` CLI with exit codes, Action recipe. **Test campaign:** (a) ≥80% coverage in every package; `go vet`, `staticcheck`, `govulncheck`. (b) Long fuzz runs (30 min each): `FuzzDecode`, roster CSV, journal reader. (c) Soak: simulated 12 h race, 500 runners, 8 checkpoints, 20% loss through the fake graywolf; asserts exactly-once, flat memory, bounded DB growth. (d) Fault injection: `kill -9` between POST and store and between batch and send; graywolf restart, password change and SSE drop mid-race; disk full; torn journal tail after a power cut; OS clock step; checkpoint reset mid-race (seq reuse). (e) Security: auth matrix, Content-Type guard, rate limits, CSV injection, upload limits, hostile logo files (SVG, polyglots, decompression bombs) and branding text (HTML, bidi overrides). (f) Browser E2E at phone width: keypad log/void, network loss, clock banner, admin lifecycle. (g) Real-graywolf bench: contract tests (fast + slow) against the deployed version, then 2-3 graywolf nodes on real radios (low power / dummy loads) replaying a scripted 100-runner race, plus a link check between every node and HQ. (h) Pi Zero W: RSS < 100 MB, CPU during a 20 bibs/min surge, startup time. **Exit criteria:** all green, 9b latency within acceptance, link check PASS on every bench pair; results written to `docs/test-report-<date>.md` | Not started |
 | 13 | Field rehearsal | Deploy to real locations; **run the link check at every node first**; then a walk-around on the course | Not started |
 
 Phase 1 comes first on purpose: every later phase rests on graywolf
@@ -775,6 +816,8 @@ RF.
 | Admin password lost at a station | README recovery: `checkin-board reset-admin-password` CLI on the host (needs shell access); race data is untouched |
 | graywolf down or restarting | Outbox and keypad keep working locally; banner; catch-up on reconnect |
 | Shared 1200-baud congestion; no digis on dedicated freq; iGates gating `RC1` on 144.390; lost ACK means duplicate; bad clocks; typos | Unchanged from the original section 10 |
+| Uploaded logo used as an attack (script in SVG, malformed image, decompression bomb) | SVG refused; image decoded with size and pixel caps before full decode; re-encoded to PNG; served with stored type and `nosniff`; admin login required to upload |
+| Branding makes the board unreadable outdoors | WCAG AA contrast enforced on save; Reset to default; branding never applies to the keypad |
 | Two processes on a Pi Zero W (512 MB) | Pure-Go binary, SQLite, no Node at runtime; measure RSS in phase 11 |
 
 ## 11. Resolved questions
@@ -798,6 +841,14 @@ Answered 2026-10-05:
    a reset feature that clears all checkpoint data (section 4.7).
 4. **Access.** All access requires login. There's no public board
    (section 7.2).
+
+Added 2026-10-06:
+
+5. **Live RF testing** is deferred until the radio hardware is ready;
+   everything else is built and tested against the fake graywolf (the
+   contract test moves to phase 12).
+6. **Branding.** The status board's logo, colour scheme, and header and
+   footer text are configurable in the admin panel (8.3).
 
 ## 12. Fallback transport (not planned)
 
