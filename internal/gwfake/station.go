@@ -408,3 +408,23 @@ func (s *Station) DeleteMessage(ctx context.Context, id uint64) error {
 	delete(s.updated, id)
 	return nil
 }
+
+// Version implements graywolf.Client.Version.
+func (s *Station) Version(ctx context.Context) (graywolf.Version, error) {
+	return graywolf.Version{Version: "0.14.14", Platform: "linux"}, nil
+}
+
+// StationConfig implements graywolf.Client.StationConfig.
+func (s *Station) StationConfig(ctx context.Context) (graywolf.StationConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return graywolf.StationConfig{Callsign: s.Call}, nil
+}
+
+// SetStationCallsign implements graywolf.Client.SetStationCallsign.
+func (s *Station) SetStationCallsign(ctx context.Context, call string) (graywolf.StationConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Call = strings.ToUpper(call)
+	return graywolf.StationConfig{Callsign: s.Call}, nil
+}

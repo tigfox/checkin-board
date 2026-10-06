@@ -13,6 +13,8 @@ import (
 type ResetOptions struct {
 	// ClearReference also clears HQ's checkpoint list and roster.
 	ClearReference bool
+	// ClearBranding also returns the status board to the default look.
+	ClearBranding bool
 }
 
 // raceTables hold one race's data, in delete order.
@@ -39,9 +41,12 @@ func (s *Store) Backup(ctx context.Context, path string) error {
 // graywolf messages are the app's. The caller backs up first and moves
 // the inbox reader's starting point (spec 4.7.4).
 func (s *Store) ResetRaceData(ctx context.Context, opts ResetOptions) error {
-	tables := raceTables
+	tables := append([]string{}, raceTables...)
 	if opts.ClearReference {
-		tables = append(append([]string{}, raceTables...), "checkpoints", "runners")
+		tables = append(tables, "checkpoints", "runners")
+	}
+	if opts.ClearBranding {
+		tables = append(tables, "branding", "branding_logo")
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, t := range tables {

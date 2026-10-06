@@ -1,0 +1,71 @@
+package web
+
+// routes is every API endpoint (spec 7.1) and who may call it. The
+// access test walks this table, so a route can't be added unguarded.
+func (s *server) routes() []route {
+	return []route{
+		// Logins (spec 7.2).
+		{method: "GET", pattern: "/api/setup", access: public, h: s.getSetup},
+		{method: "POST", pattern: "/api/setup", access: public, h: s.postSetup},
+		{method: "POST", pattern: "/api/login", access: public, h: s.postLogin},
+		{method: "POST", pattern: "/api/logout", access: public, h: s.postLogout},
+		{method: "GET", pattern: "/api/session", access: volunteer, h: s.getSession},
+
+		// Volunteer interface.
+		{method: "GET", pattern: "/api/station", access: volunteer, h: s.getStation},
+		{method: "GET", pattern: "/api/entries", access: volunteer, h: s.getEntries},
+		{method: "POST", pattern: "/api/entries", access: volunteer, h: s.postEntry},
+		{method: "DELETE", pattern: "/api/entries/{id}", access: volunteer, h: s.deleteEntry},
+		{method: "GET", pattern: "/api/clock", access: volunteer, h: s.getClock},
+		{method: "POST", pattern: "/api/clock/sync", access: volunteer, h: s.postClockSync},
+		{method: "GET", pattern: "/api/branding", access: volunteer, h: s.getBranding},
+		{method: "GET", pattern: "/api/branding/logo", access: volunteer, h: s.getLogo},
+
+		// Admin: settings and graywolf.
+		{method: "GET", pattern: "/api/admin/settings", access: admin, h: s.getSettings},
+		{method: "PUT", pattern: "/api/admin/settings", access: admin, h: s.putSettings},
+		{method: "PUT", pattern: "/api/admin/callsign", access: admin, h: s.putCallsign},
+		{method: "GET", pattern: "/api/admin/gw", access: admin, h: s.getGraywolf},
+		{method: "GET", pattern: "/api/admin/peers", access: admin, h: s.getPeers},
+		{method: "POST", pattern: "/api/admin/peers/restore", access: admin, h: s.postPeersRestore},
+		{method: "POST", pattern: "/api/admin/inbox/reread", access: admin, h: s.postInboxReread},
+		{method: "PUT", pattern: "/api/admin/password/admin", access: admin, h: s.putAdminPassword},
+		{method: "PUT", pattern: "/api/admin/password/volunteer", access: admin, h: s.putVolunteerPassword},
+
+		// Admin: race lifecycle (spec 4.7).
+		{method: "POST", pattern: "/api/admin/race/start", access: admin, h: s.postStart},
+		{method: "POST", pattern: "/api/admin/race/complete", access: admin, h: s.postComplete},
+		{method: "POST", pattern: "/api/admin/race/secure", access: admin, h: s.postSecure},
+		{method: "POST", pattern: "/api/admin/race/check-in", access: admin, h: s.postCheckIn},
+		{method: "POST", pattern: "/api/admin/race/cleanup-graywolf", access: admin, h: s.postCleanup},
+		{method: "POST", pattern: "/api/admin/race/reset", access: admin, h: s.postReset},
+
+		// Admin: checkpoint tools.
+		{method: "GET", pattern: "/api/admin/outbox", access: admin, h: s.getOutbox},
+		{method: "GET", pattern: "/api/admin/recovery/export.csv", access: admin, h: s.getRecoveryExport},
+
+		// Admin: HQ tools.
+		{method: "GET", pattern: "/api/admin/board", access: admin, h: s.getBoard},
+		{method: "GET", pattern: "/api/admin/status", access: admin, h: s.getStatus},
+		{method: "POST", pattern: "/api/admin/status/{cp}/rerequest", access: admin, h: s.postRerequest},
+		{method: "GET", pattern: "/api/admin/export.csv", access: admin, h: s.getResultsExport},
+		{method: "GET", pattern: "/api/admin/checkpoints", access: admin, h: s.getCheckpoints},
+		{method: "POST", pattern: "/api/admin/checkpoints", access: admin, h: s.postCheckpoint},
+		{method: "PUT", pattern: "/api/admin/checkpoints/{id}", access: admin, h: s.putCheckpoint},
+		{method: "DELETE", pattern: "/api/admin/checkpoints/{id}", access: admin, h: s.deleteCheckpoint},
+		{method: "GET", pattern: "/api/admin/runners", access: admin, h: s.getRunners},
+		{method: "POST", pattern: "/api/admin/runners", access: admin, h: s.postRunner},
+		{method: "DELETE", pattern: "/api/admin/runners/{bib}", access: admin, h: s.deleteRunner},
+		{method: "GET", pattern: "/api/admin/runners/{bib}/history", access: admin, h: s.getRunnerHistory},
+		{method: "POST", pattern: "/api/admin/runners/import", access: admin, h: s.postRunnerImport, upload: true},
+		{method: "POST", pattern: "/api/admin/recovery/import", access: admin, h: s.postRecoveryImport, upload: true},
+		{method: "POST", pattern: "/api/admin/recovery/journal", access: admin, h: s.postJournalImport, upload: true},
+
+		// Admin: board branding (spec 8.3).
+		{method: "GET", pattern: "/api/admin/branding", access: admin, h: s.getAdminBranding},
+		{method: "PUT", pattern: "/api/admin/branding", access: admin, h: s.putBranding},
+		{method: "POST", pattern: "/api/admin/branding/check", access: admin, h: s.postBrandingCheck},
+		{method: "PUT", pattern: "/api/admin/branding/logo", access: admin, h: s.putLogo, upload: true},
+		{method: "DELETE", pattern: "/api/admin/branding/logo", access: admin, h: s.deleteLogo},
+	}
+}

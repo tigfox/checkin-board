@@ -190,6 +190,8 @@ type ResetRequest struct {
 	Confirm string
 	// ClearReference also clears HQ's checkpoint list and roster.
 	ClearReference bool
+	// ClearBranding also returns the status board to the default look.
+	ClearBranding bool
 	// AcknowledgeUnsent allows resetting a checkpoint that still has
 	// entries HQ hasn't confirmed (they are kept in the backup).
 	AcknowledgeUnsent bool
@@ -241,7 +243,7 @@ func (s *Service) Reset(ctx context.Context, req ResetRequest) (ResetResult, err
 	if res.BackupDir, res.Warnings, err = s.backup(ctx, cfg); err != nil {
 		return res, err
 	}
-	if err := s.cfg.Store.ResetRaceData(ctx, store.ResetOptions{ClearReference: req.ClearReference}); err != nil {
+	if err := s.cfg.Store.ResetRaceData(ctx, store.ResetOptions{ClearReference: req.ClearReference, ClearBranding: req.ClearBranding}); err != nil {
 		return res, err
 	}
 	// Only once the data is gone: a fresh journal for the next race.

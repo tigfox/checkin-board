@@ -182,3 +182,16 @@ func TestDeleteMessage(t *testing.T) {
 		t.Fatalf("second delete err = %v", err)
 	}
 }
+
+func TestStationConfigFakes(t *testing.T) {
+	s := New("K1CP")
+	if v, _ := s.Version(ctx); v.Version == "" {
+		t.Fatal("version")
+	}
+	if c, _ := s.SetStationCallsign(ctx, "k2cp-1"); c.Callsign != "K2CP-1" {
+		t.Fatalf("set = %+v", c)
+	}
+	if c, _ := s.StationConfig(ctx); c.Callsign != "K2CP-1" {
+		t.Fatalf("get = %+v", c)
+	}
+}

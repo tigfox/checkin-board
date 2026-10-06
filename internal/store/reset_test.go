@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -166,5 +167,57 @@ func TestUnconfirmedRows(t *testing.T) {
 	got, err := s.UnconfirmedRows(ctx)
 	if err != nil || len(got) != 1 || !got[gwIDOf(pending)] {
 		t.Fatalf("UnconfirmedRows = %v, %v", got, err)
+	}
+}
+
+func TestBrandingPersistence(t *testing.T) {
+	s := newTestStore(t)
+	if b, err := s.Branding(ctx); err != nil || b.HeaderText != "" {
+		t.Fatalf("fresh = %+v, %v", b, err)
+	}
+	if _, err := s.SaveBranding(ctx, BrandingRow{HeaderText: "Ridge 50K", ColorPrimary: "#112233"}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.Branding(ctx); b.HeaderText != "Ridge 50K" || b.ColorPrimary != "#112233" {
+		t.Fatalf("branding = %+v", b)
+	}
+	if _, err := s.Logo(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("no logo err = %v", err)
+	}
+	if err := s.SaveLogo(ctx, LogoRow{Image: []byte{1, 2}, ContentType: "image/png", Width: 1, Height: 1, SHA256: "ab"}); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := s.Logo(ctx); err != nil || len(l.Image) != 2 {
+		t.Fatalf("logo = %+v, %v", l, err)
+	}
+	if err := s.DeleteLogo(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.SaveLogo(ctx, LogoRow{Image: []byte{1}, ContentType: "image/png", SHA256: "x"})
+	if err := s.ClearBranding(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.Branding(ctx); b.HeaderText != "" {
+		t.Fatal("branding survived ClearBranding")
+	}
+	if _, err := s.Logo(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatal("logo survived ClearBranding")
+	}
+}
+
+func TestResetClearBranding(t *testing.T) {
+	s := newTestStore(t)
+	_, _ = s.SaveBranding(ctx, BrandingRow{HeaderText: "X"})
+	if err := s.ResetRaceData(ctx, ResetOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.Branding(ctx); b.HeaderText != "X" {
+		t.Fatal("branding cleared without ClearBranding")
+	}
+	if err := s.ResetRaceData(ctx, ResetOptions{ClearBranding: true}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.Branding(ctx); b.HeaderText != "" {
+		t.Fatal("branding kept with ClearBranding")
 	}
 }
