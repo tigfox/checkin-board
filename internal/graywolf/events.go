@@ -31,6 +31,14 @@ var (
 // caller's job. Events are hints: graywolf can drop them, so callers
 // must also page with CatchUp.
 func (c *Client) StreamEvents(ctx context.Context, fn func(Event) error) error {
+	return c.StreamEventsWithOpen(ctx, nil, fn)
+}
+
+// StreamEventsWithOpen is StreamEvents with onOpen (if non-nil) called
+// once graywolf has accepted the stream (HTTP 200), before any event.
+// Callers use it to report "connected" truthfully: a refused, failing
+// or hung connect never calls it.
+func (c *Client) StreamEventsWithOpen(ctx context.Context, onOpen func(), fn func(Event) error) error {
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -53,6 +61,9 @@ func (c *Client) StreamEvents(ctx context.Context, fn func(Event) error) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return readAPIError(resp, http.MethodGet, eventsPath)
+	}
+	if onOpen != nil {
+		onOpen()
 	}
 
 	scanner := bufio.NewScanner(resp.Body)

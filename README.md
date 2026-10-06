@@ -13,6 +13,7 @@ internal/graywolf/     graywolf REST client (auth, messages, SSE, prefs, station
 internal/wire/         RC1 message grammar (reports, heartbeats, gaps, link-check probes)
 internal/raceclock/    browser-synced race clock
 internal/store/        SQLite storage (pure Go), embedded migrations
+internal/inbox/        follows graywolf's message feed, dispatches race traffic
 docs/specs/            design spec
 ```
 

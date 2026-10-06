@@ -215,3 +215,29 @@ func TestStreamEventsSlowHandlerIsNotIdle(t *testing.T) {
 		t.Fatalf("err = %v, n = %d; want ErrStreamClosed after 2 events", err, n)
 	}
 }
+
+func TestStreamEventsWithOpenCallsOnOpenOnlyOnSuccess(t *testing.T) {
+	f := newFakeGW(t)
+	ok := true
+	f.mux.HandleFunc("GET /api/messages/events", func(w http.ResponseWriter, r *http.Request) {
+		if !ok {
+			writeTestJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "down"})
+			return
+		}
+		sseHandler(t, "event: message.acked\ndata: {\"id\":1}\n\n")(w, r)
+	})
+	c := f.client(t)
+	var order []string
+	err := c.StreamEventsWithOpen(context.Background(),
+		func() { order = append(order, "open") },
+		func(Event) error { order = append(order, "event"); return nil })
+	if !errors.Is(err, ErrStreamClosed) || strings.Join(order, ",") != "open,event" {
+		t.Fatalf("err = %v, order = %v", err, order)
+	}
+	ok = false
+	opened := false
+	_ = c.StreamEventsWithOpen(context.Background(), func() { opened = true }, func(Event) error { return nil })
+	if opened {
+		t.Fatal("onOpen called for a refused stream")
+	}
+}

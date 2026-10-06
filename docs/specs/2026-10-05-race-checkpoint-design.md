@@ -142,7 +142,7 @@ All calls use the session cookie from `POST /api/auth/login` (section 7.2).
 | Need | graywolf endpoint |
 |---|---|
 | Login / re-login on 401 | `POST /api/auth/login` |
-| Liveness, server time | `GET /api/health` |
+| Liveness, server time | `GET /api/health` (requires login on the test host, 0.14.14 `b589e686`) |
 | Version check | `GET /api/version` |
 | Station callsign (read / set from admin) | `GET` / `PUT /api/station/config` (`callsign`) |
 | Send a batch / heartbeat / gap request | `POST /api/messages` `{to, text, path, channel, client_id}` |
@@ -352,6 +352,35 @@ app can't stop that.
   shorter than the race window.
 
 ### 4.6 Inbox reader
+
+**As built (phase 4):** all processing goes through one path. A single
+worker pages `GET /api/messages?folder=all` forward from the saved
+cursor. SSE events, every (re)connect, and a 60 s backstop only *kick*
+that worker; event payloads are never trusted. graywolf orders the feed
+by `updated_at`, so it delivers new inbound rows and also re-delivers
+our own outbound rows whenever their status changes. That gives the
+checkpoint engine its ACK notifications from the same reader
+(`Dispatcher.HandleOutbound`, which must be idempotent). Only RC1 text in
+DM threads is dispatched; everything else is the operator's traffic.
+Known limitation: graywolf's cursor compares `updated_at` to the whole
+second, then id, so a status change on an older (lower-id) row in the
+same second as the cursor can be skipped. New inbound rows are never
+skipped, because their ids are always higher. The checkpoint engine's
+per-tick `GET /api/messages/{id}` poll of in-flight batches (4.1.4)
+covers the skipped case. A fresh node's first catch-up uses
+`InitialSince` so it doesn't replay old races from graywolf's history.
+
+Failure handling. A row whose dispatch keeps failing is skipped after
+10 attempts, or at once if the dispatcher marks the error `Permanent`, so
+one bad row can't stall the feed. The protocol recovers the content: HQ
+gap requests re-fetch a batch, and an outbound row reappears on its next
+status change. Skips are counted in the reader's status for the health
+banner. Dispatchers should record bad input (e.g. an undecodable report)
+and return nil rather than an error. "Connected" means graywolf accepted
+the event stream (an on-open hook in the client), not merely that a
+connection was attempted. Stream and catch-up errors are reported
+separately. A failed mark-read is retried on the next catch-up. A
+catch-up that stops at its page limit re-runs immediately.
 
 - Holds one SSE connection to `/api/messages/events` and reconnects with
   backoff (1, 2, 5, 10, 30 s).
@@ -678,10 +707,10 @@ pollers, unreachable banner.
 | # | Phase | Output | Status |
 |---|---|---|---|
 | 0 | Sign-off | This spec approved | Answers received 2026-10-05; awaiting final approval |
-| 1 | graywolf client + API spike | `internal/graywolf`: login/re-login, health, version, station get/put, send, get, resend, delete, list+cursor, SSE, conv prefs, preferences. `httptest` fakes for unit tests, plus an **opt-in contract test** (`GW_CONTRACT=1`) against a real graywolf 0.14.14 that proves: msgid is stable across resend; `wait_for_ack=false` stops the ladder and late ACKs still flip status; `client_id` round-trips (or not); the inbox cursor doesn't skip rows; single-row delete leaves the thread intact | **In progress** 2026-10-05. Client done, 96.3% coverage, reviewed (fixes: watchdog pauses during handler and covers connect; stalled-cursor detection; 30 s fail-fast after bad credentials; no credentials in URLs, errors or `%v`). Contract test written (`make contract`), **not yet run**: waiting on the graywolf test host |
+| 1 | graywolf client + API spike | `internal/graywolf`: login/re-login, health, version, station get/put, send, get, resend, delete, list+cursor, SSE, conv prefs, preferences. `httptest` fakes for unit tests, plus an **opt-in contract test** (`GW_CONTRACT=1`) against a real graywolf 0.14.14 that proves: msgid is stable across resend; `wait_for_ack=false` stops the ladder and late ACKs still flip status; `client_id` round-trips (or not); the inbox cursor doesn't skip rows; single-row delete leaves the thread intact | **In progress** 2026-10-05. Client done, 96.3% coverage, reviewed (fixes: watchdog pauses during handler and covers connect; stalled-cursor detection; 30 s fail-fast after bad credentials; no credentials in URLs, errors or `%v`). Contract test written (`make contract`), **not yet run**: live transmit deferred until the radio hardware is ready (user, 2026-10-06), so it runs in phase 12. Test host found at `10.0.0.65:8080` (0.14.14, commit `b589e686`) |
 | 2 | Wire codec + race clock | Port `types/encode/decode/clock` from `pkg/race` into `internal/wire`, `internal/raceclock`; add `RC1 P/Q` link-check messages (4.8); table tests + `FuzzDecode` | **Done** 2026-10-05. wire 95.6%, raceclock 100% coverage; FuzzDecode 68M execs clean (now covering P/Q); gap-list parser shared with P/Q (behaviour unchanged, reviewed). Worst-case `RC1 Q` is exactly 67 chars, pinned by an exhaustive test. Clock types renamed `raceclock.Source`/`Status`; the OS-clock check (section 6) is injected later |
 | 3 | Storage | SQLite (modernc), embedded migrations, repositories, roster CSV + `FuzzParseRosterCSV` | **Done** 2026-10-06. 90.8% coverage; FuzzParseRosterCSV 60 s clean; builds for ARMv6 with `CGO_ENABLED=0`; `govulncheck` clean (bumped modernc sqlite to v1.60.1 / SQLite 3.53.4 and x/text). Review fixes: gap requests release acked/rejected rows (above, 3.1); bad reports recorded in `gw_rows` and counted only against known checkpoints; UTF-8-safe truncation; `hq_call` SSID limited to 0-15. Also fixed a ported test that checked the old `race_runners` table name and so passed vacuously |
-| 4 | Inbox reader | SSE + catch-up, cursor persistence, idempotent dispatch, reconnect/backoff | Not started |
+| 4 | Inbox reader | SSE + catch-up, cursor persistence, idempotent dispatch, reconnect/backoff | **Done** 2026-10-06. 95.1% coverage, stable over 30 `-race` runs. Review: no lost-row paths; fixed one bad row blocking the feed (skip after 10 failures or on `Permanent`), backlog drain, a truthful Connected flag (new `StreamEventsWithOpen` client hook), separate stream/catch-up errors, mark-read retry, cursor save on shutdown, and backoff reset only after a healthy stream |
 | 5 | Checkpoint engine | Batcher, outbox on `/messages` + `/resend`, ACK watcher, fast retransmit, gap-request handler, heartbeat, crash-safe POST (4.1.7) | Not started |
 | 6 | HQ engine | Ingest, bad-report capture, gap tracker + sender, heartbeat/skew, sender check | Not started |
 | 7 | Integration test | Two app instances against a **fake graywolf**: an in-memory Messages API written from the published API (auto-ACK, dedup, `wait_for_ack`, a lossy link with drop / reorder / dup). Asserts eventual exactly-once at HQ; re-runs the 9b latency table and the spoofed-traffic airtime bounds | Not started |
