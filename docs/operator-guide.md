@@ -33,9 +33,9 @@ You need a node with graywolf already running, and shell access.
    - starts the `checkin-board` service. If you skip the password (or
      run the script non-interactively), it says "Not started": put the
      password in that file and `sudo systemctl start checkin-board`.
-3. If graywolf isn't on `http://127.0.0.1:8080`, or the login you made
-   isn't called `checkin-board`, edit `/etc/checkin-board/checkin-board.env`
-   and `sudo systemctl restart checkin-board`.
+2. If graywolf isn't on `http://127.0.0.1:8080`, edit
+   `/etc/checkin-board/checkin-board.env` and
+   `sudo systemctl restart checkin-board`.
 
 Data lives in `/var/lib/checkin-board/`:
 
