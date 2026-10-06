@@ -13,7 +13,7 @@ import (
 func TestBackupAndResetRaceData(t *testing.T) {
 	s := newTestStore(t)
 	cfg := DefaultSettings()
-	cfg.Role, cfg.CheckpointCode, cfg.HQCall, cfg.RaceState, cfg.RaceName = RoleCheckpoint, "AS5", "N0HQ", RaceActive, "Ridge"
+	cfg.Role, cfg.CheckpointCode, cfg.HQCall, cfg.RaceState, cfg.RaceName = RoleCheckpoint, "AS5", "N0CALL-10", RaceActive, "Ridge"
 	started := t0
 	cfg.RaceStartedAt = &started
 	if _, err := s.SaveSettings(ctx, cfg); err != nil {
@@ -24,7 +24,7 @@ func TestBackupAndResetRaceData(t *testing.T) {
 	_ = s.CreateCheckpoint(ctx, &Checkpoint{Code: "AS5", Name: "Aid 5"})
 	_, _ = s.UpsertRunners(ctx, []Runner{{Bib: 1}})
 	msg, _ := wire.Decode("RC1 R AS9 1 @1300 7/00")
-	_, _ = s.IngestReport(ctx, msg.(*wire.Report), "K9CP", 50, t0)
+	_, _ = s.IngestReport(ctx, msg.(*wire.Report), "N0CALL-9", 50, t0)
 
 	path := filepath.Join(t.TempDir(), "snap.db")
 	if err := s.Backup(ctx, path); err != nil {
@@ -143,7 +143,7 @@ func TestListHQLocal(t *testing.T) {
 
 func TestSettingsRaceStatesByRole(t *testing.T) {
 	cp := DefaultSettings()
-	cp.Role, cp.CheckpointCode, cp.HQCall = RoleCheckpoint, "AS5", "N0HQ"
+	cp.Role, cp.CheckpointCode, cp.HQCall = RoleCheckpoint, "AS5", "N0CALL-10"
 	for _, st := range []string{RaceSecured, RaceCheckingIn, RaceCheckedIn} {
 		cp.RaceState = st
 		if err := cp.Validate(); err != nil {

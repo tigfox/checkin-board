@@ -5,7 +5,7 @@ radio, without anyone at the checkpoint touching the admin page:
 
 ```
 @@<otp>#linkcheck        sent from HQ to the checkpoint's callsign
-ok: PASS N0HQ up5/5 ack5 rtt4s -21/-22dB      the checkpoint's reply
+ok: PASS N0CALL-10 up5/5 ack5 rtt4s -21/-22dB      the checkpoint's reply
 ```
 
 The reply reads: verdict, peer, probes heard at HQ out of those sent,
@@ -56,7 +56,7 @@ The steps below use graywolf's own pages: see its handbook, "Actions".
    | Headers | `Authorization: Bearer <token from step 1>` and `Content-Type: application/json` |
    | Body template | `{}` |
    | Require OTP | on, with net control's credential |
-   | Sender allowlist | HQ's callsign(s), e.g. `N0HQ-*` |
+   | Sender allowlist | HQ's callsign(s), e.g. `N0CALL-*` |
    | Timeout (sec) | 300 (a run takes one to three minutes) |
    | Queue depth | 1 |
    | Rate limit (sec) | 120 (the app also allows one run per 2 minutes) |

@@ -64,7 +64,7 @@ func TestLatencyTable(t *testing.T) {
 			if _, err := s.AddNode(hqCall, HQSettings()); err != nil {
 				t.Fatal(err)
 			}
-			cp, err := s.AddNode("KK7CP-7", CheckpointSettings("AS1", hqCall))
+			cp, err := s.AddNode("N0CALL-7", CheckpointSettings("AS1", hqCall))
 			if err != nil {
 				t.Fatal(err)
 			}

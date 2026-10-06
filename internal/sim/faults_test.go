@@ -19,7 +19,7 @@ func TestGraywolfAPIOutageMidRace(t *testing.T) {
 	}
 	s := newSim(t, 31, gwfake.Profile{Loss: 0.2, Dup: 0.1, MaxDelay: 3 * time.Second})
 	hqNode := addNode(t, s, hqCall, HQSettings())
-	cp := addNode(t, s, "KK7CP-7", CheckpointSettings("AS1", hqCall))
+	cp := addNode(t, s, "N0CALL-7", CheckpointSettings("AS1", hqCall))
 	for bib := store.Bib(1); bib <= 120; bib++ {
 		switch bib {
 		case 20:
@@ -47,7 +47,7 @@ func TestRepeatedRestartsMidRace(t *testing.T) {
 	}
 	s := newSim(t, 32, gwfake.Profile{Loss: 0.25, Dup: 0.1, MaxDelay: 3 * time.Second})
 	hqNode := addNode(t, s, hqCall, HQSettings())
-	cp := addNode(t, s, "KK7CP-7", CheckpointSettings("AS1", hqCall))
+	cp := addNode(t, s, "N0CALL-7", CheckpointSettings("AS1", hqCall))
 	for bib := store.Bib(1); bib <= 150; bib++ {
 		logBib(t, s, cp, bib)
 		s.Run(7 * time.Second)

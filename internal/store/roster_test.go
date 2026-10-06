@@ -11,7 +11,7 @@ func TestCheckpointCRUD(t *testing.T) {
 	s := newTestStore(t)
 	cps := []*Checkpoint{
 		{Code: "FIN", Name: "Finish", CourseOrder: 9},
-		{Code: "AS1", Name: "Ridge Aid", CourseOrder: 1, ExpectedCall: "KK7ABC-7"},
+		{Code: "AS1", Name: "Ridge Aid", CourseOrder: 1, ExpectedCall: "N0CALL-7"},
 		{Code: "START", Name: "Start", CourseOrder: 0},
 	}
 	for _, c := range cps {

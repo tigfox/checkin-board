@@ -19,7 +19,7 @@ func report(t *testing.T, text string) *Report {
 
 func mustIngest(t *testing.T, s *Store, text string, receivedAt time.Time) IngestResult {
 	t.Helper()
-	res, err := s.IngestReport(ctx, report(t, text), "KK7ABC-7", 0, receivedAt)
+	res, err := s.IngestReport(ctx, report(t, text), "N0CALL-7", 0, receivedAt)
 	if err != nil {
 		t.Fatalf("IngestReport(%q): %v", text, err)
 	}
@@ -43,8 +43,8 @@ func TestIngestReportStoresEntries(t *testing.T) {
 	}
 	got := effective(t, s, EntryFilter{})
 	want := []EffectiveEntry{
-		{CPCode: "3", Bib: 101, TimeIn: at(5 * time.Second), Count: 1, SourceCall: "KK7ABC-7", ReceivedAt: at(time.Minute)},
-		{CPCode: "3", Bib: 104, TimeIn: at(22 * time.Second), Count: 1, SourceCall: "KK7ABC-7", ReceivedAt: at(time.Minute)},
+		{CPCode: "3", Bib: 101, TimeIn: at(5 * time.Second), Count: 1, SourceCall: "N0CALL-7", ReceivedAt: at(time.Minute)},
+		{CPCode: "3", Bib: 104, TimeIn: at(22 * time.Second), Count: 1, SourceCall: "N0CALL-7", ReceivedAt: at(time.Minute)},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("\n got: %+v\nwant: %+v", got, want)
@@ -218,14 +218,14 @@ func TestStatusTracksIngestAndHeartbeat(t *testing.T) {
 	s := newTestStore(t)
 	mustIngest(t, s, "RC1 R 3 1 @1300 101/05", at(time.Minute))
 	st := statusFor(t, s, "3")
-	if st.MaxSeq != 1 || st.BatchesReceived != 1 || st.LastSourceCall != "KK7ABC-7" ||
+	if st.MaxSeq != 1 || st.BatchesReceived != 1 || st.LastSourceCall != "N0CALL-7" ||
 		st.LastHeardAt == nil || !st.LastHeardAt.Equal(at(time.Minute)) || st.HeartbeatAt != nil {
 		t.Fatalf("status after ingest = %+v", st)
 	}
 
 	// Checkpoint clock reads 13:04:30 when HQ's race clock reads 13:05:00: 30 s slow.
 	hb := &Heartbeat{CP: "3", LastSeq: 4, Time: wire.TimeOfDayOf(at(4*time.Minute + 30*time.Second))}
-	if err := s.RecordHeartbeat(ctx, hb, "KK7ABC-7", at(5*time.Minute), at(5*time.Minute), true); err != nil {
+	if err := s.RecordHeartbeat(ctx, hb, "N0CALL-7", at(5*time.Minute), at(5*time.Minute), true); err != nil {
 		t.Fatal(err)
 	}
 	st = statusFor(t, s, "3")
@@ -251,7 +251,7 @@ func TestMissingSeqs(t *testing.T) {
 
 	// The heartbeat reveals a lost tail: batches 7 and 8.
 	hb := &Heartbeat{CP: "3", LastSeq: 8, Time: wire.TimeOfDayOf(t0)}
-	if err := s.RecordHeartbeat(ctx, hb, "KK7ABC-7", t0, t0, true); err != nil {
+	if err := s.RecordHeartbeat(ctx, hb, "N0CALL-7", t0, t0, true); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.MissingSeqs(ctx, "3", wire.MaxGapSeqs)
@@ -272,7 +272,7 @@ func TestMissingSeqsBoundedByLimit(t *testing.T) {
 	// RecordHeartbeat refuses implausible lastseqs, so write one directly:
 	// MissingSeqs itself must still stay bounded.
 	hb := &Heartbeat{CP: "3", LastSeq: 1, Time: wire.TimeOfDayOf(t0)}
-	if err := s.RecordHeartbeat(ctx, hb, "KK7ABC-7", t0, t0, true); err != nil {
+	if err := s.RecordHeartbeat(ctx, hb, "N0CALL-7", t0, t0, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.db.Exec("UPDATE cp_status SET heartbeat_last_seq = 4000000000").Error; err != nil {

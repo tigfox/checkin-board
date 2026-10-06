@@ -63,7 +63,7 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { _ = s.Close() })
 	ft := &fakeTime{t: t0}
 	s.SetClock(ft.Now)
-	gw := gwfake.New("N0HQ")
+	gw := gwfake.New("N0CALL-10")
 	gw.Now = ft.Now
 	e, err := New(Config{Store: s, Graywolf: gw, Clock: raceclock.NewClock(ft.Now, func() bool { return true }), Now: ft.Now})
 	if err != nil {
@@ -107,19 +107,19 @@ func TestNewValidates(t *testing.T) {
 
 func TestReportIngestedAndRowRecorded(t *testing.T) {
 	h := newHarness(t)
-	m := h.gw.Inbound("K1CP-7", "RC1 R AS5 1 @1300 101/05 102/30")
+	m := h.gw.Inbound("N0CALL-7", "RC1 R AS5 1 @1300 101/05 102/30")
 	if err := h.e.HandleInbound(ctx, m); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := h.s.EffectiveEntries(ctx, store.EntryFilter{})
-	if len(got) != 2 || got[0].SourceCall != "K1CP-7" || !got[0].TimeIn.Equal(t0.Add(5*time.Second)) {
+	if len(got) != 2 || got[0].SourceCall != "N0CALL-7" || !got[0].TimeIn.Equal(t0.Add(5*time.Second)) {
 		t.Fatalf("entries = %+v", got)
 	}
 	if known, _ := h.s.KnownGWRow(ctx, m.ID); !known {
 		t.Error("graywolf row not recorded with the batch")
 	}
 	// A second copy (graywolf dedup window passed) changes nothing.
-	h.receive("K1CP-7", "RC1 R AS5 1 @1300 101/05 102/30")
+	h.receive("N0CALL-7", "RC1 R AS5 1 @1300 101/05 102/30")
 	if got, _ := h.s.EffectiveEntries(ctx, store.EntryFilter{}); len(got) != 2 || got[0].Count != 1 {
 		t.Fatalf("after duplicate: %+v", got)
 	}
@@ -127,7 +127,7 @@ func TestReportIngestedAndRowRecorded(t *testing.T) {
 
 func TestHeartbeatRecordsStatusAndSkew(t *testing.T) {
 	h := newHarness(t)
-	h.receive("K1CP", "RC1 H AS5 0 125950") // 10 s behind HQ's clock
+	h.receive("N0CALL-1", "RC1 H AS5 0 125950") // 10 s behind HQ's clock
 	sts, _ := h.s.ListStatuses(ctx)
 	if len(sts) != 1 || sts[0].HeartbeatAt == nil || sts[0].ClockSkewSec == nil || *sts[0].ClockSkewSec != -10 {
 		t.Fatalf("status = %+v", sts)
@@ -136,13 +136,13 @@ func TestHeartbeatRecordsStatusAndSkew(t *testing.T) {
 
 func TestUndecodableReportIsKeptNotRetried(t *testing.T) {
 	h := newHarness(t)
-	h.receive("K1CP", "RC1 R AS5 1 @1300 101/05") // AS5 known now
-	m := h.gw.Inbound("K1CP", "RC1 R AS5 2 @1360 7/00")
+	h.receive("N0CALL-1", "RC1 R AS5 1 @1300 101/05") // AS5 known now
+	m := h.gw.Inbound("N0CALL-1", "RC1 R AS5 2 @1360 7/00")
 	if err := h.e.HandleInbound(ctx, m); err != nil {
 		t.Fatalf("bad input returned an error (would be retried): %v", err)
 	}
 	bad, _ := h.s.ListBadReports(ctx, 10)
-	if len(bad) != 1 || bad[0].FromCall != "K1CP" || bad[0].Error == "" {
+	if len(bad) != 1 || bad[0].FromCall != "N0CALL-1" || bad[0].Error == "" {
 		t.Fatalf("bad reports = %+v", bad)
 	}
 	if sts, _ := h.s.ListStatuses(ctx); sts[0].BadReports != 1 {
@@ -168,8 +168,8 @@ func TestInvalidSourceCallsignDropped(t *testing.T) {
 
 func TestOtherTypesIgnoredAtHQ(t *testing.T) {
 	h := newHarness(t)
-	h.receive("K1CP", "RC1 G AS5 1")
-	h.receive("K1CP", "RC1 P AS5 3 1/5") // link check: phase 12
+	h.receive("N0CALL-1", "RC1 G AS5 1")
+	h.receive("N0CALL-1", "RC1 P AS5 3 1/5") // link check: phase 12
 	if sts, _ := h.s.ListStatuses(ctx); len(sts) != 0 {
 		t.Fatalf("statuses = %+v", sts)
 	}
@@ -180,8 +180,8 @@ func TestOtherTypesIgnoredAtHQ(t *testing.T) {
 
 func TestRequestsGapAfterGrace(t *testing.T) {
 	h := newHarness(t)
-	h.receive("K1CP", "RC1 R AS5 1 @1300 1/00")
-	h.receive("K1CP", "RC1 R AS5 3 @1300 3/00")
+	h.receive("N0CALL-1", "RC1 R AS5 1 @1300 1/00")
+	h.receive("N0CALL-1", "RC1 R AS5 3 @1300 3/00")
 	h.tick()
 	h.ft.Advance(89 * time.Second)
 	h.tick()
@@ -191,7 +191,7 @@ func TestRequestsGapAfterGrace(t *testing.T) {
 	h.ft.Advance(time.Second)
 	h.tick()
 	got := h.gaps()
-	if len(got) != 1 || got[0].Text != "RC1 G AS5 2" || got[0].To != "K1CP" {
+	if len(got) != 1 || got[0].Text != "RC1 G AS5 2" || got[0].To != "N0CALL-1" {
 		t.Fatalf("gaps = %+v", got)
 	}
 	if known, _ := h.s.KnownGWRow(ctx, got[0].ID); !known {
@@ -201,21 +201,21 @@ func TestRequestsGapAfterGrace(t *testing.T) {
 
 func TestGapGoesToExpectedCallWhenSet(t *testing.T) {
 	h := newHarness(t)
-	if err := h.s.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS5", Name: "Aid 5", ExpectedCall: "K1CP-9"}); err != nil {
+	if err := h.s.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS5", Name: "Aid 5", ExpectedCall: "N0CALL-8"}); err != nil {
 		t.Fatal(err)
 	}
-	h.receive("K1CP-2", "RC1 R AS5 2 @1300 2/00")
+	h.receive("N0CALL-6", "RC1 R AS5 2 @1300 2/00")
 	h.tick()
 	h.ft.Advance(90 * time.Second)
 	h.tick()
-	if got := h.gaps(); len(got) != 1 || got[0].To != "K1CP-9" {
+	if got := h.gaps(); len(got) != 1 || got[0].To != "N0CALL-8" {
 		t.Fatalf("gaps = %+v, want sent to the expected call", got)
 	}
 }
 
 func TestGapBackoffGiveUpAndRecovery(t *testing.T) {
 	h := newHarness(t)
-	h.receive("K1CP", "RC1 R AS5 2 @1300 2/00") // seq 1 never arrives
+	h.receive("N0CALL-1", "RC1 R AS5 2 @1300 2/00") // seq 1 never arrives
 	h.tick()
 	h.run(6 * time.Hour)
 	if n := len(h.gaps()); n != maxGapAttempts {
@@ -224,7 +224,7 @@ func TestGapBackoffGiveUpAndRecovery(t *testing.T) {
 	if got := h.e.unrecoverable("AS5"); !slices.Equal(got, []uint32{1}) {
 		t.Fatalf("unrecoverable = %v", got)
 	}
-	h.receive("K1CP", "RC1 R AS5 1 @1300 1/00")
+	h.receive("N0CALL-1", "RC1 R AS5 1 @1300 1/00")
 	h.tick()
 	if got := h.e.unrecoverable("AS5"); len(got) != 0 {
 		t.Fatalf("unrecoverable after arrival = %v", got)
@@ -233,8 +233,8 @@ func TestGapBackoffGiveUpAndRecovery(t *testing.T) {
 
 func TestGapFromHeartbeatTail(t *testing.T) {
 	h := newHarness(t)
-	h.receive("K1CP", "RC1 R AS5 1 @1300 1/00")
-	h.receive("K1CP", "RC1 H AS5 2 130000") // batch 2 was sent but lost
+	h.receive("N0CALL-1", "RC1 R AS5 1 @1300 1/00")
+	h.receive("N0CALL-1", "RC1 H AS5 2 130000") // batch 2 was sent but lost
 	h.tick()
 	h.ft.Advance(90 * time.Second)
 	h.tick()
@@ -246,7 +246,7 @@ func TestGapFromHeartbeatTail(t *testing.T) {
 func TestGapRequestsRotate(t *testing.T) {
 	h := newHarness(t)
 	for seq := 2; seq <= 80; seq += 2 { // 40 isolated gaps
-		h.receive("K1CP", fmt.Sprintf("RC1 R AS5 %d @1300 %d/00", seq, seq))
+		h.receive("N0CALL-1", fmt.Sprintf("RC1 R AS5 %d @1300 %d/00", seq, seq))
 	}
 	h.tick()
 	asked := map[uint32]bool{}
@@ -286,7 +286,7 @@ func TestOneGapRequestPerTick(t *testing.T) {
 
 func TestGapSendFailureRetriesNextTick(t *testing.T) {
 	h := newHarness(t)
-	h.receive("K1CP", "RC1 R AS5 2 @1300 2/00")
+	h.receive("N0CALL-1", "RC1 R AS5 2 @1300 2/00")
 	h.tick()
 	h.ft.Advance(90 * time.Second)
 	h.gw.FailNextSend(errors.New("graywolf down"))
@@ -320,7 +320,7 @@ func TestGapBackoffSchedule(t *testing.T) {
 
 func TestRearm(t *testing.T) {
 	h := newHarness(t)
-	h.receive("K1CP", "RC1 R AS5 2 @1300 2/00")
+	h.receive("N0CALL-1", "RC1 R AS5 2 @1300 2/00")
 	h.tick()
 	h.run(6 * time.Hour) // gives up on seq 1
 	n, err := h.e.Rearm(ctx, h.cfg, "AS5")
@@ -342,10 +342,10 @@ func TestRearm(t *testing.T) {
 
 func TestHealth(t *testing.T) {
 	h := newHarness(t)
-	_ = h.s.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS5", Name: "Aid 5", CourseOrder: 2, ExpectedCall: "K1CP"})
+	_ = h.s.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS5", Name: "Aid 5", CourseOrder: 2, ExpectedCall: "N0CALL-1"})
 	_ = h.s.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS9", Name: "Aid 9", CourseOrder: 3}) // never heard
 	h.receive("SPOOF", "RC1 R AS5 2 @1300 2/00")                                                 // wrong sender
-	h.receive("K2CP", "RC1 R ZZ1 1 @1300 7/00")                                                  // not on the course list
+	h.receive("N0CALL-2", "RC1 R ZZ1 1 @1300 7/00")                                              // not on the course list
 	h.tick()
 
 	got, err := h.e.Health(ctx)
@@ -378,11 +378,11 @@ func TestTurnsOffGraywolfRetriesBeforeGapRequest(t *testing.T) {
 	e, _ := New(Config{Store: h.s, Graywolf: h.gw, Clock: raceclock.NewClock(h.ft.Now, nil), Now: h.ft.Now,
 		Peers: peers.NewEnsurer(h.gw, h.s, h.ft.Now)})
 	h.e = e
-	h.receive("K1CP", "RC1 R AS5 2 @1300 2/00")
+	h.receive("N0CALL-1", "RC1 R AS5 2 @1300 2/00")
 	h.tick()
 	h.ft.Advance(90 * time.Second)
 	h.tick()
-	if p, _ := h.gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "K1CP"); p.WaitForAck {
+	if p, _ := h.gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-1"); p.WaitForAck {
 		t.Fatal("graywolf retries still on for the checkpoint after a gap request")
 	}
 }
@@ -391,11 +391,11 @@ func TestRunIdleUnlessHQ(t *testing.T) {
 	h := newHarness(t)
 	e, _ := New(Config{Store: h.s, Graywolf: h.gw, Clock: raceclock.NewClock(nil, nil), Interval: 5 * time.Millisecond})
 	cp := store.DefaultSettings()
-	cp.Role, cp.CheckpointCode, cp.HQCall = store.RoleCheckpoint, "AS5", "N0HQ"
+	cp.Role, cp.CheckpointCode, cp.HQCall = store.RoleCheckpoint, "AS5", "N0CALL-10"
 	if _, err := h.s.SaveSettings(ctx, cp); err != nil {
 		t.Fatal(err)
 	}
-	h.receive("K1CP", "RC1 R AS5 2 @1300 2/00")
+	h.receive("N0CALL-1", "RC1 R AS5 2 @1300 2/00")
 	runCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
 	if err := e.Run(runCtx); !errors.Is(err, context.DeadlineExceeded) {
@@ -422,7 +422,7 @@ func TestRunTicksAsHQ(t *testing.T) {
 	if _, err := h.s.SaveSettings(ctx, hqSettings()); err != nil {
 		t.Fatal(err)
 	}
-	h.receive("K1CP", "RC1 R AS5 2 @1300 2/00") // seq 1 missing
+	h.receive("N0CALL-1", "RC1 R AS5 2 @1300 2/00") // seq 1 missing
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { done <- e.Run(runCtx) }()
@@ -442,15 +442,15 @@ func TestRunTicksAsHQ(t *testing.T) {
 
 func TestSendFailureDoesNotStarveOtherCheckpoints(t *testing.T) {
 	h := newHarness(t)
-	h.receive("KK7AS1", "RC1 R AS1 2 @1300 2/00")
-	h.receive("KK7AS2", "RC1 R AS2 2 @1300 2/00")
+	h.receive("N0CALL-4", "RC1 R AS1 2 @1300 2/00")
+	h.receive("N0CALL-5", "RC1 R AS2 2 @1300 2/00")
 	h.tick()
 	h.ft.Advance(90 * time.Second)
 	h.gw.FailNextSend(errors.New("graywolf down")) // AS1's request fails
 	_ = h.e.Tick(ctx, h.cfg)
 	h.ft.Advance(time.Second)
 	h.tick()
-	if got := h.gaps(); len(got) != 1 || got[0].To != "KK7AS2" {
+	if got := h.gaps(); len(got) != 1 || got[0].To != "N0CALL-5" {
 		t.Fatalf("gaps = %+v, want AS2 served while AS1 backs off", got)
 	}
 }
@@ -459,7 +459,7 @@ func TestOnlyListedCheckpointsAreChasedOnceAListExists(t *testing.T) {
 	h := newHarness(t)
 	_ = h.s.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS5", Name: "Aid 5"})
 	h.receive("SPOOF1", "RC1 R ZZ1 2 @1300 2/00") // phantom code
-	h.receive("K1CP", "RC1 R AS5 2 @1300 2/00")
+	h.receive("N0CALL-1", "RC1 R AS5 2 @1300 2/00")
 	h.tick()
 	h.run(10 * time.Minute)
 	for _, g := range h.gaps() {
@@ -474,7 +474,7 @@ func TestOnlyListedCheckpointsAreChasedOnceAListExists(t *testing.T) {
 
 func TestResetClearsGapState(t *testing.T) {
 	h := newHarness(t)
-	h.receive("K1CP", "RC1 R AS5 2 @1300 2/00")
+	h.receive("N0CALL-1", "RC1 R AS5 2 @1300 2/00")
 	h.tick()
 	h.run(6 * time.Hour)
 	if len(h.e.unrecoverable("AS5")) != 1 {
@@ -507,7 +507,7 @@ func TestRunGapRequestsOnlyWhileRacingOrComplete(t *testing.T) {
 		if _, err := h.s.SaveSettings(ctx, cfg); err != nil {
 			t.Fatal(err)
 		}
-		h.receive("K1CP", "RC1 R AS5 2 @1300 2/00")
+		h.receive("N0CALL-1", "RC1 R AS5 2 @1300 2/00")
 		runCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 		_ = e.Run(runCtx)
 		cancel()

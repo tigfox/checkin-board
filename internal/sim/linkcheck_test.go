@@ -16,7 +16,7 @@ func runLinkCheck(t *testing.T, seed uint64, loss float64) store.LinkCheck {
 	s := newSim(t, seed, gwfake.Profile{Loss: loss, MaxDelay: 3 * time.Second})
 	setup := func(c store.Settings) store.Settings { c.RaceState = store.RaceSetup; return c }
 	addNode(t, s, hqCall, setup(HQSettings()))
-	cp := addNode(t, s, "KK7CP-7", setup(CheckpointSettings("AS1", hqCall)))
+	cp := addNode(t, s, "N0CALL-7", setup(CheckpointSettings("AS1", hqCall)))
 	req, err := linkcheck.Request(ctx, cp.Store, linkcheck.Req{}, s.Clock.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestLinkCheckVerdictTracksLoss(t *testing.T) {
 func TestLinkCheckDuringRaceKeepsExactlyOnce(t *testing.T) {
 	s := newSim(t, 3, gwfake.Profile{Loss: 0.2, MaxDelay: 3 * time.Second})
 	hqNode := addNode(t, s, hqCall, HQSettings())
-	cp := addNode(t, s, "KK7CP-7", CheckpointSettings("AS1", hqCall))
+	cp := addNode(t, s, "N0CALL-7", CheckpointSettings("AS1", hqCall))
 	if _, err := linkcheck.Request(ctx, cp.Store, linkcheck.Req{}, s.Clock.Now()); err == nil {
 		t.Fatal("link check during the race ran without a confirm")
 	}

@@ -120,15 +120,15 @@ func (w *world) runUntilDone(n *node, id uint, limit time.Duration) store.LinkCh
 
 func pair(t *testing.T, seed uint64, prof gwfake.Profile) (*world, *node, *node) {
 	w := newWorld(t, seed, prof)
-	cp := w.add("K1CP", cpSettings(store.RaceSetup))
-	hq := w.add("N0HQ", hqSettings(store.RaceSetup))
+	cp := w.add("N0CALL-1", cpSettings(store.RaceSetup))
+	hq := w.add("N0CALL-10", hqSettings(store.RaceSetup))
 	return w, cp, hq
 }
 
 func TestCleanLinkPasses(t *testing.T) {
 	w, cp, hq := pair(t, 1, gwfake.Profile{MaxDelay: 3 * time.Second})
-	hq.gw.SetRXLevel("K1CP", -21)
-	cp.gw.SetRXLevel("N0HQ", -3) // HQ is too loud at the checkpoint
+	hq.gw.SetRXLevel("N0CALL-1", -21)
+	cp.gw.SetRXLevel("N0CALL-10", -3) // HQ is too loud at the checkpoint
 	req, err := Request(ctx, cp.st, Req{Source: "admin"}, w.clock.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestDeadLinkFailsWithinBoundedAirtime(t *testing.T) {
 
 func TestHQProbesCheckpointAndFlagsUnknownPeers(t *testing.T) {
 	w, cp, hq := pair(t, 2, gwfake.Profile{})
-	req, err := Request(ctx, hq.st, Req{To: "K1CP"}, w.clock.Now())
+	req, err := Request(ctx, hq.st, Req{To: "N0CALL-1"}, w.clock.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,25 +202,25 @@ func TestHQProbesCheckpointAndFlagsUnknownPeers(t *testing.T) {
 		t.Fatalf("checkpoint responses = %+v", rs)
 	}
 	// HQ answers a station it doesn't know, but flags it.
-	stranger := w.add("W9XX", cpSettings(store.RaceSetup))
+	stranger := w.add("N0CALL-14", cpSettings(store.RaceSetup))
 	cfg, _ := stranger.st.GetSettings(ctx)
 	cfg.CheckpointCode = "ZZ9"
 	_, _ = stranger.st.UpdateSettings(ctx, cfg)
-	if err := hq.st.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS5", Name: "Ridge", CourseOrder: 1, ExpectedCall: "K1CP"}); err != nil {
+	if err := hq.st.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS5", Name: "Ridge", CourseOrder: 1, ExpectedCall: "N0CALL-1"}); err != nil {
 		t.Fatal(err)
 	}
 	r2, _ := Request(ctx, stranger.st, Req{Count: 2}, w.clock.Now())
 	w.runUntilDone(stranger, r2.ID, 5*time.Minute)
 	rs, _ = hq.st.ListLinkResponses(ctx, 10)
-	if len(rs) != 1 || rs[0].PeerCall != "W9XX" || !rs[0].UnknownPeer {
+	if len(rs) != 1 || rs[0].PeerCall != "N0CALL-14" || !rs[0].UnknownPeer {
 		t.Fatalf("HQ responses = %+v", rs)
 	}
 }
 
 func TestCheckpointAnswersOnlyItsHQ(t *testing.T) {
 	w, cp, _ := pair(t, 3, gwfake.Profile{})
-	rogue := w.add("W9XX", hqSettings(store.RaceSetup))
-	req, _ := Request(ctx, rogue.st, Req{To: "K1CP", Count: 2}, w.clock.Now())
+	rogue := w.add("N0CALL-14", hqSettings(store.RaceSetup))
+	req, _ := Request(ctx, rogue.st, Req{To: "N0CALL-1", Count: 2}, w.clock.Now())
 	c := w.runUntilDone(rogue, req.ID, 5*time.Minute)
 	if c.ReplyReceived {
 		t.Fatalf("checkpoint answered a non-HQ station: %+v", c)
@@ -235,7 +235,7 @@ func TestResponderQuietOutsideSetupAndActive(t *testing.T) {
 	if ok, err := cp.st.SetRaceState(ctx, []string{store.RaceSetup}, store.RaceSecured, nil); !ok || err != nil {
 		t.Fatal(ok, err)
 	}
-	req, _ := Request(ctx, hq.st, Req{To: "K1CP", Count: 2}, w.clock.Now())
+	req, _ := Request(ctx, hq.st, Req{To: "N0CALL-1", Count: 2}, w.clock.Now())
 	c := w.runUntilDone(hq, req.ID, 5*time.Minute)
 	if c.ReplyReceived {
 		t.Fatal("a secured checkpoint transmitted a reply")

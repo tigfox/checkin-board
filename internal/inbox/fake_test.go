@@ -54,7 +54,7 @@ func (f *fakeGW) put(m graywolf.Message) {
 }
 
 func (f *fakeGW) inbound(id uint64, text string) graywolf.Message {
-	m := graywolf.Message{ID: id, Direction: "in", ThreadKind: graywolf.ThreadKindDM, FromCall: "K1CP", Text: text, Status: graywolf.StatusReceived}
+	m := graywolf.Message{ID: id, Direction: "in", ThreadKind: graywolf.ThreadKindDM, FromCall: "N0CALL-1", Text: text, Status: graywolf.StatusReceived}
 	f.put(m)
 	return m
 }

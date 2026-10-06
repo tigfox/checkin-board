@@ -242,7 +242,7 @@ func TestE2EAdminHQAndBoard(t *testing.T) {
 
 func TestE2ELinkCheckTab(t *testing.T) {
 	e := newEnv(t, hqSettings(store.RaceSetup))
-	if err := e.st.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS5", Name: "Ridge", CourseOrder: 1, ExpectedCall: "K1CP"}); err != nil {
+	if err := e.st.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS5", Name: "Ridge", CourseOrder: 1, ExpectedCall: "N0CALL-1"}); err != nil {
 		t.Fatal(err)
 	}
 	b := newBrowser(t, e.srv.URL)
@@ -250,7 +250,7 @@ func TestE2ELinkCheckTab(t *testing.T) {
 	b.run(chromedp.Navigate(e.srv.URL+"/admin.html"),
 		chromedp.Click(`//nav[@id="tabs"]/button[text()="Link check"]`, chromedp.BySearch),
 		chromedp.WaitVisible("#lc-to", chromedp.ByQuery),
-		chromedp.SendKeys("#lc-to", "K1CP", chromedp.ByQuery),
+		chromedp.SendKeys("#lc-to", "N0CALL-1", chromedp.ByQuery),
 		chromedp.Click(`//section[@id="tab-link"]//button[text()="Run link check"]`, chromedp.BySearch))
 	b.waitText("#banner", "Link check started")
 	// No service ticks in this test server, so the run waits to start.
@@ -258,7 +258,7 @@ func TestE2ELinkCheckTab(t *testing.T) {
 	b.run(chromedp.Click(`//section[@id="tab-link"]//button[text()="Cancel"]`, chromedp.BySearch))
 	b.waitText("#tab-link", "Cancelled")
 	c, _ := e.st.GetLinkCheck(ctx, 1)
-	if c.PeerCall != "K1CP" || c.State != store.LinkCheckCancelled {
+	if c.PeerCall != "N0CALL-1" || c.State != store.LinkCheckCancelled {
 		t.Fatalf("check = %+v", c)
 	}
 	// The HQ health panel shows the link column.

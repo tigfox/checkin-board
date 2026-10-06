@@ -12,9 +12,9 @@ import (
 var ctx = context.Background()
 
 func TestSendResendAndStatus(t *testing.T) {
-	s := New("K1CP")
-	m, err := s.SendMessage(ctx, graywolf.SendRequest{To: "n0hq", Text: "RC1 H AS5 0 120000", ClientID: "c1"})
-	if err != nil || m.ID != 1 || m.MsgID != "1" || m.ToCall != "N0HQ" || m.ClientID != "c1" {
+	s := New("N0CALL-1")
+	m, err := s.SendMessage(ctx, graywolf.SendRequest{To: "n0call-10", Text: "RC1 H AS5 0 120000", ClientID: "c1"})
+	if err != nil || m.ID != 1 || m.MsgID != "1" || m.ToCall != "N0CALL-10" || m.ClientID != "c1" {
 		t.Fatalf("send = %+v, %v", m, err)
 	}
 	if got, _ := s.GetMessage(ctx, m.ID); got.ClientID != "" {
@@ -42,13 +42,13 @@ func TestSendResendAndStatus(t *testing.T) {
 }
 
 func TestInjectedFailures(t *testing.T) {
-	s := New("K1CP")
+	s := New("N0CALL-1")
 	boom := errors.New("boom")
 	s.FailNextSend(boom)
-	if _, err := s.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: "x"}); !errors.Is(err, boom) {
+	if _, err := s.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-10", Text: "x"}); !errors.Is(err, boom) {
 		t.Fatalf("send err = %v", err)
 	}
-	m, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: "x"})
+	m, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-10", Text: "x"})
 	s.FailNextResend(boom)
 	if _, err := s.ResendMessage(ctx, m.ID); !errors.Is(err, boom) {
 		t.Fatalf("resend err = %v", err)
@@ -61,18 +61,18 @@ func TestInjectedFailures(t *testing.T) {
 
 func TestCatchUpFilters(t *testing.T) {
 	now := time.Date(2026, 10, 10, 13, 0, 0, 0, time.UTC)
-	s := New("N0HQ")
+	s := New("N0CALL-10")
 	s.Now = func() time.Time { return now }
-	s.Inbound("K1CP", "RC1 H AS5 0 120000")
+	s.Inbound("N0CALL-1", "RC1 H AS5 0 120000")
 	now = now.Add(time.Hour)
-	out, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "K1CP", Text: "RC1 G AS5 1"})
+	out, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-1", Text: "RC1 G AS5 1"})
 	_, _ = s.SendMessage(ctx, graywolf.SendRequest{To: "OTHER", Text: "hi"})
 
 	var ids []uint64
 	collect := func(ch graywolf.MessageChange) error { ids = append(ids, ch.ID); return nil }
-	cursor, err := s.CatchUp(ctx, graywolf.ListParams{Folder: graywolf.FolderSent, Peer: "k1cp"}, collect)
+	cursor, err := s.CatchUp(ctx, graywolf.ListParams{Folder: graywolf.FolderSent, Peer: "n0call-1"}, collect)
 	if err != nil || len(ids) != 1 || ids[0] != out.ID || cursor == "" {
-		t.Fatalf("sent to K1CP = %v, cursor %q, %v", ids, cursor, err)
+		t.Fatalf("sent to N0CALL-1 = %v, cursor %q, %v", ids, cursor, err)
 	}
 	ids = nil
 	_, _ = s.CatchUp(ctx, graywolf.ListParams{Folder: graywolf.FolderInbox}, collect)
@@ -99,34 +99,34 @@ func TestCatchUpFilters(t *testing.T) {
 }
 
 func TestConversationPrefs(t *testing.T) {
-	s := New("K1CP")
-	p, err := s.ConversationPrefs(ctx, graywolf.ThreadKindDM, "n0hq")
-	if err != nil || !p.WaitForAck || s.HasPrefsOverride(graywolf.ThreadKindDM, "N0HQ") {
+	s := New("N0CALL-1")
+	p, err := s.ConversationPrefs(ctx, graywolf.ThreadKindDM, "n0call-10")
+	if err != nil || !p.WaitForAck || s.HasPrefsOverride(graywolf.ThreadKindDM, "N0CALL-10") {
 		t.Fatalf("defaults = %+v, %v", p, err)
 	}
-	if _, err := s.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "n0hq", graywolf.ConversationPrefs{WaitForAck: false}); err != nil {
+	if _, err := s.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "n0call-10", graywolf.ConversationPrefs{WaitForAck: false}); err != nil {
 		t.Fatal(err)
 	}
-	if p, _ := s.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ"); p.WaitForAck {
+	if p, _ := s.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10"); p.WaitForAck {
 		t.Fatal("override not stored")
 	}
-	_, _ = s.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ", graywolf.ConversationPrefs{WaitForAck: true})
-	if s.HasPrefsOverride(graywolf.ThreadKindDM, "N0HQ") {
+	_, _ = s.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10", graywolf.ConversationPrefs{WaitForAck: true})
+	if s.HasPrefsOverride(graywolf.ThreadKindDM, "N0CALL-10") {
 		t.Error("restoring defaults left an override")
 	}
 	s.FailPrefs(errors.New("down"))
-	if _, err := s.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ"); err == nil {
+	if _, err := s.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10"); err == nil {
 		t.Error("expected error")
 	}
-	if _, err := s.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ", graywolf.ConversationPrefs{}); err == nil {
+	if _, err := s.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10", graywolf.ConversationPrefs{}); err == nil {
 		t.Error("expected error")
 	}
 }
 
 func TestFeedRelistsChangedRowsAndStreams(t *testing.T) {
-	s := New("K1CP")
-	sent, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: "RC1 H AS5 0 120000"})
-	_, _ = s.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: "RC1 H AS5 0 120500"})
+	s := New("N0CALL-1")
+	sent, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-10", Text: "RC1 H AS5 0 120000"})
+	_, _ = s.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-10", Text: "RC1 H AS5 0 120500"})
 	var ids []uint64
 	cursor, _ := s.CatchUp(ctx, graywolf.ListParams{}, func(ch graywolf.MessageChange) error { ids = append(ids, ch.ID); return nil })
 	if len(ids) != 2 {
@@ -156,7 +156,7 @@ func TestFeedRelistsChangedRowsAndStreams(t *testing.T) {
 		t.Fatalf("after ACK the feed listed %v, want the acked row again", ids)
 	}
 
-	in := s.Inbound("N0HQ", "RC1 G AS5 1")
+	in := s.Inbound("N0CALL-10", "RC1 G AS5 1")
 	if err := s.MarkRead(ctx, in.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -173,8 +173,8 @@ func TestFeedRelistsChangedRowsAndStreams(t *testing.T) {
 }
 
 func TestDeleteMessage(t *testing.T) {
-	s := New("K1CP")
-	m, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: "x"})
+	s := New("N0CALL-1")
+	m, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-10", Text: "x"})
 	if err := s.DeleteMessage(ctx, m.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -184,14 +184,14 @@ func TestDeleteMessage(t *testing.T) {
 }
 
 func TestStationConfigFakes(t *testing.T) {
-	s := New("K1CP")
+	s := New("N0CALL-1")
 	if v, _ := s.Version(ctx); v.Version == "" {
 		t.Fatal("version")
 	}
-	if c, _ := s.SetStationCallsign(ctx, "k2cp-1"); c.Callsign != "K2CP-1" {
+	if c, _ := s.SetStationCallsign(ctx, "n0call-6"); c.Callsign != "N0CALL-6" {
 		t.Fatalf("set = %+v", c)
 	}
-	if c, _ := s.StationConfig(ctx); c.Callsign != "K2CP-1" {
+	if c, _ := s.StationConfig(ctx); c.Callsign != "N0CALL-6" {
 		t.Fatalf("get = %+v", c)
 	}
 }

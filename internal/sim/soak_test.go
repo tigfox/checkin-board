@@ -32,7 +32,7 @@ func TestSoak(t *testing.T) {
 	hqNode := addNode(t, s, hqCall, HQSettings())
 	var cps []*Node
 	for i := range cpCount {
-		cps = append(cps, addNode(t, s, fmt.Sprintf("KK7C%c-7", 'A'+i), CheckpointSettings(fmt.Sprintf("AS%d", i+1), hqCall)))
+		cps = append(cps, addNode(t, s, fmt.Sprintf("N0CALL-%d", i+1), CheckpointSettings(fmt.Sprintf("AS%d", i+1), hqCall)))
 	}
 
 	// Each runner starts in a 30-minute wave and keeps a personal pace;

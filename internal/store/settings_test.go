@@ -9,7 +9,7 @@ import (
 
 func validCheckpoint() Settings {
 	c := DefaultSettings()
-	c.Role, c.CheckpointCode, c.HQCall = RoleCheckpoint, "AS5", "N0HQ-1"
+	c.Role, c.CheckpointCode, c.HQCall = RoleCheckpoint, "AS5", "N0CALL-11"
 	return c
 }
 
@@ -156,12 +156,12 @@ func TestValidatePath(t *testing.T) {
 }
 
 func TestValidStationCall(t *testing.T) {
-	for _, ok := range []string{"N0CALL", "K1ABC-9", "W1AW-15", "KK7ABC-7"} {
+	for _, ok := range []string{"N0CALL", "N0CALL-9", "N0CALL-15", "N0CALL-7"} {
 		if !ValidStationCall(ok) {
 			t.Errorf("%q should be valid", ok)
 		}
 	}
-	for _, bad := range []string{"", "n0call", "TOOLONG1", "K1ABC-123", "AID-3XY", "-K1", "N0CALL-16", "N0CALL-AB", "N0CALL-99"} {
+	for _, bad := range []string{"", "n0call", "TOOLONG1", "N0CALL-123", "AID-3XY", "-K1", "N0CALL-16", "N0CALL-AB", "N0CALL-99"} {
 		if ValidStationCall(bad) {
 			t.Errorf("%q should be invalid", bad)
 		}
@@ -222,7 +222,7 @@ func TestUpdateSettingsLeavesLifecycleAlone(t *testing.T) {
 	if _, err := s.UpdateSettings(ctx, bad); !errors.Is(err, ErrInvalidSettings) {
 		t.Fatalf("invalid edit err = %v", err)
 	}
-	if after, _ := s.GetSettings(ctx); after.FlushAfterSec != 30 || after.HQCall != "N0HQ-1" {
+	if after, _ := s.GetSettings(ctx); after.FlushAfterSec != 30 || after.HQCall != "N0CALL-11" {
 		t.Fatalf("invalid edit applied: %+v", after)
 	}
 }

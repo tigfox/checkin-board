@@ -36,7 +36,7 @@ func TestStartCancelledWhenNodeChanged(t *testing.T) {
 	w, cp, _ := pair(t, 8, gwfake.Profile{})
 	req, _ := Request(ctx, cp.st, Req{}, w.clock.Now())
 	cfg, _ := cp.st.GetSettings(ctx)
-	cfg.HQCall = "N1NEW"
+	cfg.HQCall = "N0CALL-15"
 	if _, err := cp.st.UpdateSettings(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -77,11 +77,11 @@ func TestReplyResendConflictAndGone(t *testing.T) {
 
 func TestReplyBudgetCapsSpoofedProbes(t *testing.T) {
 	w := newWorld(t, 10, gwfake.Profile{})
-	hq := w.add("N0HQ", hqSettings(store.RaceSetup))
+	hq := w.add("N0CALL-10", hqSettings(store.RaceSetup))
 	// Forged probes from many "stations", each a one-probe run.
 	for i := range replyBudget + 5 {
 		call := "W" + string(rune('A'+i%26)) + string(rune('A'+i/26)) + "X"
-		w.radio.Inject(gwfake.Frame{From: call, To: "N0HQ", Text: "RC1 P ZZ9 7 1/1", MsgID: "1"})
+		w.radio.Inject(gwfake.Frame{From: call, To: "N0CALL-10", Text: "RC1 P ZZ9 7 1/1", MsgID: "1"})
 	}
 	for range 10 {
 		w.step()
@@ -112,13 +112,13 @@ func TestFinishCatchesAcksTheFeedMissed(t *testing.T) {
 func TestStrayRepliesIgnored(t *testing.T) {
 	w, cp, _ := pair(t, 12, gwfake.Profile{})
 	// No running check: a reply is ignored.
-	w.radio.Inject(gwfake.Frame{From: "N0HQ", To: "K1CP", Text: "RC1 Q AS5 7 1-5 -20 -", MsgID: "2"})
+	w.radio.Inject(gwfake.Frame{From: "N0CALL-10", To: "N0CALL-1", Text: "RC1 Q AS5 7 1-5 -20 -", MsgID: "2"})
 	w.step()
 	req, _ := Request(ctx, cp.st, Req{Count: 2}, w.clock.Now())
 	w.step()
 	// A reply for another run, and one from another station, are ignored.
-	w.radio.Inject(gwfake.Frame{From: "N0HQ", To: "K1CP", Text: "RC1 Q AS5 1 1-2 -20 -", MsgID: "3"})
-	w.radio.Inject(gwfake.Frame{From: "W9XX", To: "K1CP", Text: "RC1 Q AS5 1 1-2 -20 -", MsgID: "4"})
+	w.radio.Inject(gwfake.Frame{From: "N0CALL-10", To: "N0CALL-1", Text: "RC1 Q AS5 1 1-2 -20 -", MsgID: "3"})
+	w.radio.Inject(gwfake.Frame{From: "N0CALL-14", To: "N0CALL-1", Text: "RC1 Q AS5 1 1-2 -20 -", MsgID: "4"})
 	c := w.runUntilDone(cp, req.ID, 5*time.Minute)
 	if c.Verdict != Pass {
 		t.Fatalf("check = %+v", c)

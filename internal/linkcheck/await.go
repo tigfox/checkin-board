@@ -54,7 +54,7 @@ func Await(ctx context.Context, st *store.Store, id uint, tm Timing) (store.Link
 }
 
 // Brief fits a result in a graywolf Action's ~50-character on-air reply:
-// "PASS N0HQ up5/5 ack5 rtt4s -21/-22dB".
+// "PASS N0CALL-10 up5/5 ack5 rtt4s -21/-22dB".
 func Brief(c store.LinkCheck) string {
 	if c.State == store.LinkCheckCancelled {
 		return "cancelled: " + c.Error

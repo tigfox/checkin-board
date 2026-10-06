@@ -135,13 +135,13 @@ func TestNewValidates(t *testing.T) {
 }
 
 func TestHQNodeIngestsFromGraywolf(t *testing.T) {
-	gw := gwfake.New("N0HQ")
+	gw := gwfake.New("N0CALL-10")
 	cfg := store.DefaultSettings()
 	cfg.Role, cfg.HQLocalCodes = store.RoleHQ, "FIN"
 	a, st := newApp(t, gw, cfg)
 	runApp(t, a)
 
-	gw.Inbound("K1CP", "RC1 R AS5 1 @1300 101/05 102/30")
+	gw.Inbound("N0CALL-1", "RC1 R AS5 1 @1300 101/05 102/30")
 	waitFor(t, "report ingested", func() bool {
 		got, _ := st.EffectiveEntries(ctx, store.EntryFilter{})
 		return len(got) == 2
@@ -153,9 +153,9 @@ func TestHQNodeIngestsFromGraywolf(t *testing.T) {
 }
 
 func TestCheckpointNodeSendsAndConfirms(t *testing.T) {
-	gw := gwfake.New("K1CP")
+	gw := gwfake.New("N0CALL-1")
 	cfg := store.DefaultSettings()
-	cfg.Role, cfg.CheckpointCode, cfg.HQCall, cfg.RaceState = store.RoleCheckpoint, "AS5", "N0HQ", store.RaceActive
+	cfg.Role, cfg.CheckpointCode, cfg.HQCall, cfg.RaceState = store.RoleCheckpoint, "AS5", "N0CALL-10", store.RaceActive
 	a, st := newApp(t, gw, cfg)
 	runApp(t, a)
 
@@ -173,7 +173,7 @@ func TestCheckpointNodeSendsAndConfirms(t *testing.T) {
 		}
 		return false
 	})
-	if p, _ := gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ"); p.WaitForAck {
+	if p, _ := gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10"); p.WaitForAck {
 		t.Error("graywolf retries not turned off for HQ")
 	}
 
@@ -188,7 +188,7 @@ func TestCheckpointNodeSendsAndConfirms(t *testing.T) {
 }
 
 func TestRefreshPrefsUpdatesEngines(t *testing.T) {
-	gw := gwfake.New("N0HQ")
+	gw := gwfake.New("N0CALL-10")
 	a, _ := newApp(t, gw, store.DefaultSettings())
 	gw.SetMaxText(150)
 	if err := a.RefreshPrefs(ctx); err != nil {
@@ -197,9 +197,9 @@ func TestRefreshPrefsUpdatesEngines(t *testing.T) {
 }
 
 func TestUnconfiguredHQKeepsReportsUntilConfigured(t *testing.T) {
-	gw := gwfake.New("N0HQ")
+	gw := gwfake.New("N0CALL-10")
 	a, st := newApp(t, gw, store.DefaultSettings()) // no role yet
-	gw.Inbound("K1CP", "RC1 R AS5 1 @1300 101/05")
+	gw.Inbound("N0CALL-1", "RC1 R AS5 1 @1300 101/05")
 	runApp(t, a)
 	time.Sleep(300 * time.Millisecond)
 	if got, _ := st.EffectiveEntries(ctx, store.EntryFilter{}); len(got) != 0 {
@@ -218,7 +218,7 @@ func TestUnconfiguredHQKeepsReportsUntilConfigured(t *testing.T) {
 }
 
 func TestStartingPointSavedOnceAndReadsEarlierRows(t *testing.T) {
-	gw := gwfake.New("N0HQ")
+	gw := gwfake.New("N0CALL-10")
 	cfg := store.DefaultSettings()
 	cfg.Role, cfg.HQLocalCodes = store.RoleHQ, "FIN"
 	st, err := store.OpenMemory()
@@ -231,7 +231,7 @@ func TestStartingPointSavedOnceAndReadsEarlierRows(t *testing.T) {
 	if err := st.EnsureInboxSince(ctx, first); err != nil { // the node's first run
 		t.Fatal(err)
 	}
-	gw.Inbound("K1CP", "RC1 R AS5 1 @1300 101/05") // arrives while the app is down
+	gw.Inbound("N0CALL-1", "RC1 R AS5 1 @1300 101/05") // arrives while the app is down
 	// Restart: StartedAt is now, but the first run's starting point holds.
 	a, err := New(Config{Store: st, Graywolf: gw, DataDir: t.TempDir(), StartedAt: time.Now().Add(time.Minute)})
 	if err != nil {

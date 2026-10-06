@@ -90,10 +90,10 @@ test("healthFlags", () => {
   assert.deepEqual(L.healthFlags({}, now), ["never heard"]);
   const flags = L.healthFlags({
     LastHeardAt: "2026-10-10T13:00:00Z", Missing: [3, 4], GivenUp: [3], SenderMismatch: true,
-    LastSourceCall: "SPOOF", ExpectedCall: "K1CP", ClockSkewSec: -45, BadReports: 2, SeqReuseCount: 1,
+    LastSourceCall: "SPOOF", ExpectedCall: "N0CALL-1", ClockSkewSec: -45, BadReports: 2, SeqReuseCount: 1,
   }, now);
   assert.deepEqual(flags, [
-    "quiet for 15+ min", "2 batch(es) missing", "1 given up", "heard from SPOOF, expected K1CP",
+    "quiet for 15+ min", "2 batch(es) missing", "1 given up", "heard from SPOOF, expected N0CALL-1",
     "clock off by -45 s", "2 unreadable report(s)", "checkpoint restarted its numbering",
   ]);
   assert.deepEqual(L.healthFlags({ LastHeardAt: "2026-10-10T13:59:00Z", ClockSkewSec: 0 }, now), []);

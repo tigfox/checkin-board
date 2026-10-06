@@ -87,7 +87,7 @@ func newEnvWith(t *testing.T, cfg store.Settings, adjust func(*Deps)) *env {
 	if _, err := st.SaveSettings(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	gw := gwfake.New("K1CP")
+	gw := gwfake.New("N0CALL-1")
 	clock := raceclock.NewClock(nil, func() bool { return true })
 	ens := peers.NewEnsurer(gw, st, nil)
 	cp, _ := checkpoint.New(checkpoint.Config{Store: st, Graywolf: gw, Clock: clock, Peers: ens})
@@ -126,7 +126,7 @@ func newEnvWith(t *testing.T, cfg store.Settings, adjust func(*Deps)) *env {
 
 func checkpointSettings(state string) store.Settings {
 	c := store.DefaultSettings()
-	c.Role, c.CheckpointCode, c.HQCall, c.RaceName, c.RaceState = store.RoleCheckpoint, "AS5", "N0HQ", "Ridge 50K", state
+	c.Role, c.CheckpointCode, c.HQCall, c.RaceName, c.RaceState = store.RoleCheckpoint, "AS5", "N0CALL-10", "Ridge 50K", state
 	return c
 }
 

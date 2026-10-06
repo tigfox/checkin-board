@@ -28,7 +28,7 @@ func openStore(t *testing.T, cfg store.Settings) *store.Store {
 
 func cpSettings(state string) store.Settings {
 	c := store.DefaultSettings()
-	c.Role, c.CheckpointCode, c.HQCall, c.RaceName, c.RaceState = store.RoleCheckpoint, "AS5", "N0HQ", "Ridge", state
+	c.Role, c.CheckpointCode, c.HQCall, c.RaceName, c.RaceState = store.RoleCheckpoint, "AS5", "N0CALL-10", "Ridge", state
 	return c
 }
 
@@ -44,7 +44,7 @@ func TestRequestCheckpointProbesHQ(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.PeerCall != "N0HQ" || c.StationCode != "AS5" || c.Count != DefaultCount || c.SpacingSec != int(DefaultSpacing/time.Second) {
+	if c.PeerCall != "N0CALL-10" || c.StationCode != "AS5" || c.Count != DefaultCount || c.SpacingSec != int(DefaultSpacing/time.Second) {
 		t.Fatalf("check = %+v", c)
 	}
 	if _, err := Request(ctx, st, Req{}, t0.Add(time.Minute)); !errors.Is(err, ErrBusy) {
@@ -97,8 +97,8 @@ func TestRequestHQNeedsTarget(t *testing.T) {
 	if _, err := Request(ctx, st, Req{To: "not a call"}, t0); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("bad call: %v", err)
 	}
-	c, err := Request(ctx, st, Req{To: "k1cp"}, t0)
-	if err != nil || c.PeerCall != "K1CP" || c.StationCode != HQCode {
+	c, err := Request(ctx, st, Req{To: "n0call-1"}, t0)
+	if err != nil || c.PeerCall != "N0CALL-1" || c.StationCode != HQCode {
 		t.Fatalf("HQ check = %+v, %v", c, err)
 	}
 }

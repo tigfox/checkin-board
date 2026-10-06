@@ -42,15 +42,15 @@ func TestStationConfigGetAndPut(t *testing.T) {
 	if err != nil || got.Callsign != "N0CALL" {
 		t.Fatalf("get: %+v %v", got, err)
 	}
-	got, err = c.SetStationCallsign(ctx, "k1abc-9")
-	if err != nil || got.Callsign != "K1ABC-9" {
+	got, err = c.SetStationCallsign(ctx, "n0call-9")
+	if err != nil || got.Callsign != "N0CALL-9" {
 		t.Fatalf("put: %+v %v", got, err)
 	}
 }
 
 func TestSetStationCallsignValidates(t *testing.T) {
 	c := newFakeGW(t).client(t)
-	for _, bad := range []string{"", "TOOLONGCALL", "K1ABC-123", "K1 ABC"} {
+	for _, bad := range []string{"", "TOOLONGCALL", "N0CALL-123", "N0 CALL"} {
 		if _, err := c.SetStationCallsign(context.Background(), bad); err == nil {
 			t.Errorf("SetStationCallsign(%q): expected error", bad)
 		}

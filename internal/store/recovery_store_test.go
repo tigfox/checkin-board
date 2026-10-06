@@ -38,7 +38,7 @@ func TestIngestImportedUsesExactTimesAndDedupsWithRadio(t *testing.T) {
 		t.Fatalf("status = %+v", sts)
 	}
 	// The same batch later arrives by radio: a duplicate, not new runners.
-	if r, err := s.IngestReport(ctx, rep, "K1CP", 0, at(2*time.Hour)); err != nil || !r.Duplicate {
+	if r, err := s.IngestReport(ctx, rep, "N0CALL-1", 0, at(2*time.Hour)); err != nil || !r.Duplicate {
 		t.Fatalf("radio copy = %+v, %v", r, err)
 	}
 	if _, err := s.IngestImported(ctx, rep, times[:1], t0); !errors.Is(err, ErrInvalidInput) {

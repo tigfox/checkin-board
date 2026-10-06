@@ -52,7 +52,7 @@ func TestIngestReportRecordsInboxRowAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	rep := msg.(*wire.Report)
-	if _, err := s.IngestReport(ctx, rep, "K1CP", 77, at(time.Minute)); err != nil {
+	if _, err := s.IngestReport(ctx, rep, "N0CALL-1", 77, at(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if known, _ := s.KnownGWRow(ctx, 77); !known {
@@ -64,7 +64,7 @@ func TestIngestReportRecordsInboxRowAtomically(t *testing.T) {
 	}
 	// The same batch via a different graywolf row (resent after graywolf's
 	// dedup window) is a duplicate but its row is still recorded.
-	res, err := s.IngestReport(ctx, rep, "K1CP", 78, at(10*time.Minute))
+	res, err := s.IngestReport(ctx, rep, "N0CALL-1", 78, at(10*time.Minute))
 	if err != nil || !res.Duplicate {
 		t.Fatalf("second copy = %+v, %v", res, err)
 	}
@@ -94,19 +94,19 @@ func TestBadReports(t *testing.T) {
 		t.Fatal(err)
 	}
 	long := "RC1 R AS5 " + strings.Repeat("x", 400)
-	if err := s.RecordBadReport(ctx, 5, "K1CP", "AS5", long, "bad entry", t0); err != nil {
+	if err := s.RecordBadReport(ctx, 5, "N0CALL-1", "AS5", long, "bad entry", t0); err != nil {
 		t.Fatal(err)
 	}
 	// Same graywolf row again: no double count.
-	if err := s.RecordBadReport(ctx, 5, "K1CP", "AS5", long, "bad entry", t0); err != nil {
+	if err := s.RecordBadReport(ctx, 5, "N0CALL-1", "AS5", long, "bad entry", t0); err != nil {
 		t.Fatal(err)
 	}
 	// A well-formed but unknown code (garbage or spoofed) is kept but
 	// must not create a phantom checkpoint.
-	if err := s.RecordBadReport(ctx, 6, "N0BAD", "ZZZ", "RC1 ???", "garbage", at(time.Second)); err != nil {
+	if err := s.RecordBadReport(ctx, 6, "N0CALL-13", "ZZZ", "RC1 ???", "garbage", at(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordBadReport(ctx, 0, "N0BAD", "", "x", "y", t0); !errors.Is(err, ErrInvalidInput) {
+	if err := s.RecordBadReport(ctx, 0, "N0CALL-13", "", "x", "y", t0); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("zero id err = %v", err)
 	}
 	got, err := s.ListBadReports(ctx, 10)
@@ -151,13 +151,13 @@ func TestTruncateUTF8(t *testing.T) {
 
 func TestPeerPrefsBackupKeepsOriginal(t *testing.T) {
 	s := newTestStore(t)
-	orig := PeerPrefs{Callsign: "N0HQ-1", SendPath: "rf_only", WaitForAck: true}
+	orig := PeerPrefs{Callsign: "N0CALL-11", SendPath: "rf_only", WaitForAck: true}
 	if saved, err := s.SavePeerPrefs(ctx, orig); err != nil || !saved {
 		t.Fatalf("first save = %v, %v", saved, err)
 	}
 	// After a restart the app sees its own wait_for_ack=false; that must
 	// not replace the true original.
-	if saved, err := s.SavePeerPrefs(ctx, PeerPrefs{Callsign: "N0HQ-1", WaitForAck: false}); err != nil || saved {
+	if saved, err := s.SavePeerPrefs(ctx, PeerPrefs{Callsign: "N0CALL-11", WaitForAck: false}); err != nil || saved {
 		t.Fatalf("second save = %v, %v; want kept original", saved, err)
 	}
 	if _, err := s.SavePeerPrefs(ctx, PeerPrefs{Callsign: "bad call"}); !errors.Is(err, ErrInvalidInput) {
@@ -167,10 +167,10 @@ func TestPeerPrefsBackupKeepsOriginal(t *testing.T) {
 	if err != nil || len(got) != 1 || !got[0].WaitForAck || got[0].SendPath != "rf_only" {
 		t.Fatalf("ListPeerPrefs = %+v, %v", got, err)
 	}
-	if err := s.DeletePeerPrefs(ctx, "N0HQ-1"); err != nil {
+	if err := s.DeletePeerPrefs(ctx, "N0CALL-11"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeletePeerPrefs(ctx, "N0HQ-1"); !errors.Is(err, ErrNotFound) {
+	if err := s.DeletePeerPrefs(ctx, "N0CALL-11"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("second delete err = %v", err)
 	}
 }

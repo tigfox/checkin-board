@@ -321,8 +321,8 @@ func TestCatchUpDetectsStalledCursor(t *testing.T) {
 }
 
 func TestAddresseeValidation(t *testing.T) {
-	valid := []string{"HQ", "k1abc", "K1ABC-9", "AID-3", "FINISH", "N0CALL-15"}
-	invalid := []string{"", "-", "--", "-HQ", "K1 ABC", "TOOLONGTAC1", "HQ/1"}
+	valid := []string{"HQ", "n0call", "N0CALL-9", "AID-3", "FINISH", "N0CALL-15"}
+	invalid := []string{"", "-", "--", "-HQ", "N0 CALL", "TOOLONGTAC1", "HQ/1"}
 	for _, a := range valid {
 		if _, err := normalizeAddressee(a); err != nil {
 			t.Errorf("%q: unexpected error %v", a, err)

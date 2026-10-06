@@ -51,7 +51,7 @@ type env struct {
 
 func checkpointSettings() store.Settings {
 	c := store.DefaultSettings()
-	c.Role, c.CheckpointCode, c.HQCall, c.RaceName = store.RoleCheckpoint, "AS5", "N0HQ", "Ridge 50K"
+	c.Role, c.CheckpointCode, c.HQCall, c.RaceName = store.RoleCheckpoint, "AS5", "N0CALL-10", "Ridge 50K"
 	return c
 }
 
@@ -77,7 +77,7 @@ func newEnv(t *testing.T, cfg store.Settings, state string) *env {
 	if _, err := st.SaveSettings(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	gw := gwfake.New("K1CP")
+	gw := gwfake.New("N0CALL-1")
 	gw.Now = ft.Now
 	// Synced from a volunteer's browser (no disciplined OS clock), so a
 	// reset's clearing of the sync is observable.

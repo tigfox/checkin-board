@@ -49,7 +49,7 @@ type harness struct {
 
 func checkpointSettings() store.Settings {
 	c := store.DefaultSettings()
-	c.Role, c.CheckpointCode, c.HQCall, c.RaceState = store.RoleCheckpoint, "AS5", "N0HQ", store.RaceActive
+	c.Role, c.CheckpointCode, c.HQCall, c.RaceState = store.RoleCheckpoint, "AS5", "N0CALL-10", store.RaceActive
 	return c
 }
 
@@ -62,7 +62,7 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { _ = s.Close() })
 	ft := &fakeTime{t: t0}
 	s.SetClock(ft.Now)
-	gw := gwfake.New("K1CP")
+	gw := gwfake.New("N0CALL-1")
 	gw.Now = ft.Now
 	clock := raceclock.NewClock(ft.Now, func() bool { return true })
 	e, err := New(Config{Store: s, Graywolf: gw, Clock: clock, Now: ft.Now})
@@ -140,7 +140,7 @@ func TestFlushesAfterAge(t *testing.T) {
 	h.ft.Advance(time.Second)
 	h.tick()
 	got := h.reports()
-	if len(got) != 1 || got[0].To != "N0HQ" || got[0].Text != "RC1 R AS5 1 @1300 101/00" || got[0].Resend {
+	if len(got) != 1 || got[0].To != "N0CALL-10" || got[0].Text != "RC1 R AS5 1 @1300 101/00" || got[0].Resend {
 		t.Fatalf("reports = %+v", got)
 	}
 	pending, _ := h.s.ListPendingBatches(ctx)
@@ -276,7 +276,7 @@ func TestGapRequestFromHQResends(t *testing.T) {
 	before := len(h.reports())
 
 	// HQ lost batch 1 and asks for it.
-	gap := h.gw.Inbound("N0HQ", "RC1 G AS5 1")
+	gap := h.gw.Inbound("N0CALL-10", "RC1 G AS5 1")
 	if err := h.e.HandleInbound(ctx, gap); err != nil {
 		t.Fatal(err)
 	}
@@ -304,9 +304,9 @@ func TestInboundFromOthersIgnored(t *testing.T) {
 	before := len(h.reports())
 	for _, m := range []graywolf.Message{
 		h.gw.Inbound("SPOOF", "RC1 G AS5 1"),
-		h.gw.Inbound("N0HQ", "RC1 G AS5 garbage"),
-		h.gw.Inbound("N0HQ", "RC1 P FIN 3 1/5"),      // link check: phase 12
-		h.gw.Inbound("N0HQ", "RC1 H OTHER 0 130000"), // not for a checkpoint
+		h.gw.Inbound("N0CALL-10", "RC1 G AS5 garbage"),
+		h.gw.Inbound("N0CALL-10", "RC1 P FIN 3 1/5"),      // link check: phase 12
+		h.gw.Inbound("N0CALL-10", "RC1 H OTHER 0 130000"), // not for a checkpoint
 	} {
 		if err := h.e.HandleInbound(ctx, m); err != nil {
 			t.Fatalf("%q: %v", m.Text, err)
@@ -378,7 +378,7 @@ func TestUnknownSendOutcomeIsRecoveredNotDuplicated(t *testing.T) {
 	if pending[0].Attempts != 1 {
 		t.Fatalf("attempt rolled back after an unknown outcome: %+v", pending[0])
 	}
-	sent, _ := h.gw.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: pending[0].Text})
+	sent, _ := h.gw.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-10", Text: pending[0].Text})
 	h.ft.Advance(time.Second)
 	h.tick() // recoverUnbound finds and binds the row
 	pending, _ = h.s.ListPendingBatches(ctx)
@@ -452,7 +452,7 @@ func TestHeartbeat(t *testing.T) {
 	h := newHarness(t)
 	h.tick()
 	hbs := h.gw.TransmissionsWithPrefix("RC1 H ")
-	if len(hbs) != 1 || hbs[0].Text != "RC1 H AS5 0 130000" || hbs[0].To != "N0HQ" {
+	if len(hbs) != 1 || hbs[0].Text != "RC1 H AS5 0 130000" || hbs[0].To != "N0CALL-10" {
 		t.Fatalf("heartbeats = %+v", hbs)
 	}
 	if known, _ := h.s.KnownGWRow(ctx, hbs[0].ID); !known {
@@ -565,7 +565,7 @@ func TestRecoverBindsBatchesSentBeforeACrash(t *testing.T) {
 	// Simulate: batch created and attempted, POST succeeded, crash before bind.
 	b, _ := h.s.CreateBatch(ctx, "AS5", 67, h.ft.Now())
 	_ = h.s.MarkTransmitted(ctx, b.ID, h.ft.Now(), h.ft.Now().Add(30*time.Second))
-	sent, _ := h.gw.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: b.Text, ClientID: b.ClientID})
+	sent, _ := h.gw.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-10", Text: b.Text, ClientID: b.ClientID})
 
 	if err := h.e.Recover(ctx, h.cfg); err != nil {
 		t.Fatal(err)
@@ -582,7 +582,7 @@ func TestRecoverFallsBackToTextAndLeavesUnsentAlone(t *testing.T) {
 	h.ft.Advance(20 * time.Second)
 	b1, _ := h.s.CreateBatch(ctx, "AS5", 67, h.ft.Now())
 	_ = h.s.MarkTransmitted(ctx, b1.ID, h.ft.Now(), h.ft.Now().Add(30*time.Second))
-	sent, _ := h.gw.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: b1.Text})
+	sent, _ := h.gw.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-10", Text: b1.Text})
 	h.log(102)
 	b2, _ := h.s.CreateBatch(ctx, "AS5", 67, h.ft.Now())
 	_ = h.s.MarkTransmitted(ctx, b2.ID, h.ft.Now(), h.ft.Now().Add(30*time.Second)) // POST never happened
@@ -603,7 +603,7 @@ func TestRecoverFallsBackToTextAndLeavesUnsentAlone(t *testing.T) {
 func TestRecoverIgnoresRowsFromAnEarlierRace(t *testing.T) {
 	h := newHarness(t)
 	// A rehearsal sent the identical text an hour ago and it was acked.
-	old, _ := h.gw.SendMessage(ctx, graywolf.SendRequest{To: "N0HQ", Text: "RC1 R AS5 1 @1300 101/00"})
+	old, _ := h.gw.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-10", Text: "RC1 R AS5 1 @1300 101/00"})
 	h.gw.Ack(old.ID)
 	h.ft.Advance(time.Hour)
 	h.ft.t = t0.Add(24 * time.Hour) // race day, same time of day
@@ -711,7 +711,7 @@ func TestTurnsOffGraywolfRetriesForHQBeforeSending(t *testing.T) {
 	if err := e.Tick(ctx, h.cfg); err != nil {
 		t.Fatal(err)
 	}
-	if p, _ := h.gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ"); p.WaitForAck {
+	if p, _ := h.gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10"); p.WaitForAck {
 		t.Fatal("graywolf retries still on for HQ after the first send")
 	}
 	if b, _ := h.s.ListPeerPrefs(ctx); len(b) != 1 || !b[0].WaitForAck {

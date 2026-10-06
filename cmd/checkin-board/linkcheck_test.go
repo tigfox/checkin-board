@@ -22,7 +22,7 @@ func cliDB(t *testing.T, state string) (string, *store.Store) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	c := store.DefaultSettings()
-	c.Role, c.CheckpointCode, c.HQCall, c.RaceState = store.RoleCheckpoint, "AS5", "N0HQ", state
+	c.Role, c.CheckpointCode, c.HQCall, c.RaceState = store.RoleCheckpoint, "AS5", "N0CALL-10", state
 	if _, err := st.SaveSettings(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestLinkCheckCLIExitCodes(t *testing.T) {
 		if code := runLinkCheckCLI(context.Background(), db, nil, &out, fast); code != want {
 			t.Errorf("%s: exit %d, want %d (%s)", verdict, code, want, out.String())
 		}
-		if !strings.Contains(out.String(), verdict) || !strings.Contains(out.String(), "N0HQ") {
+		if !strings.Contains(out.String(), verdict) || !strings.Contains(out.String(), "N0CALL-10") {
 			t.Errorf("%s: output %q", verdict, out.String())
 		}
 	}
@@ -112,7 +112,7 @@ func TestLinkCheckCLIBriefAndDBFlag(t *testing.T) {
 	var out bytes.Buffer
 	code := runLinkCheckCLI(context.Background(), "/nonexistent/ignored.db", []string{"--db", db, "--brief"}, &out, fast)
 	line := strings.TrimSpace(out.String())
-	if code != exitMarginal || strings.Count(line, "\n") != 0 || len(line) > 50 || !strings.HasPrefix(line, "MARGINAL N0HQ") {
+	if code != exitMarginal || strings.Count(line, "\n") != 0 || len(line) > 50 || !strings.HasPrefix(line, "MARGINAL N0CALL-10") {
 		t.Fatalf("exit %d, brief %q (%d chars)", code, line, len(line))
 	}
 }

@@ -80,8 +80,8 @@ func TestCleanupGraywolfKeepsWhatHQStillNeeds(t *testing.T) {
 	m, _ := e.gw.GetMessage(ctx, batches[0].ID)
 	_ = e.cp.HandleOutbound(ctx, m)
 	e.logBib("AS5", 2)
-	e.sendAll()                                                   // batch 2, never ACKed
-	operator := e.gw.Inbound("N0HQ", "73, see you at the finish") // operator chat: never ours
+	e.sendAll()                                                        // batch 2, never ACKed
+	operator := e.gw.Inbound("N0CALL-10", "73, see you at the finish") // operator chat: never ours
 
 	if _, err := e.svc.CleanupGraywolf(ctx); !errors.Is(err, ErrWrongState) {
 		t.Fatalf("cleanup during the race err = %v", err)
@@ -146,8 +146,8 @@ func TestResetRequiresConfirmationAndGuardsUnsentData(t *testing.T) {
 
 func TestResetBacksUpAndClears(t *testing.T) {
 	e := newEnv(t, checkpointSettings(), store.RaceActive)
-	_, _ = e.gw.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ", graywolf.ConversationPrefs{SendPath: "rf_only", WaitForAck: true})
-	if err := e.svc.cfg.Peers.Ensure(ctx, "N0HQ"); err != nil {
+	_, _ = e.gw.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10", graywolf.ConversationPrefs{SendPath: "rf_only", WaitForAck: true})
+	if err := e.svc.cfg.Peers.Ensure(ctx, "N0CALL-10"); err != nil {
 		t.Fatal(err)
 	}
 	e.logBib("AS5", 1)
@@ -178,7 +178,7 @@ func TestResetBacksUpAndClears(t *testing.T) {
 	if e.state() != store.RaceSetup {
 		t.Errorf("state = %s", e.state())
 	}
-	if p, _ := e.gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ"); !p.WaitForAck || p.SendPath != "rf_only" {
+	if p, _ := e.gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10"); !p.WaitForAck || p.SendPath != "rf_only" {
 		t.Errorf("graywolf prefs not restored: %+v", p)
 	}
 	if e.clock.Status().Source != "unsynced" {

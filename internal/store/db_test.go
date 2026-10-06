@@ -112,7 +112,7 @@ func TestDBSizeGrowsWithData(t *testing.T) {
 		t.Fatalf("size = %d, %v", before, err)
 	}
 	for i := range 200 {
-		if err := s.RecordBadReport(ctx, uint64(i+1), "K1CP", "AS5", strings.Repeat("x", 200), "bad", t0); err != nil {
+		if err := s.RecordBadReport(ctx, uint64(i+1), "N0CALL-1", "AS5", strings.Repeat("x", 200), "bad", t0); err != nil {
 			t.Fatal(err)
 		}
 	}

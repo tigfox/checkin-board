@@ -128,13 +128,13 @@ func TestSettingsEditAndRoleGuard(t *testing.T) {
 
 func TestCallsignNeedsConfirm(t *testing.T) {
 	e := newEnv(t, checkpointSettings("active"))
-	expect(t, e.do("PUT", "/api/admin/callsign", e.admin, map[string]any{"callsign": "K9NEW"}), http.StatusBadRequest)
-	got := decode[map[string]string](t, e.do("PUT", "/api/admin/callsign", e.admin, map[string]any{"callsign": "k9new", "confirm": true}))
-	if got["callsign"] != "K9NEW" {
+	expect(t, e.do("PUT", "/api/admin/callsign", e.admin, map[string]any{"callsign": "N0CALL-15"}), http.StatusBadRequest)
+	got := decode[map[string]string](t, e.do("PUT", "/api/admin/callsign", e.admin, map[string]any{"callsign": "n0call-15", "confirm": true}))
+	if got["callsign"] != "N0CALL-15" {
 		t.Fatalf("callsign = %v", got)
 	}
 	gw := decode[graywolfView](t, e.do("GET", "/api/admin/gw", e.admin, nil))
-	if !gw.Reachable || gw.Callsign != "K9NEW" || gw.MaxText != 67 {
+	if !gw.Reachable || gw.Callsign != "N0CALL-15" || gw.MaxText != 67 {
 		t.Fatalf("gw = %+v", gw)
 	}
 }
@@ -175,8 +175,8 @@ func TestLifecycleOverHTTP(t *testing.T) {
 func TestHQToolsOverHTTP(t *testing.T) {
 	e := newEnv(t, hqSettings("active"))
 	cp := decode[store.Checkpoint](t, e.do("POST", "/api/admin/checkpoints", e.admin,
-		map[string]any{"code": "as5", "name": "Aid 5", "course_order": 1, "expected_call": "k1cp"}))
-	if cp.ID == 0 || cp.Code != "AS5" || cp.ExpectedCall != "K1CP" {
+		map[string]any{"code": "as5", "name": "Aid 5", "course_order": 1, "expected_call": "n0call-1"}))
+	if cp.ID == 0 || cp.Code != "AS5" || cp.ExpectedCall != "N0CALL-1" {
 		t.Fatalf("checkpoint = %+v", cp)
 	}
 	expect(t, e.do("POST", "/api/admin/checkpoints", e.admin, map[string]any{"code": "AS5", "name": "dup"}), http.StatusConflict)
@@ -328,15 +328,15 @@ func TestNewHandlerValidates(t *testing.T) {
 func TestVolunteerBannerHidesErrorDetail(t *testing.T) {
 	e := newEnv(t, checkpointSettings("active"))
 	e.inbox.mu.Lock()
-	e.inbox.status.StreamError = `graywolf: login: Post "http://10.0.0.65:8080/api/auth/login": refused`
+	e.inbox.status.StreamError = `graywolf: login: Post "http://192.0.2.65:8080/api/auth/login": refused`
 	e.inbox.mu.Unlock()
 	resp := e.do("GET", "/api/station", e.volunt, nil)
 	raw, _ := io.ReadAll(resp.Body)
-	if strings.Contains(string(raw), "10.0.0.65") || !strings.Contains(string(raw), "graywolf unreachable") {
+	if strings.Contains(string(raw), "192.0.2.65") || !strings.Contains(string(raw), "graywolf unreachable") {
 		t.Fatalf("station = %s", raw)
 	}
 	gw := decode[graywolfView](t, e.do("GET", "/api/admin/gw", e.admin, nil))
-	if !strings.Contains(gw.StreamError, "10.0.0.65") {
+	if !strings.Contains(gw.StreamError, "192.0.2.65") {
 		t.Fatalf("admin panel lacks the detail: %+v", gw)
 	}
 	e.inbox.mu.Lock()

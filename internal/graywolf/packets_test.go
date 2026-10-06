@@ -11,9 +11,9 @@ import (
 const packetsJSON = `[
  {"timestamp":"2026-10-05T06:00:01Z","direction":"RX","type":"message","via":"WIDE1",
   "audio_level":{"level_dbfs":-21.4,"mark":40,"space":38},
-  "decoded":{"source":"K1CP","dest":"APGW","message":{"addressee":"N0HQ","text":"RC1 P AS5 7 1/5","messageID":"12"}}},
+  "decoded":{"source":"N0CALL-1","dest":"APGW","message":{"addressee":"N0CALL-10","text":"RC1 P AS5 7 1/5","messageID":"12"}}},
  {"timestamp":"2026-10-05T06:00:02Z","direction":"RX","type":"message",
-  "decoded":{"source":"K1CP","message":{"addressee":"N0HQ","isAck":true,"messageID":"3"}}},
+  "decoded":{"source":"N0CALL-1","message":{"addressee":"N0CALL-10","isAck":true,"messageID":"3"}}},
  {"timestamp":"2026-10-05T06:00:03Z","direction":"TX","type":"message","decoded":null}
 ]`
 
@@ -40,7 +40,7 @@ func TestListPacketsEncodesParamsAndDecodes(t *testing.T) {
 	}
 	p := pk[0]
 	if p.Via != "WIDE1" || p.AudioLevel == nil || p.AudioLevel.LevelDBFS != -21.4 || p.Decoded == nil ||
-		p.Decoded.Source != "K1CP" || p.Decoded.Message == nil || p.Decoded.Message.Text != "RC1 P AS5 7 1/5" {
+		p.Decoded.Source != "N0CALL-1" || p.Decoded.Message == nil || p.Decoded.Message.Text != "RC1 P AS5 7 1/5" {
 		t.Fatalf("packet = %+v", p)
 	}
 	if pk[1].AudioLevel != nil || !pk[1].Decoded.Message.IsAck {

@@ -45,9 +45,9 @@ func TestAwaitTimesOutAndHonoursContext(t *testing.T) {
 
 func TestBrief(t *testing.T) {
 	rtt, r, l := 4400, -21, -22
-	c := store.LinkCheck{State: store.LinkCheckDone, Verdict: Pass, PeerCall: "N0HQ", Count: 5, Uplink: 5, RoundTrip: 5,
+	c := store.LinkCheck{State: store.LinkCheckDone, Verdict: Pass, PeerCall: "N0CALL-10", Count: 5, Uplink: 5, RoundTrip: 5,
 		MedianRTTms: &rtt, RemoteLevel: &r, LocalLevel: &l}
-	if b := Brief(c); b != "PASS N0HQ up5/5 ack5 rtt4s -21/-22dB" || len(b) > 50 {
+	if b := Brief(c); b != "PASS N0CALL-10 up5/5 ack5 rtt4s -21/-22dB" || len(b) > 50 {
 		t.Errorf("brief = %q", b)
 	}
 	c.LocalLevel = nil

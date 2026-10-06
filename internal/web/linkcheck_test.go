@@ -12,7 +12,7 @@ func TestLinkCheckRequestAndList(t *testing.T) {
 	e := newEnv(t, checkpointSettings(store.RaceSetup))
 	resp := e.do("POST", "/api/admin/linkcheck", e.admin, map[string]any{"count": 3})
 	c := decode[linkCheckView](t, resp)
-	if c.ID == 0 || c.State != store.LinkCheckRequested || c.PeerCall != "N0HQ" || c.Count != 3 {
+	if c.ID == 0 || c.State != store.LinkCheckRequested || c.PeerCall != "N0CALL-10" || c.Count != 3 {
 		t.Fatalf("created = %+v", c)
 	}
 	expect(t, e.do("POST", "/api/admin/linkcheck", e.admin, map[string]any{}), http.StatusConflict) // busy
@@ -58,7 +58,7 @@ func TestLinkCheckRules(t *testing.T) {
 
 func TestLinkReadinessAndHealthColumn(t *testing.T) {
 	e := newEnv(t, hqSettings(store.RaceSetup))
-	if err := e.st.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS5", Name: "Ridge", CourseOrder: 1, ExpectedCall: "K1CP"}); err != nil {
+	if err := e.st.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS5", Name: "Ridge", CourseOrder: 1, ExpectedCall: "N0CALL-1"}); err != nil {
 		t.Fatal(err)
 	}
 	r := decode[map[string][]string](t, e.do("GET", "/api/admin/linkcheck/readiness", e.admin, nil))
@@ -66,7 +66,7 @@ func TestLinkReadinessAndHealthColumn(t *testing.T) {
 		t.Fatalf("readiness = %+v", r)
 	}
 	lvl := -24
-	if _, err := e.st.RecordProbeHeard(ctx, store.ProbeHeard{PeerCall: "K1CP", ProberCode: "AS5", Run: 3, Total: 2, Idx: 1, At: time.Now(), Level: &lvl}); err != nil {
+	if _, err := e.st.RecordProbeHeard(ctx, store.ProbeHeard{PeerCall: "N0CALL-1", ProberCode: "AS5", Run: 3, Total: 2, Idx: 1, At: time.Now(), Level: &lvl}); err != nil {
 		t.Fatal(err)
 	}
 	st := decode[map[string]any](t, e.do("GET", "/api/admin/status", e.admin, nil))

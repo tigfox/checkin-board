@@ -119,7 +119,7 @@ func TestGraywolfPanelWhenUnreachable(t *testing.T) {
 	if v.Reachable || len(v.Warnings) == 0 || v.Warnings[0] != "graywolf not reachable: unreachable" {
 		t.Fatalf("panel = %+v (must not leak internal error text)", v)
 	}
-	expect(t, e.do("PUT", "/api/admin/callsign", e.admin, map[string]any{"callsign": "K9X", "confirm": true}), http.StatusBadGateway)
+	expect(t, e.do("PUT", "/api/admin/callsign", e.admin, map[string]any{"callsign": "N0C", "confirm": true}), http.StatusBadGateway)
 }
 
 func TestUploadWithoutFile(t *testing.T) {

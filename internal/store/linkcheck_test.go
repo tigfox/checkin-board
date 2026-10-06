@@ -8,11 +8,11 @@ import (
 
 func TestLinkCheckOneActiveAtATime(t *testing.T) {
 	s := newTestStore(t)
-	c, err := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0HQ", StationCode: "AS5", Count: 5, SpacingSec: 10, Source: "admin", RequestedAt: t0})
+	c, err := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 5, SpacingSec: 10, Source: "admin", RequestedAt: t0})
 	if err != nil || c.ID == 0 || c.State != LinkCheckRequested {
 		t.Fatalf("create = %+v, %v", c, err)
 	}
-	if _, err := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0HQ", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0}); !errors.Is(err, ErrConflict) {
+	if _, err := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("second active check: %v, want ErrConflict", err)
 	}
 	next, err := s.NextRequestedLinkCheck(ctx)
@@ -37,7 +37,7 @@ func TestLinkCheckOneActiveAtATime(t *testing.T) {
 	if err := s.UpdateLinkCheck(ctx, act); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0HQ", StationCode: "AS5", Count: 3, SpacingSec: 10, RequestedAt: fin}); err != nil {
+	if _, err := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 3, SpacingSec: 10, RequestedAt: fin}); err != nil {
 		t.Fatalf("new check after the first finished: %v", err)
 	}
 	list, err := s.ListLinkChecks(ctx, 10)
@@ -54,10 +54,10 @@ func TestLinkCheckValidates(t *testing.T) {
 	s := newTestStore(t)
 	for _, c := range []LinkCheck{
 		{PeerCall: "", StationCode: "AS5", Count: 5, SpacingSec: 10},
-		{PeerCall: "N0HQ", StationCode: "as 5", Count: 5, SpacingSec: 10},
-		{PeerCall: "N0HQ", StationCode: "AS5", Count: 0, SpacingSec: 10},
-		{PeerCall: "N0HQ", StationCode: "AS5", Count: 21, SpacingSec: 10},
-		{PeerCall: "N0HQ", StationCode: "AS5", Count: 5, SpacingSec: 0},
+		{PeerCall: "N0CALL-10", StationCode: "as 5", Count: 5, SpacingSec: 10},
+		{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 0, SpacingSec: 10},
+		{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 21, SpacingSec: 10},
+		{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 5, SpacingSec: 0},
 	} {
 		if _, err := s.CreateLinkCheck(ctx, c); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("%+v: err = %v, want ErrInvalidInput", c, err)
@@ -67,7 +67,7 @@ func TestLinkCheckValidates(t *testing.T) {
 
 func TestLinkProbesAndLookupByMessage(t *testing.T) {
 	s := newTestStore(t)
-	c, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0HQ", StationCode: "AS5", Count: 2, SpacingSec: 10, RequestedAt: t0})
+	c, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 2, SpacingSec: 10, RequestedAt: t0})
 	id := uint64(77)
 	sent := at(0)
 	if err := s.SaveLinkProbe(ctx, LinkProbe{CheckID: c.ID, Idx: 1, GWMessageID: &id, SentAt: &sent}); err != nil {
@@ -94,16 +94,16 @@ func TestLinkProbesAndLookupByMessage(t *testing.T) {
 func TestLinkResponseRecordsHeardProbes(t *testing.T) {
 	s := newTestStore(t)
 	lvl := -20
-	r, err := s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "K1CP", ProberCode: "AS5", Run: 7, Total: 5, Idx: 2, At: t0, Level: &lvl, Via: "WIDE1"})
+	r, err := s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "N0CALL-1", ProberCode: "AS5", Run: 7, Total: 5, Idx: 2, At: t0, Level: &lvl, Via: "WIDE1"})
 	if err != nil || r.Heard != "2" || r.ID == 0 {
 		t.Fatalf("first = %+v, %v", r, err)
 	}
-	r, err = s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "K1CP", ProberCode: "AS5", Run: 7, Total: 5, Idx: 1, At: at(10 * time.Second)})
+	r, err = s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "N0CALL-1", ProberCode: "AS5", Run: 7, Total: 5, Idx: 1, At: at(10 * time.Second)})
 	if err != nil || r.Heard != "1,2" || !r.LastHeardAt.Equal(at(10*time.Second)) || r.Level == nil || *r.Level != -20 || r.Via != "WIDE1" {
 		t.Fatalf("second = %+v, %v", r, err)
 	}
 	// A repeat (duplicate frame) changes nothing.
-	r, _ = s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "K1CP", ProberCode: "AS5", Run: 7, Total: 5, Idx: 2, At: at(11 * time.Second)})
+	r, _ = s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "N0CALL-1", ProberCode: "AS5", Run: 7, Total: 5, Idx: 2, At: at(11 * time.Second)})
 	if r.Heard != "1,2" {
 		t.Fatalf("repeat changed heard: %+v", r)
 	}
@@ -138,8 +138,8 @@ func TestLinkResponseRecordsHeardProbes(t *testing.T) {
 
 func TestResetClearsLinkChecks(t *testing.T) {
 	s := newTestStore(t)
-	_, _ = s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0HQ", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0})
-	_, _ = s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "K1CP", ProberCode: "AS5", Run: 7, Total: 5, Idx: 1, At: t0})
+	_, _ = s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0})
+	_, _ = s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "N0CALL-1", ProberCode: "AS5", Run: 7, Total: 5, Idx: 1, At: t0})
 	if err := s.ResetRaceData(ctx, ResetOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestResetClearsLinkChecks(t *testing.T) {
 
 func TestCancelLinkCheckOnlyWhileActive(t *testing.T) {
 	s := newTestStore(t)
-	c, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0HQ", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0})
+	c, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0})
 	if ok, err := s.CancelLinkCheck(ctx, c.ID, "no service"); !ok || err != nil {
 		t.Fatal(ok, err)
 	}
@@ -171,7 +171,7 @@ func TestPendingLinkCheck(t *testing.T) {
 	if _, err := s.PendingLinkCheck(ctx); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("empty: %v", err)
 	}
-	c, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0HQ", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0})
+	c, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0})
 	if p, err := s.PendingLinkCheck(ctx); err != nil || p.ID != c.ID {
 		t.Fatalf("pending = %+v, %v", p, err)
 	}
@@ -179,7 +179,7 @@ func TestPendingLinkCheck(t *testing.T) {
 
 func TestLinkCheckGuardedTransitions(t *testing.T) {
 	s := newTestStore(t)
-	c, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0HQ", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0})
+	c, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0})
 	// A cancel that lands first wins: start no longer applies.
 	if ok, _ := s.CancelLinkCheck(ctx, c.ID, "gave up"); !ok {
 		t.Fatal("cancel")
@@ -187,7 +187,7 @@ func TestLinkCheckGuardedTransitions(t *testing.T) {
 	if ok, err := s.StartLinkCheck(ctx, c.ID, 42, t0); ok || err != nil {
 		t.Fatalf("start after cancel = %v, %v", ok, err)
 	}
-	c2, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0HQ", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0})
+	c2, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 5, SpacingSec: 10, RequestedAt: t0})
 	if ok, err := s.StartLinkCheck(ctx, c2.ID, 42, t0); !ok || err != nil {
 		t.Fatalf("start = %v, %v", ok, err)
 	}
@@ -221,7 +221,7 @@ func TestLinkCheckGuardedTransitions(t *testing.T) {
 
 func TestLinkProbeAckOnce(t *testing.T) {
 	s := newTestStore(t)
-	c, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0HQ", StationCode: "AS5", Count: 1, SpacingSec: 10, RequestedAt: t0})
+	c, _ := s.CreateLinkCheck(ctx, LinkCheck{PeerCall: "N0CALL-10", StationCode: "AS5", Count: 1, SpacingSec: 10, RequestedAt: t0})
 	id := uint64(5)
 	if err := s.SaveLinkProbe(ctx, LinkProbe{CheckID: c.ID, Idx: 1, GWMessageID: &id, MsgID: "17", SentAt: &t0}); err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestLinkProbeAckOnce(t *testing.T) {
 
 func TestLinkReplyGuardedTransitions(t *testing.T) {
 	s := newTestStore(t)
-	r, _ := s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "K1CP", ProberCode: "AS5", Run: 7, Total: 2, Idx: 2, At: t0})
+	r, _ := s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "N0CALL-1", ProberCode: "AS5", Run: 7, Total: 2, Idx: 2, At: t0})
 	if ok, _ := s.ScheduleLinkReply(ctx, r.ID, t0); !ok {
 		t.Fatal("schedule")
 	}
@@ -276,10 +276,10 @@ func TestLinkReplyGuardedTransitions(t *testing.T) {
 
 func TestProbeHeardLongAfterStartsFreshRun(t *testing.T) {
 	s := newTestStore(t)
-	r, _ := s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "K1CP", ProberCode: "AS5", Run: 7, Total: 2, Idx: 1, At: t0})
+	r, _ := s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "N0CALL-1", ProberCode: "AS5", Run: 7, Total: 2, Idx: 1, At: t0})
 	_, _ = s.MarkLinkReplySent(ctx, r.ID, 9, t0, at(30*time.Second))
 	// Same run number from the same station a day later: a new run.
-	r2, err := s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "K1CP", ProberCode: "AS5", Run: 7, Total: 3, Idx: 2, At: at(24 * time.Hour)})
+	r2, err := s.RecordProbeHeard(ctx, ProbeHeard{PeerCall: "N0CALL-1", ProberCode: "AS5", Run: 7, Total: 3, Idx: 2, At: at(24 * time.Hour)})
 	if err != nil || r2.Heard != "2" || r2.Total != 3 || r2.ReplySentAt != nil || r2.ReplyAttempts != 0 {
 		t.Fatalf("fresh = %+v, %v", r2, err)
 	}

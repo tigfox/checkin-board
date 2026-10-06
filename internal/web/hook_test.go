@@ -63,7 +63,7 @@ func TestHookRunsLinkCheck(t *testing.T) {
 		}
 	}()
 	code, body := hookReq(t, e, hookTok)
-	if code != http.StatusOK || !strings.HasPrefix(body, "PASS N0HQ up5/5") {
+	if code != http.StatusOK || !strings.HasPrefix(body, "PASS N0CALL-10 up5/5") {
 		t.Fatalf("hook = %d %q", code, body)
 	}
 	// Refusals still answer 200, with the reason (the on-air reply).

@@ -11,7 +11,7 @@ import (
 	"checkin-board/internal/store"
 )
 
-const hqCall = "KK7HQ"
+const hqCall = "N0CALL-10"
 
 func newSim(t *testing.T, seed uint64, prof gwfake.Profile) *Sim {
 	t.Helper()
@@ -75,7 +75,7 @@ func TestLossyChannelExactlyOnce(t *testing.T) {
 	}
 	s := newSim(t, 1, gwfake.Profile{Loss: 0.3, Dup: 0.2, MaxDelay: 4 * time.Second})
 	hqNode := addNode(t, s, hqCall, HQSettings())
-	cp := addNode(t, s, "KK7CP-7", CheckpointSettings("AS1", hqCall))
+	cp := addNode(t, s, "N0CALL-7", CheckpointSettings("AS1", hqCall))
 
 	rng := rand.New(rand.NewPCG(7, 7))
 	for bib := store.Bib(1); bib <= 300; bib++ {
@@ -98,7 +98,7 @@ func TestLossyChannelExactlyOnce(t *testing.T) {
 func TestVoids(t *testing.T) {
 	s := newSim(t, 2, gwfake.Profile{Loss: 0.25, Dup: 0.1, MaxDelay: 6 * time.Second})
 	hqNode := addNode(t, s, hqCall, HQSettings())
-	cp := addNode(t, s, "KK7CP-7", CheckpointSettings("AS1", hqCall))
+	cp := addNode(t, s, "N0CALL-7", CheckpointSettings("AS1", hqCall))
 
 	var entries []*store.LocalEntry
 	for bib := store.Bib(1); bib <= 40; bib++ {
@@ -123,7 +123,7 @@ func TestVoids(t *testing.T) {
 func TestOutAndBack(t *testing.T) {
 	s := newSim(t, 3, gwfake.Profile{Loss: 0.2, MaxDelay: 2 * time.Second})
 	hqNode := addNode(t, s, hqCall, HQSettings())
-	cp := addNode(t, s, "KK7CP-7", CheckpointSettings("TURN", hqCall))
+	cp := addNode(t, s, "N0CALL-7", CheckpointSettings("TURN", hqCall))
 	for range 2 {
 		for bib := store.Bib(1); bib <= 30; bib++ {
 			logBib(t, s, cp, bib)
@@ -144,7 +144,7 @@ func TestOutAndBack(t *testing.T) {
 func TestOutageRecovery(t *testing.T) {
 	s := newSim(t, 4, gwfake.Profile{Loss: 0.1, MaxDelay: 2 * time.Second})
 	hqNode := addNode(t, s, hqCall, HQSettings())
-	cp := addNode(t, s, "KK7CP-7", CheckpointSettings("AS2", hqCall))
+	cp := addNode(t, s, "N0CALL-7", CheckpointSettings("AS2", hqCall))
 	for bib := store.Bib(1); bib <= 20; bib++ {
 		logBib(t, s, cp, bib)
 		s.Run(5 * time.Second)
@@ -172,9 +172,9 @@ func TestThreeCheckpoints(t *testing.T) {
 	s := newSim(t, 5, gwfake.Profile{Loss: 0.25, Dup: 0.15, MaxDelay: 3 * time.Second})
 	hqNode := addNode(t, s, hqCall, HQSettings())
 	cps := []*Node{
-		addNode(t, s, "KK7AA-7", CheckpointSettings("AS1", hqCall)),
-		addNode(t, s, "KK7BB-7", CheckpointSettings("AS2", hqCall)),
-		addNode(t, s, "KK7CC-7", CheckpointSettings("AS3", hqCall)),
+		addNode(t, s, "N0CALL-11", CheckpointSettings("AS1", hqCall)),
+		addNode(t, s, "N0CALL-12", CheckpointSettings("AS2", hqCall)),
+		addNode(t, s, "N0CALL-13", CheckpointSettings("AS3", hqCall)),
 	}
 	for bib := store.Bib(1); bib <= 100; bib++ {
 		for _, cp := range cps {
@@ -194,7 +194,7 @@ func TestThreeCheckpoints(t *testing.T) {
 func TestHeartbeatRevealsLostBatch(t *testing.T) {
 	s := newSim(t, 6, gwfake.Profile{})
 	hqNode := addNode(t, s, hqCall, HQSettings())
-	cp := addNode(t, s, "KK7CP-7", CheckpointSettings("AS1", hqCall))
+	cp := addNode(t, s, "N0CALL-7", CheckpointSettings("AS1", hqCall))
 	logBib(t, s, cp, 1)
 	s.Run(time.Minute)
 	if !allConfirmed(t, cp) {
@@ -213,7 +213,7 @@ func TestHeartbeatRevealsLostBatch(t *testing.T) {
 func TestWipedHQRecoversFromGraywolfInbox(t *testing.T) {
 	s := newSim(t, 9, gwfake.Profile{Loss: 0.1, MaxDelay: 2 * time.Second})
 	hqNode := addNode(t, s, hqCall, HQSettings())
-	cp := addNode(t, s, "KK7CP-7", CheckpointSettings("AS1", hqCall))
+	cp := addNode(t, s, "N0CALL-7", CheckpointSettings("AS1", hqCall))
 	for bib := store.Bib(1); bib <= 30; bib++ {
 		logBib(t, s, cp, bib)
 		s.Run(3 * time.Second)
@@ -243,28 +243,28 @@ func TestSpoofedTrafficBoundsAirtime(t *testing.T) {
 		// ACKs that confirm nothing never expedite: only the normal ladder
 		// for the window (4 batches) plus heartbeats.
 		{"acks for unknown msgids", func(n int, _ uint64) gwfake.Frame {
-			return gwfake.Frame{From: hqCall, To: "KK7CP-7", MsgID: fmt.Sprintf("9%04d", n), IsAck: true}
+			return gwfake.Frame{From: hqCall, To: "N0CALL-7", MsgID: fmt.Sprintf("9%04d", n), IsAck: true}
 		}, 80},
 		// A replayed ACK for a batch that was really acked confirms
 		// nothing new, so it can't expedite either.
 		{"replayed acks for an acked batch", func(_ int, first uint64) gwfake.Frame {
-			return gwfake.Frame{From: hqCall, To: "KK7CP-7", MsgID: strconv.FormatUint(first, 10), IsAck: true}
+			return gwfake.Frame{From: hqCall, To: "N0CALL-7", MsgID: strconv.FormatUint(first, 10), IsAck: true}
 		}, 80},
 		// Gap requests requeue a batch at most once per requeueMinAge, and
 		// only max_in_flight go on air at a time.
 		{"gap requests", func(n int, _ uint64) gwfake.Frame {
-			return gwfake.Frame{From: hqCall, To: "KK7CP-7", Text: "RC1 G AS1 1-20", MsgID: fmt.Sprintf("7%04d", n)}
+			return gwfake.Frame{From: hqCall, To: "N0CALL-7", Text: "RC1 G AS1 1-20", MsgID: fmt.Sprintf("7%04d", n)}
 		}, 4*60 + 20},
 		// Gap requests from any other call are ignored outright.
 		{"gap requests from a stranger", func(n int, _ uint64) gwfake.Frame {
-			return gwfake.Frame{From: "W1BAD", To: "KK7CP-7", Text: "RC1 G AS1 1-20", MsgID: fmt.Sprintf("8%04d", n)}
+			return gwfake.Frame{From: "N0CALL-14", To: "N0CALL-7", Text: "RC1 G AS1 1-20", MsgID: fmt.Sprintf("8%04d", n)}
 		}, 80},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s := newSim(t, 8, gwfake.Profile{})
 			_ = addNode(t, s, hqCall, HQSettings())
-			cp := addNode(t, s, "KK7CP-7", CheckpointSettings("AS1", hqCall))
+			cp := addNode(t, s, "N0CALL-7", CheckpointSettings("AS1", hqCall))
 			for bib := store.Bib(1); bib <= 4; bib++ { // one batch, delivered and acked
 				logBib(t, s, cp, bib)
 			}
@@ -305,7 +305,7 @@ func TestSpoofedTrafficBoundsAirtime(t *testing.T) {
 func TestSecureTravelAndFinalCheckIn(t *testing.T) {
 	s := newSim(t, 10, gwfake.Profile{Loss: 0.1, MaxDelay: 2 * time.Second})
 	hqNode := addNode(t, s, hqCall, HQSettings())
-	cp := addNode(t, s, "KK7CP-7", CheckpointSettings("AS3", hqCall))
+	cp := addNode(t, s, "N0CALL-7", CheckpointSettings("AS3", hqCall))
 	for bib := store.Bib(1); bib <= 30; bib++ {
 		logBib(t, s, cp, bib)
 		s.Run(5 * time.Second)

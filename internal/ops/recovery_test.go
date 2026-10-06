@@ -47,7 +47,7 @@ func TestExportImportIsExactAndIdempotent(t *testing.T) {
 	// The rebuilt batch text is byte-identical to what went on air.
 	pending, _ := cp.st.ListPendingBatches(ctx)
 	msg, _ := wire.Decode(pending[0].Text)
-	if r, _ := hqe.st.IngestReport(ctx, msg.(*wire.Report), "K1CP", 0, t0); !r.Duplicate {
+	if r, _ := hqe.st.IngestReport(ctx, msg.(*wire.Report), "N0CALL-1", 0, t0); !r.Duplicate {
 		t.Fatal("radio copy of an imported batch was not a duplicate")
 	}
 	got, _ := hqe.st.EffectiveEntries(ctx, store.EntryFilter{})
@@ -134,7 +134,7 @@ func TestImportJournalReconciles(t *testing.T) {
 	hqe := newEnv(t, hqSettings(), store.RaceActive)
 	// HQ already has bib 1 by radio (batch 2; batch 1 is missing).
 	msg, _ := wire.Decode("RC1 R AS5 2 @1300 1/00")
-	if _, err := hqe.st.IngestReport(ctx, msg.(*wire.Report), "K1CP", 0, t0); err != nil {
+	if _, err := hqe.st.IngestReport(ctx, msg.(*wire.Report), "N0CALL-1", 0, t0); err != nil {
 		t.Fatal(err)
 	}
 	rec := func(event string, bib store.Bib, sec int) string {

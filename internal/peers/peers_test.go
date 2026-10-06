@@ -22,18 +22,18 @@ func setup(t *testing.T) (*gwfake.Station, *store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	return gwfake.New("K1CP"), s
+	return gwfake.New("N0CALL-1"), s
 }
 
 func TestEnsureTurnsOffRetriesAndBacksUpOriginal(t *testing.T) {
 	gw, st := setup(t)
-	// The operator had routed N0HQ RF-only.
-	_, _ = gw.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ", graywolf.ConversationPrefs{SendPath: "rf_only", WaitForAck: true})
+	// The operator had routed N0CALL-10 RF-only.
+	_, _ = gw.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10", graywolf.ConversationPrefs{SendPath: "rf_only", WaitForAck: true})
 
-	if err := Ensure(ctx, gw, st, []string{"N0HQ"}); err != nil {
+	if err := Ensure(ctx, gw, st, []string{"N0CALL-10"}); err != nil {
 		t.Fatal(err)
 	}
-	p, _ := gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ")
+	p, _ := gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10")
 	if p.WaitForAck || p.SendPath != "rf_only" {
 		t.Fatalf("prefs = %+v, want retries off and routing kept", p)
 	}
@@ -43,7 +43,7 @@ func TestEnsureTurnsOffRetriesAndBacksUpOriginal(t *testing.T) {
 	}
 
 	// Running again (e.g. after a restart) keeps the true original.
-	if err := Ensure(ctx, gw, st, []string{"N0HQ"}); err != nil {
+	if err := Ensure(ctx, gw, st, []string{"N0CALL-10"}); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := st.ListPeerPrefs(ctx); !b[0].WaitForAck {
@@ -54,7 +54,7 @@ func TestEnsureTurnsOffRetriesAndBacksUpOriginal(t *testing.T) {
 	if err := Restore(ctx, gw, st); err != nil {
 		t.Fatal(err)
 	}
-	p, _ = gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ")
+	p, _ = gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10")
 	if !p.WaitForAck || p.SendPath != "rf_only" {
 		t.Fatalf("restored prefs = %+v", p)
 	}
@@ -65,13 +65,13 @@ func TestEnsureTurnsOffRetriesAndBacksUpOriginal(t *testing.T) {
 
 func TestRestoreDefaultsLeavesNoOverride(t *testing.T) {
 	gw, st := setup(t)
-	if err := Ensure(ctx, gw, st, []string{"N0HQ", "K2CP-7"}); err != nil {
+	if err := Ensure(ctx, gw, st, []string{"N0CALL-10", "N0CALL-7"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := Restore(ctx, gw, st); err != nil {
 		t.Fatal(err)
 	}
-	for _, call := range []string{"N0HQ", "K2CP-7"} {
+	for _, call := range []string{"N0CALL-10", "N0CALL-7"} {
 		if gw.HasPrefsOverride(graywolf.ThreadKindDM, call) {
 			t.Errorf("%s: restore left an override in graywolf", call)
 		}
@@ -80,7 +80,7 @@ func TestRestoreDefaultsLeavesNoOverride(t *testing.T) {
 
 func TestEnsureSkipsBlankAndRejectsBadCalls(t *testing.T) {
 	gw, st := setup(t)
-	if err := Ensure(ctx, gw, st, []string{"", "N0HQ"}); err != nil {
+	if err := Ensure(ctx, gw, st, []string{"", "N0CALL-10"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := Ensure(ctx, gw, st, []string{"not a call"}); err == nil {
@@ -91,11 +91,11 @@ func TestEnsureSkipsBlankAndRejectsBadCalls(t *testing.T) {
 func TestErrorsAreReturnedAndBackupKept(t *testing.T) {
 	gw, st := setup(t)
 	gw.FailPrefs(errors.New("graywolf down"))
-	if err := Ensure(ctx, gw, st, []string{"N0HQ"}); err == nil {
+	if err := Ensure(ctx, gw, st, []string{"N0CALL-10"}); err == nil {
 		t.Fatal("expected error")
 	}
 	gw.FailPrefs(nil)
-	if err := Ensure(ctx, gw, st, []string{"N0HQ"}); err != nil {
+	if err := Ensure(ctx, gw, st, []string{"N0CALL-10"}); err != nil {
 		t.Fatal(err)
 	}
 	gw.FailPrefs(errors.New("graywolf down"))
@@ -111,39 +111,39 @@ func TestEnsurerCachesSuccessAndBacksOffFailure(t *testing.T) {
 	gw, st := setup(t)
 	now := t0
 	e := NewEnsurer(gw, st, func() time.Time { return now })
-	if err := e.Ensure(ctx, "n0hq"); err != nil {
+	if err := e.Ensure(ctx, "n0call-10"); err != nil {
 		t.Fatal(err)
 	}
 	// Once ensured, graywolf isn't consulted again (even if it's down).
 	gw.FailPrefs(errors.New("down"))
-	if err := e.Ensure(ctx, "N0HQ"); err != nil {
+	if err := e.Ensure(ctx, "N0CALL-10"); err != nil {
 		t.Fatalf("cached call hit graywolf: %v", err)
 	}
 	// A failing call is not retried for a while...
-	if err := e.Ensure(ctx, "K2CP"); err == nil {
+	if err := e.Ensure(ctx, "N0CALL-2"); err == nil {
 		t.Fatal("expected error")
 	}
 	gw.FailPrefs(nil)
-	if err := e.Ensure(ctx, "K2CP"); err == nil {
+	if err := e.Ensure(ctx, "N0CALL-2"); err == nil {
 		t.Fatal("retried within the backoff window")
 	}
 	// ...then is.
 	now = now.Add(retryAfter)
-	if err := e.Ensure(ctx, "K2CP"); err != nil {
+	if err := e.Ensure(ctx, "N0CALL-2"); err != nil {
 		t.Fatal(err)
 	}
-	if p, _ := gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "K2CP"); p.WaitForAck {
-		t.Fatal("K2CP retries still on")
+	if p, _ := gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-2"); p.WaitForAck {
+		t.Fatal("N0CALL-2 retries still on")
 	}
 	// After a race-end Restore, Reset makes the next race ensure again.
 	if err := Restore(ctx, gw, st); err != nil {
 		t.Fatal(err)
 	}
 	e.Reset()
-	if err := e.Ensure(ctx, "N0HQ"); err != nil {
+	if err := e.Ensure(ctx, "N0CALL-10"); err != nil {
 		t.Fatal(err)
 	}
-	if p, _ := gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0HQ"); p.WaitForAck {
-		t.Fatal("N0HQ not ensured again after Reset")
+	if p, _ := gw.ConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10"); p.WaitForAck {
+		t.Fatal("N0CALL-10 not ensured again after Reset")
 	}
 }

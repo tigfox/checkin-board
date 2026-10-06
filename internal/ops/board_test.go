@@ -20,7 +20,7 @@ func seedHQ(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	msg, _ := wire.Decode("RC1 R AS5 1 @1300 101/00 999/10")
-	if _, err := e.st.IngestReport(ctx, msg.(*wire.Report), "=K1CP", 0, t0.Add(time.Minute)); err != nil {
+	if _, err := e.st.IngestReport(ctx, msg.(*wire.Report), "=N0CALL-1", 0, t0.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	e.ft.Advance(time.Hour)
