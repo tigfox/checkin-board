@@ -939,10 +939,15 @@ same at every event.
 
 **Test campaign so far:**
 - (a) Every package ≥80% except `cmd` (wiring; CLI and version tested). `go vet` and `staticcheck` are clean. `govulncheck`: one advisory in `golang.org/x/crypto` with no fix yet, not called by the app.
-- (b) Fuzz targets: `FuzzDecode`, roster CSV, logo, and new journal reader and checkpoint-export parser. The 60 s smoke runs are clean; the 30-min runs are pending.
-- (f) Browser E2E covers login, keypad (log, double tap, void), admin tabs, settings, HQ checkpoints, branding, board and link check.
+- (b) 30-minute runs of all five fuzz targets: ≈428 M executions, no failures.
+- (c) Soak: 12 h, 500 runners, 8 checkpoints, 20% loss. Exactly once; databases ≈90 bytes per passage at each checkpoint.
+- (d) Fault injection: graywolf API outage and repeated kill/restart mid-race keep exactly once; the remaining cases are mapped to existing tests.
+- (e) Extra security cases added (polyglot logo; safe hook text).
+- (f) Browser E2E (8 tests) covers login, keypad (log, double tap, void, lost reply), the clock banner, Start race, admin tabs, settings, HQ checkpoints, branding, board and link check.
 
-**Waiting for hardware:** (g) and (h). Remaining non-hardware items: (b) long runs, (c) soak, (d) fault injection, (e) the extra security cases |
+Report: `docs/test-report-2026-10-06.md`.
+
+**Waiting for hardware:** (g) and (h) |
 | 13 | Field rehearsal | Deploy to real locations; **run the link check at every node first**; then a walk-around on the course | Not started |
 
 Phase 1 comes first on purpose: every later phase rests on graywolf
