@@ -41,13 +41,15 @@ const (
 	partialEvery  = time.Second
 	fullEvery     = 2 * time.Second
 	partialBudget = 60
-	fullBudget    = 6
-	confirmGuard  = 600 * time.Millisecond // ignore a bounce onto "yes"
-	wizardStep    = 20 * time.Second
-	wizardSettle  = 3 * time.Second // a press this soon after a switch is ignored
-	wizardRounds  = 3               // passes over the controllers before giving up
-	patternFor    = 30 * time.Second
-	tickEvery     = 250 * time.Millisecond
+	// A menu session on a panel without partial refresh is a full
+	// refresh per press: enough for normal use, bounded for a stuck one.
+	fullBudget   = 20
+	confirmGuard = 600 * time.Millisecond // ignore a bounce onto "yes"
+	wizardStep   = 20 * time.Second
+	wizardSettle = 3 * time.Second // a press this soon after a switch is ignored
+	wizardRounds = 3               // passes over the controllers before giving up
+	patternFor   = 30 * time.Second
+	tickEvery    = 250 * time.Millisecond
 )
 
 // ErrAppUnreachable: the app didn't answer the panel.

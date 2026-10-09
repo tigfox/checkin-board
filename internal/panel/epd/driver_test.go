@@ -121,9 +121,21 @@ func TestFullRefreshSequences(t *testing.T) {
 	}
 }
 
+func TestPartialOffUntilConfirmed(t *testing.T) {
+	d, _ := NewPanel(newRec(), SSD1680Z)
+	if d.CanPartial() {
+		t.Fatal("partial refresh on before any sequence is confirmed")
+	}
+	SetPartialVariant(d, 1)
+	if !d.CanPartial() {
+		t.Fatal("bench variant didn't enable partial")
+	}
+}
+
 func TestPartialRefresh(t *testing.T) {
 	b := newRec()
 	d, _ := NewPanel(b, SSD1680Z)
+	SetPartialVariant(d, 1)
 	first := white()
 	_ = d.Full(first)
 	next := white()
@@ -143,6 +155,7 @@ func TestPartialRefresh(t *testing.T) {
 	// a partial refresh can't compare: it becomes a full one.
 	rb := newRec()
 	fresh, _ := NewPanel(rb, SSD1680)
+	SetPartialVariant(fresh, 1)
 	if err := fresh.Partial(next); err != nil {
 		t.Fatal(err)
 	}
@@ -176,6 +189,7 @@ func TestPartialVariants(t *testing.T) {
 		2: {0xFC, true, true},
 		3: {0xFF, true, true},
 		4: {0xFF, false, true},
+		5: {0x0F, true, true},
 	} {
 		b := newRec()
 		d, _ := NewPanel(b, SSD1680Z)
@@ -194,6 +208,9 @@ func TestPartialVariants(t *testing.T) {
 		_, temp := b.data[0x18]
 		if b.data[0x22][0] != want.mode || wroteRed != want.red || temp != want.tempSel {
 			t.Errorf("variant %d: mode % X red %v temp %v", v, b.data[0x22], wroteRed, temp)
+		}
+		if v == 5 && len(b.data[cmdWriteLUT]) != 153 {
+			t.Errorf("variant 5: LUT %d bytes", len(b.data[cmdWriteLUT]))
 		}
 		if UpdateTook(d) < 0 {
 			t.Error("no update timing")

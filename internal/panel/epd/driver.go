@@ -101,7 +101,9 @@ type panel struct {
 	ctrl    string
 	last    []byte // the frame on the panel now (for partial refresh)
 	variant int    // partial refresh sequence (bench: SetPartialVariant)
-	took    time.Duration
+	// partialOn: a partial sequence is confirmed for this panel.
+	partialOn bool
+	took      time.Duration
 }
 
 // NewPanel drives controller ctrl over bus.
@@ -213,10 +215,38 @@ func (p *panel) refresh(s *seq, mode byte) {
 // -test-partial) times and shows each.
 const (
 	defaultPartial = 1
-	maxPartial     = 4
+	maxPartial     = 5
 	cmdUpdateCtrl1 = 0x21
 	cmdTempSensor  = 0x18
+	cmdEndOption   = 0x3F
+	cmdDisplayOpt  = 0x37
 )
+
+// partialLUT is a display-mode-2 waveform for 2.13" SSD1680 panels
+// (153 bytes), then its end option, gate, source (3) and VCOM settings,
+// from periph.io's waveshare2in13v3 driver (Apache-2.0, The Periph
+// Authors). Variant 5 loads it instead of relying on the panel's OTP.
+var partialLUT = []byte{
+	0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x80, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x40, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x00, 0x00, 0x00,
+	0x22, 0x17, 0x41, 0x00, 0x32, 0x36,
+}
 
 // SetPartialVariant selects the partial refresh sequence (bench only).
 func SetPartialVariant(d Display, v int) bool {
@@ -224,7 +254,7 @@ func SetPartialVariant(d Display, v int) bool {
 	if !ok || p == nil || v < 1 || v > maxPartial {
 		return false
 	}
-	p.variant = v
+	p.variant, p.partialOn = v, true
 	return true
 }
 
@@ -282,14 +312,29 @@ func (p *panel) Partial(img image.Image) error {
 		s.cmd(cmdUpdateCtrl1, 0x00, 0x80)
 		s.cmd(cmdTempSensor, 0x80)
 	}
+	if p.variant == 5 {
+		s.cmd(cmdWriteLUT, partialLUT[:153]...)
+		s.wait(resetTimeout)
+		s.cmd(cmdEndOption, partialLUT[153])
+		s.cmd(cmdGateVoltage, partialLUT[154])
+		s.cmd(cmdSourceVoltage, partialLUT[155:158]...)
+		s.cmd(cmdVCOM, partialLUT[158])
+		s.cmd(cmdDisplayOpt, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00)
+		s.cmd(cmdUpdateCtrl2, 0xC0) // power the analog block on
+		s.cmd(cmdActivate)
+		s.wait(resetTimeout)
+	}
 	s.cmd(cmdBorder, 0x80)
 	if p.variant != 4 {
 		p.writeRAM(s, cmdWriteRed, p.last)
 	}
 	p.writeRAM(s, cmdWriteBW, frame)
 	mode := byte(0xFC)
-	if p.variant >= 3 {
+	switch p.variant {
+	case 3, 4:
 		mode = 0xFF
+	case 5:
+		mode = 0x0F // mode 2 with the loaded LUT (no OTP load)
 	}
 	p.refresh(s, mode)
 	if s.err != nil {
@@ -300,8 +345,11 @@ func (p *panel) Partial(img image.Image) error {
 	return nil
 }
 
-// CanPartial reports whether the controller has a partial refresh.
-func (p *panel) CanPartial() bool { return p.ctrl != SSD1675 }
+// CanPartial reports whether partial refresh is in use. None of the
+// sequences has been confirmed by eye on the bonnet yet (bench
+// 2026-10-09: variant 1 drew nothing), so it is off unless the bench
+// selects a variant; the panel then uses full refreshes for its menu.
+func (p *panel) CanPartial() bool { return p.ctrl != SSD1675 && p.partialOn }
 
 // Close releases the bus.
 func (p *panel) Close() error { return p.bus.Close() }
