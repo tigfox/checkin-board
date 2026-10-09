@@ -12,7 +12,7 @@ installed beside it. Volunteers use their phones on the node's Wi-Fi.
 
 You need a node with graywolf already running, and shell access.
 
-1. Copy the release bundle to the node and unpack it:
+1. Copy the release bundle to the node and unpack it in your home directory (not `/tmp`: on Raspberry Pi OS it lives in RAM, and a Pi Zero has little to spare):
    ```sh
    tar xzf checkin-board-<version>-linux.tar.gz
    cd checkin-board-<version>
