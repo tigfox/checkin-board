@@ -28,6 +28,7 @@ h2 { font-size: 1.15rem; }
 a { color: var(--primary); }
 .hidden { display: none !important; }
 .muted { color: var(--muted); }
+.hint { font-size: 0.9rem; margin: 2px 0 0; }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
 
 header.bar {

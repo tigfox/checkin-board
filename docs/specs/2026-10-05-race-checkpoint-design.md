@@ -829,7 +829,8 @@ Admin interface (admin session only; a volunteer session gets 403):
 
 | Method | Path | Role |
 |---|---|---|
-| GET/PUT | `/api/admin/settings` | both (callsign is proxied to graywolf, 8.1) |
+| GET/PUT | `/api/admin/settings` | both: all editable settings (callsign is proxied to graywolf, 8.1) |
+| PUT | `/api/admin/settings/race`, `/api/admin/settings/messaging` | both: the Race and Messaging settings forms, each saving only its own fields (8.1) |
 | POST | `/api/admin/race/start`, `/complete` | both (4.7) |
 | POST | `/api/admin/race/secure`, `/check-in` | CP (4.7) |
 | POST | `/api/admin/peers/restore` | both: restore graywolf per-peer settings now |
@@ -939,13 +940,18 @@ are two interfaces, each behind its own login (7.2).
     here calls `PUT /api/station/config` after a confirm dialog warning
     that it changes graywolf's station callsign for everything, not just
     the race.
-  - **Station tactical name:** the station's on-air/voice-net name, for
-    example `AID3` or `FINISH`. Up to 9 chars `[A-Z0-9-]`. It's shown in
-    the volunteer header and in exports, and pre-fills the checkpoint code
-    when it fits the 1-6 `[A-Z0-9]` code rule.
-  - Role, race name, checkpoint code (CP), local codes (HQ), HQ callsign
-    (CP), graywolf channel and path, and tuning (max text,
-    flush/heartbeat/gap timings, in-flight cap).
+  - **Race settings** (one form, `PUT /api/admin/settings/race`): role,
+    race name, station name, checkpoint code and HQ callsign
+    (checkpoint), local codes (HQ). Fields for the other role are hidden.
+  - **Station name** (`station_tactical`): the station's voice-net name,
+    for example `Ridge Aid #3`. Up to 25 printable characters; spaces and
+    punctuation allowed, case kept, no leading or trailing spaces (changed
+    2026-10-09 from 9 chars `[A-Z0-9-]`). Display only (keypad, panel
+    header); never sent on air. The panel draws non-ASCII as `?`.
+  - **Messaging settings** (a second form, `PUT
+    /api/admin/settings/messaging`): graywolf channel, digipeater path,
+    max text, flush/heartbeat/gap timings, in-flight cap. Each form saves
+    only its own fields, so one can't overwrite the other.
   - The graywolf connection panel: version, reachable, authed, max text
     length, retention warning, and the peer callsigns with retries turned
     off (3.3).

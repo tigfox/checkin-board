@@ -24,6 +24,8 @@ func (s *server) routes() []route {
 		// Admin: settings and graywolf.
 		{method: "GET", pattern: "/api/admin/settings", access: admin, h: s.getSettings},
 		{method: "PUT", pattern: "/api/admin/settings", access: admin, h: s.putSettings},
+		{method: "PUT", pattern: "/api/admin/settings/race", access: admin, h: s.putRaceSettings},
+		{method: "PUT", pattern: "/api/admin/settings/messaging", access: admin, h: s.putMessagingSettings},
 		{method: "PUT", pattern: "/api/admin/callsign", access: admin, h: s.putCallsign},
 		{method: "GET", pattern: "/api/admin/gw", access: admin, h: s.getGraywolf},
 		{method: "GET", pattern: "/api/admin/peers", access: admin, h: s.getPeers},

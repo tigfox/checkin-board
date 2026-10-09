@@ -114,9 +114,9 @@ func TestSettingsEditAndRoleGuard(t *testing.T) {
 	e := newEnv(t, checkpointSettings("active"))
 	v := decode[settingsView](t, e.do("GET", "/api/admin/settings", e.admin, nil))
 	body := v.settingsBody
-	body.StationTactical, body.Path = "aid5", "wide2-1"
+	body.StationTactical, body.Path = "  Ridge Aid #5 ", "wide2-1"
 	got := decode[settingsView](t, e.do("PUT", "/api/admin/settings", e.admin, body))
-	if got.StationTactical != "AID5" || got.Path != "WIDE2-1" || got.RaceState != "active" {
+	if got.StationTactical != "Ridge Aid #5" || got.Path != "WIDE2-1" || got.RaceState != "active" {
 		t.Fatalf("saved = %+v", got)
 	}
 	body.Role, body.HQLocalCodes = "hq", []string{"fin"}
@@ -124,6 +124,32 @@ func TestSettingsEditAndRoleGuard(t *testing.T) {
 	bad := v.settingsBody
 	bad.HQCall = "not a call"
 	expect(t, e.do("PUT", "/api/admin/settings", e.admin, bad), http.StatusBadRequest)
+}
+
+// The race and messaging forms each save only their own fields, so one
+// can't overwrite the other with stale values.
+func TestSettingsSplitEndpoints(t *testing.T) {
+	e := newEnv(t, checkpointSettings("active"))
+	v := decode[settingsView](t, e.do("GET", "/api/admin/settings", e.admin, nil))
+
+	race := v.raceSettingsBody
+	race.StationTactical, race.CheckpointCode = "Ridge (Mile 21)", "as9"
+	got := decode[settingsView](t, e.do("PUT", "/api/admin/settings/race", e.admin, race))
+	if got.StationTactical != "Ridge (Mile 21)" || got.CheckpointCode != "AS9" || got.messagingSettingsBody != v.messagingSettingsBody {
+		t.Fatalf("race save = %+v", got)
+	}
+
+	msg := v.messagingSettingsBody // stale race fields must not come back
+	msg.HeartbeatSec, msg.Path = 600, "wide1-1"
+	got = decode[settingsView](t, e.do("PUT", "/api/admin/settings/messaging", e.admin, msg))
+	if got.HeartbeatSec != 600 || got.Path != "WIDE1-1" || got.StationTactical != "Ridge (Mile 21)" || got.CheckpointCode != "AS9" {
+		t.Fatalf("messaging save = %+v", got)
+	}
+
+	msg.HeartbeatSec = 1
+	expect(t, e.do("PUT", "/api/admin/settings/messaging", e.admin, msg), http.StatusBadRequest)
+	race.Role = "hq"
+	expect(t, e.do("PUT", "/api/admin/settings/race", e.admin, race), http.StatusConflict) // mid-race
 }
 
 func TestCallsignNeedsConfirm(t *testing.T) {

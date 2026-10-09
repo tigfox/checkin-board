@@ -22,6 +22,16 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+// field is a labelled input for a settings form, with an optional hint
+// under it: [label, input, hint].
+export function field(id, label, value, attrs = {}, hint = "") {
+  return [
+    h("label", { for: id }, label),
+    h("input", { id, value: value ?? "", "aria-describedby": hint ? `${id}-hint` : null, ...attrs }),
+    hint ? h("p", { id: `${id}-hint`, class: "muted hint" }, hint) : null,
+  ];
+}
+
 export function clear(el) {
   while (el.firstChild) el.removeChild(el.firstChild);
   return el;

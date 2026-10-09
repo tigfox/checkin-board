@@ -1,10 +1,11 @@
-// Station settings, graywolf connection, peers (spec 8.1).
+// Station tab: graywolf callsign, race and messaging settings, graywolf
+// connection, peers (spec 8.1).
 import { get, post, put } from "./api.js";
-import { h } from "./dom.js";
+import { field, h, show } from "./dom.js";
+import { messagingSettingsForm } from "./admin-messaging.js";
 
-function field(id, label, value, attrs = {}) {
-  return [h("label", { for: id }, label), h("input", { id, value: value ?? "", ...attrs })];
-}
+// MAX_STATION_NAME matches store.MaxTacticalLen.
+const MAX_STATION_NAME = 25;
 
 export async function renderStation(sec, ctx) {
   const s = ctx.settings;
@@ -25,43 +26,7 @@ export async function renderStation(sec, ctx) {
     }, "Change")),
   ));
 
-  const roleSel = h("select", { id: "role" },
-    ...[["", "(not set)"], ["checkpoint", "Checkpoint"], ["hq", "HQ / net control"]]
-      .map(([v, t]) => h("option", { value: v, selected: v === s.role }, t)));
-  const form = h("form", { class: "card" },
-    h("h2", {}, "Race settings"),
-    h("label", { for: "role" }, "Role"), roleSel,
-    h("div", { class: "grid2" },
-      h("div", {}, ...field("race_name", "Race name", s.race_name)),
-      h("div", {}, ...field("station_tactical", "Station tactical name (e.g. AID3)", s.station_tactical, { maxlength: 9 })),
-      h("div", {}, ...field("checkpoint_code", "Checkpoint code (checkpoint)", s.checkpoint_code, { maxlength: 6 })),
-      h("div", {}, ...field("hq_call", "HQ callsign (checkpoint)", s.hq_call)),
-      h("div", {}, ...field("hq_local_codes", "Local codes, comma separated (HQ)", (s.hq_local_codes || []).join(","))),
-      h("div", {}, ...field("path", "Digipeater path (blank = direct)", s.path)),
-      h("div", {}, ...field("gw_channel", "graywolf channel (0 = default)", s.gw_channel, { type: "number", min: 0 })),
-      h("div", {}, ...field("max_text_len", "Max message length", s.max_text_len, { type: "number" })),
-      h("div", {}, ...field("flush_after_sec", "Batch after (s)", s.flush_after_sec, { type: "number" })),
-      h("div", {}, ...field("max_in_flight", "Batches in flight", s.max_in_flight, { type: "number" })),
-      h("div", {}, ...field("heartbeat_sec", "Heartbeat every (s)", s.heartbeat_sec, { type: "number" })),
-      h("div", {}, ...field("gap_grace_sec", "Gap grace (s, HQ)", s.gap_grace_sec, { type: "number" })),
-    ),
-    h("p", {}, h("button", { type: "submit", class: "primary" }, "Save settings")),
-  );
-  form.addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const v = (id) => form.querySelector(`#${id}`).value;
-    const n = (id) => Number(v(id));
-    const body = {
-      role: v("role"), race_name: v("race_name"), station_tactical: v("station_tactical"),
-      checkpoint_code: v("checkpoint_code"), hq_call: v("hq_call"),
-      hq_local_codes: v("hq_local_codes").split(",").map((c) => c.trim()).filter(Boolean),
-      path: v("path"), gw_channel: n("gw_channel"), max_text_len: n("max_text_len"),
-      flush_after_sec: n("flush_after_sec"), max_in_flight: n("max_in_flight"),
-      heartbeat_sec: n("heartbeat_sec"), gap_grace_sec: n("gap_grace_sec"),
-    };
-    if (await ctx.run(() => put("/api/admin/settings", body), "Settings saved.")) await ctx.reload();
-  });
-  sec.append(form);
+  sec.append(raceSettingsForm(s, ctx), messagingSettingsForm(s, ctx));
 
   sec.append(h("div", { class: "card" },
     h("h2", {}, "graywolf connection"),
@@ -92,4 +57,45 @@ export async function renderStation(sec, ctx) {
       await ctx.run(() => post("/api/admin/inbox/reread", { since: new Date(since.value).toISOString() }), "Re-reading graywolf messages.");
     } }, "Re-read")),
   ));
+}
+
+// raceSettingsForm is who this node is in the race. Fields for the
+// other role are hidden; the radio tunables are in Messaging settings.
+function raceSettingsForm(s, ctx) {
+  const roleSel = h("select", { id: "role" },
+    ...[["", "(not set)"], ["checkpoint", "Checkpoint"], ["hq", "HQ / net control"]]
+      .map(([v, t]) => h("option", { value: v, selected: v === s.role }, t)));
+  const forRole = (role, ...children) => h("div", { dataset: { role } }, ...children);
+  const form = h("form", { class: "card", id: "race-settings" },
+    h("h2", {}, "Race settings"),
+    h("label", { for: "role" }, "Role"), roleSel,
+    h("div", { class: "grid2" },
+      h("div", {}, ...field("race_name", "Race name", s.race_name)),
+      h("div", {}, ...field("station_tactical", "Station name", s.station_tactical, { maxlength: MAX_STATION_NAME },
+        `What people call this station, e.g. "Ridge Aid #3". Shown on the keypad and panel; never sent on air. Up to ${MAX_STATION_NAME} characters.`)),
+      forRole("checkpoint", ...field("checkpoint_code", "Checkpoint code", s.checkpoint_code, { maxlength: 6, autocapitalize: "characters" },
+        "Sent in every radio report, e.g. AS5. Must match HQ's checkpoint list. A-Z and 0-9, up to 6.")),
+      forRole("checkpoint", ...field("hq_call", "HQ callsign", s.hq_call, { autocapitalize: "characters" },
+        "HQ's station callsign (optional -SSID). Reports go here; only HQ can ask this station to resend.")),
+      forRole("hq", ...field("hq_local_codes", "Local codes, comma separated", (s.hq_local_codes || []).join(","), { autocapitalize: "characters" },
+        "Codes HQ logs on its own keypad, e.g. START,FIN. Not sent on air.")),
+    ),
+    h("p", {}, h("button", { type: "submit", class: "primary" }, "Save race settings")),
+  );
+  const showRoleFields = () => {
+    for (const el of form.querySelectorAll("[data-role]")) show(el, el.dataset.role === roleSel.value);
+  };
+  roleSel.addEventListener("change", showRoleFields);
+  showRoleFields();
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const v = (id) => form.querySelector(`#${id}`).value;
+    const body = {
+      role: v("role"), race_name: v("race_name"), station_tactical: v("station_tactical"),
+      checkpoint_code: v("checkpoint_code"), hq_call: v("hq_call"),
+      hq_local_codes: v("hq_local_codes").split(",").map((c) => c.trim()).filter(Boolean),
+    };
+    if (await ctx.run(() => put("/api/admin/settings/race", body), "Race settings saved.")) await ctx.reload();
+  });
+  return form;
 }

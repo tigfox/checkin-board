@@ -15,22 +15,35 @@ import (
 // contract-tested against.
 const testedGraywolfVersion = "0.14.14"
 
-// settingsBody is the editable settings (lifecycle fields are changed
-// only by the race actions). Codes, calls and the path are upper-cased.
-type settingsBody struct {
+// raceSettingsBody is who this node is in the race: the Race settings
+// form. Codes and calls are upper-cased; the station name is kept as
+// typed (it's display only).
+type raceSettingsBody struct {
 	Role            string   `json:"role"`
 	RaceName        string   `json:"race_name"`
 	StationTactical string   `json:"station_tactical"`
 	CheckpointCode  string   `json:"checkpoint_code"`
 	HQLocalCodes    []string `json:"hq_local_codes"`
 	HQCall          string   `json:"hq_call"`
-	GWChannel       int      `json:"gw_channel"`
-	Path            string   `json:"path"`
-	MaxTextLen      int      `json:"max_text_len"`
-	FlushAfterSec   int      `json:"flush_after_sec"`
-	MaxInFlight     int      `json:"max_in_flight"`
-	HeartbeatSec    int      `json:"heartbeat_sec"`
-	GapGraceSec     int      `json:"gap_grace_sec"`
+}
+
+// messagingSettingsBody is how the node uses the radio: the Messaging
+// settings form.
+type messagingSettingsBody struct {
+	GWChannel     int    `json:"gw_channel"`
+	Path          string `json:"path"`
+	MaxTextLen    int    `json:"max_text_len"`
+	FlushAfterSec int    `json:"flush_after_sec"`
+	MaxInFlight   int    `json:"max_in_flight"`
+	HeartbeatSec  int    `json:"heartbeat_sec"`
+	GapGraceSec   int    `json:"gap_grace_sec"`
+}
+
+// settingsBody is all the editable settings (lifecycle fields are
+// changed only by the race actions).
+type settingsBody struct {
+	raceSettingsBody
+	messagingSettingsBody
 }
 
 type settingsView struct {
@@ -47,13 +60,38 @@ func toSettingsView(c store.Settings) settingsView {
 	}
 	return settingsView{
 		settingsBody: settingsBody{
-			Role: c.Role, RaceName: c.RaceName, StationTactical: c.StationTactical,
-			CheckpointCode: c.CheckpointCode, HQLocalCodes: codes, HQCall: c.HQCall,
-			GWChannel: c.GWChannel, Path: c.Path, MaxTextLen: c.MaxTextLen, FlushAfterSec: c.FlushAfterSec,
-			MaxInFlight: c.MaxInFlight, HeartbeatSec: c.HeartbeatSec, GapGraceSec: c.GapGraceSec,
+			raceSettingsBody: raceSettingsBody{
+				Role: c.Role, RaceName: c.RaceName, StationTactical: c.StationTactical,
+				CheckpointCode: c.CheckpointCode, HQLocalCodes: codes, HQCall: c.HQCall,
+			},
+			messagingSettingsBody: messagingSettingsBody{
+				GWChannel: c.GWChannel, Path: c.Path, MaxTextLen: c.MaxTextLen, FlushAfterSec: c.FlushAfterSec,
+				MaxInFlight: c.MaxInFlight, HeartbeatSec: c.HeartbeatSec, GapGraceSec: c.GapGraceSec,
+			},
 		},
 		RaceState: c.RaceState, RaceStartedAt: c.RaceStartedAt, UpdatedAt: c.UpdatedAt,
 	}
+}
+
+// withRace returns c with b's race fields applied, normalized.
+func withRace(c store.Settings, b raceSettingsBody) store.Settings {
+	up := strings.ToUpper
+	codes := make([]string, len(b.HQLocalCodes))
+	for i, code := range b.HQLocalCodes {
+		codes[i] = up(strings.TrimSpace(code))
+	}
+	c.Role, c.RaceName, c.StationTactical = b.Role, strings.TrimSpace(b.RaceName), strings.TrimSpace(b.StationTactical)
+	c.CheckpointCode, c.HQLocalCodes = up(strings.TrimSpace(b.CheckpointCode)), strings.Join(codes, ",")
+	c.HQCall = up(strings.TrimSpace(b.HQCall))
+	return c
+}
+
+// withMessaging returns c with b's messaging fields applied, normalized.
+func withMessaging(c store.Settings, b messagingSettingsBody) store.Settings {
+	c.GWChannel, c.Path = b.GWChannel, strings.ToUpper(strings.ReplaceAll(b.Path, " ", ""))
+	c.MaxTextLen, c.FlushAfterSec, c.MaxInFlight = b.MaxTextLen, b.FlushAfterSec, b.MaxInFlight
+	c.HeartbeatSec, c.GapGraceSec = b.HeartbeatSec, b.GapGraceSec
+	return c
 }
 
 func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {
@@ -65,11 +103,31 @@ func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toSettingsView(cfg))
 }
 
-// putSettings saves an edit. The role can change only during setup:
-// switching a node between checkpoint and HQ mid-race would strand data.
+// putSettings saves every editable field at once.
 func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var b settingsBody
-	if err := decodeJSON(r, &b); err != nil {
+	s.editSettings(w, r, &b, func(c store.Settings) store.Settings {
+		return withMessaging(withRace(c, b.raceSettingsBody), b.messagingSettingsBody)
+	})
+}
+
+// putRaceSettings saves the Race settings form only.
+func (s *server) putRaceSettings(w http.ResponseWriter, r *http.Request) {
+	var b raceSettingsBody
+	s.editSettings(w, r, &b, func(c store.Settings) store.Settings { return withRace(c, b) })
+}
+
+// putMessagingSettings saves the Messaging settings form only.
+func (s *server) putMessagingSettings(w http.ResponseWriter, r *http.Request) {
+	var b messagingSettingsBody
+	s.editSettings(w, r, &b, func(c store.Settings) store.Settings { return withMessaging(c, b) })
+}
+
+// editSettings decodes body, applies it to the current settings and
+// saves. The role can change only during setup: switching a node
+// between checkpoint and HQ mid-race would strand data.
+func (s *server) editSettings(w http.ResponseWriter, r *http.Request, body any, apply func(store.Settings) store.Settings) {
+	if err := decodeJSON(r, body); err != nil {
 		writeError(w, r, s.log, err)
 		return
 	}
@@ -78,21 +136,10 @@ func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, err)
 		return
 	}
-	if b.Role != cur.Role && cur.RaceState != store.RaceSetup {
+	next := apply(cur)
+	if next.Role != cur.Role && cur.RaceState != store.RaceSetup {
 		writeError(w, r, s.log, &httpError{http.StatusConflict, "wrong_state", "the role can only change before the race starts (or after a reset)"})
 		return
-	}
-	up := strings.ToUpper
-	codes := make([]string, len(b.HQLocalCodes))
-	for i, c := range b.HQLocalCodes {
-		codes[i] = up(strings.TrimSpace(c))
-	}
-	next := store.Settings{
-		Role: b.Role, RaceName: strings.TrimSpace(b.RaceName), StationTactical: up(strings.TrimSpace(b.StationTactical)),
-		CheckpointCode: up(strings.TrimSpace(b.CheckpointCode)), HQLocalCodes: strings.Join(codes, ","),
-		HQCall: up(strings.TrimSpace(b.HQCall)), GWChannel: b.GWChannel, Path: up(strings.ReplaceAll(b.Path, " ", "")),
-		MaxTextLen: b.MaxTextLen, FlushAfterSec: b.FlushAfterSec, MaxInFlight: b.MaxInFlight,
-		HeartbeatSec: b.HeartbeatSec, GapGraceSec: b.GapGraceSec,
 	}
 	saved, err := s.Store.UpdateSettings(r.Context(), next)
 	if err != nil {

@@ -64,6 +64,7 @@ func clip(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
+	s = ascii(s) // one byte per drawn character from here on
 	if len(s) <= n {
 		return s
 	}

@@ -200,15 +200,24 @@ func TestE2EAdminTabsCheckpoint(t *testing.T) {
 		t.Fatal("HQ tab shown on a checkpoint")
 	}
 
-	// Save settings through the form.
+	// Save each settings form; neither may undo the other.
 	b.run(chromedp.Click(`//nav[@id="tabs"]/button[text()="Station"]`, chromedp.BySearch),
 		chromedp.WaitVisible("#station_tactical", chromedp.ByQuery),
-		chromedp.SetValue("#station_tactical", "AID9", chromedp.ByQuery),
-		chromedp.Click(`#tab-station form button[type="submit"]`, chromedp.ByQuery))
-	b.waitText("#banner", "Settings saved")
+		chromedp.SetValue("#station_tactical", "Ridge Aid #9", chromedp.ByQuery),
+		chromedp.Click(`#race-settings button[type="submit"]`, chromedp.ByQuery))
+	b.waitText("#banner", "Race settings saved")
+	var hqCodesHidden bool
+	b.run(chromedp.Evaluate(`document.querySelector("#hq_local_codes").offsetParent === null`, &hqCodesHidden))
+	if !hqCodesHidden {
+		t.Error("HQ local codes shown on a checkpoint")
+	}
+	b.run(chromedp.WaitVisible("#heartbeat_sec", chromedp.ByQuery),
+		chromedp.SetValue("#heartbeat_sec", "600", chromedp.ByQuery),
+		chromedp.Click(`#messaging-settings button[type="submit"]`, chromedp.ByQuery))
+	b.waitText("#banner", "Messaging settings saved")
 	cfg, err := e.st.GetSettings(ctx)
-	if err != nil || cfg.StationTactical != "AID9" {
-		t.Fatalf("tactical = %q, %v", cfg.StationTactical, err)
+	if err != nil || cfg.StationTactical != "Ridge Aid #9" || cfg.HeartbeatSec != 600 {
+		t.Fatalf("settings = %q, %d, %v", cfg.StationTactical, cfg.HeartbeatSec, err)
 	}
 	b.noErrors()
 }

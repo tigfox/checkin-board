@@ -101,14 +101,21 @@ file). If the node also has an uplink you don't want it on, set
 4. **Admin → Station:**
    - **Callsign (graywolf):** this changes graywolf's station callsign
      for all of graywolf, not just the race. It asks you to confirm.
-   - **Role:** Checkpoint or HQ. The role can only be changed before the
-     race starts.
-   - **Race name** and **station tactical name** (e.g. `AID3`).
-   - Checkpoint only: the **checkpoint code** (e.g. `AS5`) and **HQ
-     callsign**.
-   - HQ only: **local codes**, the codes HQ itself logs on its own keypad
-     (e.g. `START,FIN`).
-   - Leave the timing settings at their defaults unless told otherwise.
+   - **Race settings:**
+     - **Role:** Checkpoint or HQ. The role can only be changed before
+       the race starts. The form shows only the fields for that role.
+     - **Race name** and **station name**: what people call this station
+       on the voice net, e.g. `Ridge Aid #3` (up to 25 characters). It's
+       shown on the keypad and panel and never sent on air.
+     - Checkpoint only: the **checkpoint code** (e.g. `AS5`), sent in
+       every radio report and matching HQ's checkpoint list, and the **HQ
+       callsign**, where reports go.
+     - HQ only: **local codes**, the codes HQ itself logs on its own
+       keypad (e.g. `START,FIN`).
+     - Press **Save race settings**.
+   - **Messaging settings:** digipeater path, graywolf channel, heartbeat
+     and batching timings. Leave them at their defaults unless told
+     otherwise. They save separately with **Save messaging settings**.
    - Check the **graywolf connection** panel. It should say reachable,
      with live updates on.
 

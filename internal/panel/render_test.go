@@ -112,6 +112,11 @@ func TestTextHelpers(t *testing.T) {
 	if clip("abcdef", 4) != "abc~" || clip("ab", 4) != "ab" || clip("ab", 1) != "~" || clip("x", 0) != "" {
 		t.Error("clip")
 	}
+	// Clipping counts drawn characters, not bytes (station names may
+	// carry accents).
+	if got := clip("Café Ridge", 6); got != "Caf? ~" {
+		t.Errorf("clip non-ASCII = %q", got)
+	}
 	if ascii("Café→") != "Caf??" {
 		t.Errorf("ascii = %q", ascii("Café→"))
 	}

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 
@@ -47,7 +48,7 @@ var validRaceStates = map[string]bool{
 // that a typo can't flood the channel or stall delivery.
 const (
 	MaxRaceNameLen    = 64
-	MaxTacticalLen    = 9
+	MaxTacticalLen    = 25 // characters, not bytes
 	MaxPathElements   = 8
 	minTextLen        = wire.DefaultMaxTextLen
 	maxTextLen        = 200 // graywolf's long-message ceiling
@@ -67,8 +68,6 @@ var (
 	// HQ must be a real station (DMs to it are ACKed), never a tactical
 	// label.
 	stationCallRe = regexp.MustCompile(`^[A-Z0-9]{1,6}(-([0-9]|1[0-5]))?$`)
-	// tacticalRe: the station's voice-net name, e.g. AID3, FINISH.
-	tacticalRe = regexp.MustCompile(`^[A-Z0-9][A-Z0-9-]{0,8}$`)
 	// pathElemRe: one digipeater path element (callsign/alias, SSID 0-15).
 	pathElemRe = regexp.MustCompile(`^[A-Z0-9]{1,6}(-([0-9]|1[0-5]))?$`)
 )
@@ -80,7 +79,8 @@ type Settings struct {
 	RaceName      string     `gorm:"column:race_name"`
 	RaceState     string     `gorm:"column:race_state"`
 	RaceStartedAt *time.Time `gorm:"column:race_started_at"`
-	// StationTactical is the station's voice-net name (spec 8.1).
+	// StationTactical is the station's voice-net name (spec 8.1), e.g.
+	// "Ridge Aid #3". Display only: it never goes on air.
 	StationTactical string `gorm:"column:station_tactical"`
 	CheckpointCode  string `gorm:"column:checkpoint_code"`
 	// HQLocalCodes lists the codes HQ logs on its own keypad, comma
@@ -151,8 +151,8 @@ func (c Settings) Validate() error {
 	if len(c.RaceName) > MaxRaceNameLen || (c.RaceName != "" && !validName(c.RaceName, MaxRaceNameLen)) {
 		return settingsErr("race_name must be at most %d printable characters", MaxRaceNameLen)
 	}
-	if c.StationTactical != "" && !tacticalRe.MatchString(c.StationTactical) {
-		return settingsErr("station_tactical %q must be 1-%d of A-Z, 0-9, '-' starting with a letter or digit", c.StationTactical, MaxTacticalLen)
+	if c.StationTactical != "" && !validTactical(c.StationTactical) {
+		return settingsErr("station_tactical %q must be 1-%d printable characters with no leading or trailing spaces", c.StationTactical, MaxTacticalLen)
 	}
 	if c.GWChannel < 0 || c.GWChannel > maxGraywolfChanID {
 		return settingsErr("gw_channel %d out of range", c.GWChannel)
@@ -218,6 +218,13 @@ func validateTuning(c Settings) error {
 		}
 	}
 	return nil
+}
+
+// validTactical accepts any printable text up to MaxTacticalLen
+// characters, trimmed (spaces and punctuation are fine inside).
+func validTactical(s string) bool {
+	return utf8.ValidString(s) && s == strings.TrimSpace(s) &&
+		utf8.RuneCountInString(s) <= MaxTacticalLen && validName(s, len(s))
 }
 
 // ValidStationCall reports whether s is an uppercase station callsign
