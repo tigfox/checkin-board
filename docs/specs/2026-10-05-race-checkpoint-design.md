@@ -191,6 +191,59 @@ example: the conversation-prefs route answers on 0.14.14, but it's missing
 from the published `openapi.yaml`, so its use rests on the contract test,
 not on the document.
 
+### 2.3 Installing graywolf with the app (new, 2026-10-09)
+
+`install.sh` also installs graywolf when the node doesn't have it, so a
+bare Raspberry Pi becomes a node in one step (user, 2026-10-09). It uses
+only graywolf's **published releases**, the way graywolf's handbook
+says to (download the package for the node's architecture, then `apt
+install ./graywolf_*.deb`). Nothing is copied from the graywolf repo
+(section 0).
+
+- **Already installed** (`dpkg -s graywolf`, or `graywolf` on the PATH):
+  left alone, never upgraded. The script prints the installed version,
+  and warns when it differs from the version this release was tested
+  with (`checkin-board version`). Upgrading graywolf stays the
+  operator's choice.
+- **Not installed:**
+  1. Find the latest release: GitHub's
+     `api.github.com/repos/chrissnell/graywolf/releases/latest`.
+     `--graywolf-version vX.Y.Z` pins one instead, e.g. the tested
+     version.
+  2. Pick the package for `dpkg --print-architecture`: `amd64`, `arm64`
+     or `armhf` (Raspbian's armhf also covers ARMv6 Pi Zero and Pi 1).
+     Any other architecture stops with a clear message.
+  3. Download `graywolf_<version>_<arch>.deb` and the release's
+     `checksums.txt` over HTTPS, and check the package's SHA-256 against
+     it. A mismatch aborts. The checksums come from the same release, so
+     this proves the download intact, not who published it.
+  4. `apt install ./graywolf_<version>_<arch>.deb`. The package creates
+     the `graywolf` user and its service.
+  5. **graywolf's admin login.** A fresh graywolf has no users, and its
+     web UI then offers "Create Admin Account". The app's own
+     `checkin-board` login (created next, by graywolf's CLI) would be
+     the first user and hide that screen. So, before creating it, the
+     script creates the operator's admin login:
+     - interactively, asking for a username (default `admin`) and
+       password;
+     - non-interactively, from `--graywolf-admin USER` with the password
+       on stdin.
+     Either way it uses graywolf's own `auth set-password`, run as the
+     `graywolf` user.
+  6. Start graywolf and wait for its API before going on.
+  7. Warn when the installed version isn't the tested one.
+- **Offline or GitHub unreachable:** the script says so and continues
+  without graywolf, so the app installs and waits for graywolf like any
+  node whose graywolf is down. Install at home, before going out to the
+  course.
+- **Not in scope:** configuring graywolf's radio side (callsign, AIOC
+  sound card, PTT, channel). That is graywolf's own setup; the operator
+  guide points to its handbook.
+- **Testing:** in containers with a fake GitHub (a local HTTPS server
+  serving a release JSON, a stub package and checksums). Cases: each
+  architecture, already installed, checksum mismatch, offline, pinned
+  version and the admin login. Then once for real on a spare SD card.
+
 ### Roles (`settings.role`)
 
 `checkpoint` | `hq`, chosen in the admin interface. There's no `off`: an app
@@ -1142,7 +1195,8 @@ refresh is due, so changes made in the UI apply without a restart.
 | 12 | Test campaign + deployment link check | **Link check (4.8):** `RC1 P/Q` behaviour on both sides, admin UI, HQ health column, Start-race warning, `checkin-board linkcheck` CLI with exit codes, Action recipe. **Test campaign:** (a) ≥80% coverage in every package; `go vet`, `staticcheck`, `govulncheck`. (b) Long fuzz runs (30 min each): `FuzzDecode`, roster CSV, journal reader. (c) Soak: simulated 12 h race, 500 runners, 8 checkpoints, 20% loss through the fake graywolf; asserts exactly-once, flat memory, bounded DB growth. (d) Fault injection: `kill -9` between POST and store and between batch and send; graywolf restart, password change and SSE drop mid-race; disk full; torn journal tail after a power cut; OS clock step; checkpoint reset mid-race (seq reuse). (e) Security: auth matrix, Content-Type guard, rate limits, CSV injection, upload limits, hostile logo files (SVG, polyglots, decompression bombs) and branding text (HTML, bidi overrides). (f) Browser E2E at phone width: keypad log/void, network loss, clock banner, admin lifecycle. (g) Real-graywolf bench: contract tests (fast + slow) against the deployed version, then 2-3 graywolf nodes on real radios (low power / dummy loads) replaying a scripted 100-runner race, plus a link check between every node and HQ. (h) Pi Zero W: RSS < 100 MB, CPU during a 20 bibs/min surge, startup time. **Exit criteria:** all green, 9b latency within acceptance, link check PASS on every bench pair; results written to `docs/test-report-<date>.md` | **In progress** 2026-10-06. **Link check done** (4.8, as built): `internal/linkcheck` (87.1%) ticked by the app and simulated end to end; admin tab, HQ health column, Start-race warning; `checkin-board linkcheck` CLI (exit 0/1/2, `--json`, `--brief`); optional webhook Action recipe (2.2, local hooks); review fixes (guarded store transitions, no probe bursts after a stall, stale requests expire, resends budgeted). **Test campaign:** (a) every package ≥80% except `cmd`; `go vet`, `staticcheck` clean; `govulncheck` one unfixed, uncalled `x/crypto` advisory. (b) all five fuzz targets 30 min each, ≈428 M executions, no failures. (c) 12 h soak, 500 runners, 8 checkpoints, 20% loss: exactly once, ≈90 bytes per passage at each checkpoint. (d) graywolf API outage and repeated kill/restart keep exactly once; other faults mapped to existing tests. (e) polyglot logo, safe hook text. (f) 8 browser E2E tests. Report: `docs/test-report-2026-10-06.md`. **Waiting for hardware:** (g) and (h) |
 | 13 | Node panel software + close checkpoint | **4.7:** "Open/Close checkpoint" wording on checkpoints, the heartbeat closed flag (` C`, codec + fuzz) and HQ's "closed" health state. **8.4:** status and menu model; 1-bit renderer with golden-PNG tests; panel loop with the refresh rules (3-minute floor, change-driven, partial only while navigating); fake display and fake buttons; `panel_menu` and `panel_settings` migrations with per-role defaults; action allowlist enforced in the app; local-hook panel endpoints; Admin → Panel tab (menu editor, settings, live preview); `checkin-board panel` subcommand; `checkin-board-panel.service` with device access; install script installs it only when SPI is enabled and a bonnet answers | **Done** 2026-10-08. **Close checkpoint:** a checkpoint's Start/Complete read Open/Close checkpoint; heartbeats carry ` C` once closed (codec + fuzz), HQ records `closed_at` and shows "closed HH:MM" instead of "quiet"; simulated (`TestCheckpointClosesWhileRaceContinues`). **Panel:**<br>- `internal/panel/menu`: the allowlist, per-role defaults and validation. Lifecycle items are always confirmed. Labels are ASCII only, because the display's font is.<br>- `internal/panel`: a 1-bit renderer with eight golden-PNG screens, and the state machine with the refresh rules. The full-refresh floor is also remembered by the app (`panel_settings.last_full_at`), so a restarting panel can't refresh faster than every 3 minutes.<br>- Menus, confirmation and the HQ link-check target picker. The controller wizard gives up after three passes over the controllers.<br>- Test patterns.<br>- Admin → Panel tab: settings, the menu editor and a live preview.<br>- Local-hook endpoints. The app re-checks role, state and allowlist, and refuses a stale menu ID.<br>- `checkin-board panel` with a PNG display and keyboard buttons; dry-run against the real app.<br>- Review fixes:<br>  - every full-refresh attempt counts against the floor, failed ones too;<br>  - the wizard's first frame waits for the floor, and "gave up" is remembered by the app, so only "Detect again" restarts it;<br>  - test patterns wait for the floor and use one hardware handle at a time;<br>  - interactive refreshes are budgeted (6 full or 60 partial per 3 min), so a stuck button can't wear the panel;<br>  - recovery from "app down" redraws at the floor;<br>  - a 600 ms guard stops a bounce confirming;<br>  - link checks are always confirmed;<br>  - actions carry the menu revision;<br>  - an app restart doesn't replay requests;<br>  - the floor never moves back;<br>  - closed sticks against late heartbeats.<br>- Coverage: panel 89.2%, menu 84.1%, epd 100%, web 80.9%. 10 browser tests.<br>- **Moved to phase 14:** the panel's systemd unit and installer, because they're useless without the hardware driver. |
 | 14 | Node panel on hardware | `checkin-board-panel.service` (own unit with SPI/GPIO access; moved from 13) and the installer: generate the hook token for app and panel, install the panel only where SPI is enabled; the bonnet's GPIO buttons (debounced); `internal/panel/epd` drivers for SSD1680Z, SSD1680 and SSD1675 on periph.io; controller detection (read-back probe if wired, else the button wizard) and test patterns; check graywolf's PTT is on the AIOC; bench on the test node (checklist: each controller, both rotations, partial vs full refresh, button debounce, idle timeout, app down, graywolf down, reboot); measure refresh times and the panel service's RSS on the Pi | **In progress** 2026-10-09:<br>- `internal/panel/epd`: SSD1680Z, SSD1680 and SSD1675 sequences after Adafruit's MIT driver, with partial refresh on the SSD1680 parts (compare old/new RAM, mode 0xFC) and deep sleep after each refresh. Frame packing and every sequence are tested over a recording bus (97%); the hardware itself lives in `epd/bonnet`, tested on the bench.<br>- The periph.io bus: SPI0.0 plus DC, RST and BUSY, with a BUSY timeout.<br>- The bonnet buttons (GPIO 5/6, falling edge, 150 ms debounce).<br>- `checkin-board panel -test CONTROLLER` (timed test pattern and partial refresh).<br>- `checkin-board-panel.service` (own user, spi/gpio groups, sandboxed).<br>- The installer: hook token, panel started only where SPI is on; container-tested.<br>- On the test node: Pi Zero W, Raspbian 13 (trixie), AIOC (USB). SPI was off and has been enabled.<br>- **Bench pending:** the node didn't come back from the reboot after enabling SPI. Visual checks of each controller and of partial refresh need someone at the display. |
-| 15 | Field rehearsal | Deploy to real locations; **run the link check at every node first**; then a walk-around on the course | Not started |
+| 15 | Installer: graywolf bootstrap | **2.3:** `install.sh` installs the latest graywolf release for the node's architecture when it's missing (GitHub latest release, `.deb` for `dpkg --print-architecture`, SHA-256 against `checksums.txt`, `apt install`), never upgrades an existing one, sets up the operator's graywolf admin login before the app's, and warns on a version other than the tested one; `--graywolf-version` pins; offline continues without it. Container tests against a fake release server; one real install on a spare SD card | Not started |
+| 16 | Field rehearsal | Deploy to real locations; **run the link check at every node first**; then a walk-around on the course | Not started |
 
 Phase 1 comes first on purpose: every later phase rests on graywolf
 behaviours that this design assumes but hasn't tested through the API.
