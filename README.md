@@ -1,7 +1,9 @@
 # checkin-board
 
-Race checkpoint reporting that runs next to a [graywolf](https://github.com/chrissnell/graywolf)
-APRS station and talks to it only through graywolf's REST API.
+Checkin-board is a race checkpoint reporting system that runs next to a [graywolf](https://github.com/chrissnell/graywolf)
+APRS station and talks to it through graywolf's REST API.
+
+The goal is to have a pre-configured APRS station that a ham can deploy and a race coordinator can access via a web app. The race coordinator enters bib numbers as they cross the checkpoint, and graywolf sends the messages to HQ. A board at HQ shows recent check-ins and allows configuration of race parameters.
 Design: [`docs/specs/2026-10-05-race-checkpoint-design.md`](docs/specs/2026-10-05-race-checkpoint-design.md).
 
 ## Layout
