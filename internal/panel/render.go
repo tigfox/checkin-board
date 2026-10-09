@@ -268,6 +268,15 @@ func WizardScreen(controller string, i, n int) *image.Gray {
 	return mono(img)
 }
 
+// WizardLikeScreen shows two lines of double-size text (bench screens
+// read from a distance).
+func WizardLikeScreen(a, b string) *image.Gray {
+	img := newCanvas()
+	bigText(img, 3, 22, clip(a, 17))
+	bigText(img, 3, 62, clip(b, 17))
+	return mono(img)
+}
+
 // TestPattern helps check a controller by eye: a border, corner marks
 // and the controller's name.
 func TestPattern(controller string) *image.Gray {

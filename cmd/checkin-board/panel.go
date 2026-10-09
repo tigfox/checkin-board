@@ -28,6 +28,7 @@ func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reade
 	display := fs.String("display", "epd", `"epd" (the bonnet) or "png:DIR" (write frames to DIR)`)
 	buttons := fs.String("buttons", "gpio", `"gpio" (the bonnet, edge events), "poll" (the bonnet, polled), "stdin" (t/b lines) or "none"`)
 	test := fs.String("test", "", "draw a test pattern with this controller ("+strings.Join(epd.Controllers(), ", ")+") and exit")
+	testPartial := fs.String("test-partial", "", "bench: try each partial refresh variant with this controller, timing each, and exit")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -37,6 +38,9 @@ func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reade
 	}
 	if *test != "" {
 		return testDisplay(open, *test, log)
+	}
+	if *testPartial != "" {
+		return testPartials(open, *testPartial, log, time.Sleep)
 	}
 	cfg, err := config.PanelFrom(env)
 	if err != nil {
@@ -105,6 +109,36 @@ func testDisplay(open panel.Opener, controller string, log *slog.Logger) error {
 	}
 	log.Info("panel test: partial refresh", "controller", controller, "took", time.Since(start).Round(10*time.Millisecond))
 	return nil
+}
+
+// testPartials tries each partial refresh variant: a full refresh to
+// "Next: test N", then variant N draws "Test N WORKED". Someone at the
+// panel reports which N they saw; the log has each update's busy time.
+func testPartials(open panel.Opener, controller string, log *slog.Logger, sleep func(time.Duration)) error {
+	if !epd.Known(controller) {
+		return fmt.Errorf("panel: unknown controller %q", controller)
+	}
+	d, err := open(controller)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	for v := 1; ; v++ {
+		if !epd.SetPartialVariant(d, v) {
+			break
+		}
+		if err := d.Full(panel.MessageScreen("Partial refresh test", []string{fmt.Sprintf("Next: test %d.", v), "Watch for TEST WORKED."})); err != nil {
+			return err
+		}
+		full := epd.UpdateTook(d)
+		sleep(3 * time.Second)
+		if err := d.Partial(panel.WizardLikeScreen(fmt.Sprintf("TEST %d", v), "WORKED")); err != nil {
+			return err
+		}
+		log.Info("panel partial test", "variant", v, "full_busy", full.Round(time.Millisecond), "partial_busy", epd.UpdateTook(d).Round(time.Millisecond))
+		sleep(5 * time.Second)
+	}
+	return d.Full(panel.MessageScreen("Partial refresh test", []string{"Done: tell us which", "TEST n WORKED you saw."}))
 }
 
 // displayOpener picks the display backend.

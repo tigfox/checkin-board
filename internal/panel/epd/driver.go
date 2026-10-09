@@ -97,9 +97,11 @@ func Pack(img image.Image) []byte {
 
 // panel drives one controller over a Bus.
 type panel struct {
-	bus  Bus
-	ctrl string
-	last []byte // the frame on the panel now (for partial refresh)
+	bus     Bus
+	ctrl    string
+	last    []byte // the frame on the panel now (for partial refresh)
+	variant int    // partial refresh sequence (bench: SetPartialVariant)
+	took    time.Duration
 }
 
 // NewPanel drives controller ctrl over bus.
@@ -107,7 +109,7 @@ func NewPanel(bus Bus, ctrl string) (Display, error) {
 	if !Known(ctrl) {
 		return nil, fmt.Errorf("epd: unknown controller %q", ctrl)
 	}
-	return &panel{bus: bus, ctrl: ctrl}, nil
+	return &panel{bus: bus, ctrl: ctrl, variant: defaultPartial}, nil
 }
 
 // seq runs commands, stopping at the first error.
@@ -192,13 +194,47 @@ func (p *panel) writeRAM(s *seq, cmd byte, frame []byte) {
 	s.data(frame)
 }
 
-// refresh triggers the update, waits for it, and puts the controller to
-// deep sleep (it draws nothing and holds the image).
+// refresh triggers the update, waits for it (timing the waveform), and
+// puts the controller to deep sleep (it draws nothing and holds the
+// image).
 func (p *panel) refresh(s *seq, mode byte) {
 	s.cmd(cmdUpdateCtrl2, mode)
 	s.cmd(cmdActivate)
+	start := time.Now()
 	s.wait(refreshTimeout)
+	p.took = time.Since(start)
 	s.cmd(cmdDeepSleep, 0x01)
+}
+
+// Partial refresh sequences (SSD1680 parts). The panel's own waveform
+// for display mode 2 drives only the pixels that differ between the red
+// RAM (previous frame) and the BW RAM (new frame). Variants differ in
+// the setup and update flags; the bench (checkin-board panel
+// -test-partial) times and shows each.
+const (
+	defaultPartial = 1
+	maxPartial     = 4
+	cmdUpdateCtrl1 = 0x21
+	cmdTempSensor  = 0x18
+)
+
+// SetPartialVariant selects the partial refresh sequence (bench only).
+func SetPartialVariant(d Display, v int) bool {
+	p, ok := d.(*panel)
+	if !ok || p == nil || v < 1 || v > maxPartial {
+		return false
+	}
+	p.variant = v
+	return true
+}
+
+// UpdateTook is how long the controller was busy in the last update's
+// waveform (a mode that drives nothing returns at once).
+func UpdateTook(d Display) time.Duration {
+	if p, ok := d.(*panel); ok {
+		return p.took
+	}
+	return -1
 }
 
 // Full redraws the panel.
@@ -240,10 +276,22 @@ func (p *panel) Partial(img image.Image) error {
 	frame := Pack(img)
 	s := &seq{bus: p.bus}
 	p.powerUp(s)
+	if p.variant >= 2 {
+		// The internal temperature sensor and normal RAM options, as
+		// GxEPD2 and Waveshare set them for these panels.
+		s.cmd(cmdUpdateCtrl1, 0x00, 0x80)
+		s.cmd(cmdTempSensor, 0x80)
+	}
 	s.cmd(cmdBorder, 0x80)
-	p.writeRAM(s, cmdWriteRed, p.last)
+	if p.variant != 4 {
+		p.writeRAM(s, cmdWriteRed, p.last)
+	}
 	p.writeRAM(s, cmdWriteBW, frame)
-	p.refresh(s, 0xFC)
+	mode := byte(0xFC)
+	if p.variant >= 3 {
+		mode = 0xFF
+	}
+	p.refresh(s, mode)
 	if s.err != nil {
 		p.last = nil
 		return fmt.Errorf("epd %s: partial refresh: %w", p.ctrl, s.err)

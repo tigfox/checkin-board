@@ -12,11 +12,13 @@ installed beside it. Volunteers use their phones on the node's Wi-Fi.
 
 You need a node with graywolf already running, and shell access.
 
-1. Copy the release bundle to the node and unpack it in your home directory (not `/tmp`: on Raspberry Pi OS it lives in RAM, and a Pi Zero has little to spare):
+1. Copy the release bundle to the node and unpack it in `/tmp` (it's in RAM, which spares the SD card's limited writes), and delete both once installed, because a Pi Zero has little RAM to spare:
    ```sh
+   cd /tmp
    tar xzf checkin-board-<version>-linux.tar.gz
    cd checkin-board-<version>
    sudo ./install.sh
+   cd /tmp && rm -rf checkin-board-<version> checkin-board-<version>-linux.tar.gz
    ```
    The script:
    - creates a `checkin-board` system user;
@@ -30,6 +32,8 @@ You need a node with graywolf already running, and shell access.
      graywolf's database (`/var/lib/graywolf/graywolf.db`; set
      `GRAYWOLF_DB` if yours is elsewhere). If it can't, it asks for a
      password instead (see "The app's graywolf login" below);
+   - turns Wi-Fi power saving off (with it on, a Pi drops off the
+     network for minutes at a time and phones can't reach the keypad);
    - starts the `checkin-board` service. If you skip the password (or
      run the script non-interactively), it says "Not started": put the
      password in that file and `sudo systemctl start checkin-board`.

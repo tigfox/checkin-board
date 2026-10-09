@@ -187,6 +187,26 @@ if ! grep -q '^CB_HOOK_TOKEN_FILE=' "$ENV_FILE"; then
 	printf '\nCB_HOOK_TOKEN_FILE=%s\n' "$HOOK_FILE" >>"$ENV_FILE"
 fi
 
+# Wi-Fi power saving makes a Pi drop off the network for minutes at a
+# time (seen on the test node), so phones can't reach the keypad: turn it
+# off for every Wi-Fi connection, now and after reboots.
+NM_CONF=/etc/NetworkManager/conf.d/90-checkin-board-wifi-powersave.conf
+if [ -d /etc/NetworkManager/conf.d ]; then
+	if [ ! -f "$NM_CONF" ]; then
+		printf '# checkin-board: keep Wi-Fi awake (2 = power saving off).\n[connection]\nwifi.powersave = 2\n' >"$NM_CONF"
+		chmod 0644 "$NM_CONF"
+		systemctl reload NetworkManager 2>/dev/null || true
+		say "Wi-Fi power saving turned off ($NM_CONF)"
+	fi
+	if command -v iw >/dev/null 2>&1; then
+		for dev in $(iw dev 2>/dev/null | awk '$1 == "Interface" {print $2}'); do
+			iw dev "$dev" set power_save off 2>/dev/null || true
+		done
+	fi
+elif command -v iw >/dev/null 2>&1 && iw dev 2>/dev/null | grep -q Interface; then
+	say "Note: no NetworkManager here. Turn Wi-Fi power saving off in your network setup (iw dev wlan0 set power_save off at boot)."
+fi
+
 install -m 0644 "$HERE/checkin-board.service" "$UNIT"
 install -m 0644 "$HERE/checkin-board-panel.service" "$PANEL_UNIT"
 if [ -f "$HERE/operator-guide.md" ]; then

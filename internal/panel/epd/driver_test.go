@@ -165,3 +165,41 @@ func TestBusyTimeoutIsAnError(t *testing.T) {
 		t.Fatal("unknown controller accepted")
 	}
 }
+
+func TestPartialVariants(t *testing.T) {
+	for v, want := range map[int]struct {
+		mode    byte
+		red     bool
+		tempSel bool
+	}{
+		1: {0xFC, true, false},
+		2: {0xFC, true, true},
+		3: {0xFF, true, true},
+		4: {0xFF, false, true},
+	} {
+		b := newRec()
+		d, _ := NewPanel(b, SSD1680Z)
+		_ = d.Full(white())
+		if !SetPartialVariant(d, v) {
+			t.Fatalf("variant %d refused", v)
+		}
+		delete(b.data, cmdWriteRed)
+		delete(b.data, 0x18)
+		next := white()
+		next.SetGray(3, 3, color.Gray{})
+		if err := d.Partial(next); err != nil {
+			t.Fatal(err)
+		}
+		_, wroteRed := b.data[cmdWriteRed]
+		_, temp := b.data[0x18]
+		if b.data[0x22][0] != want.mode || wroteRed != want.red || temp != want.tempSel {
+			t.Errorf("variant %d: mode % X red %v temp %v", v, b.data[0x22], wroteRed, temp)
+		}
+		if UpdateTook(d) < 0 {
+			t.Error("no update timing")
+		}
+	}
+	if SetPartialVariant(nil, 1) {
+		t.Error("variant set on nothing")
+	}
+}

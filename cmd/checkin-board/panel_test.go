@@ -82,6 +82,15 @@ func TestPanelCommandArgs(t *testing.T) {
 	if err := runPanel(context.Background(), env, []string{"-display", "png:/tmp", "-buttons", "x"}, strings.NewReader(""), slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("unknown buttons accepted")
 	}
+	pf := t.TempDir()
+	open, _ := displayOpener("png:" + pf)
+	if err := testPartials(open, "ssd1680z", slog.New(slog.DiscardHandler), func(time.Duration) {}); err != nil {
+		t.Fatalf("partial bench: %v", err)
+	}
+	if files, _ := filepath.Glob(filepath.Join(pf, "*.png")); len(files) != 1 {
+		// The PNG display isn't an epd panel: no variants, just the end screen.
+		t.Fatalf("partial bench frames = %v", files)
+	}
 	if b, ok := parseButton("top"); !ok || b != panel.Top {
 		t.Error("top")
 	}
