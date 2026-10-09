@@ -60,8 +60,36 @@ const STATE_LABELS = {
   checked_in: "Checked in",
 };
 
-export function stateLabel(state) {
+// A checkpoint's state is its own (4.7): it opens and closes while the
+// race goes on elsewhere, so its pages say so.
+const CHECKPOINT_STATE_LABELS = {
+  setup: "Checkpoint not open",
+  active: "Checkpoint open",
+  complete: "Checkpoint closed",
+};
+
+export function stateLabel(state, role) {
+  if (role === "checkpoint" && CHECKPOINT_STATE_LABELS[state]) return CHECKPOINT_STATE_LABELS[state];
   return STATE_LABELS[state] || state || "";
+}
+
+const ACTION_LABELS = {
+  start: ["Start race", "Open the keypad and start taking entries?"],
+  complete: ["Complete race", "Close the keypad? Unsent entries keep going out."],
+  secure: ["Secure for travel", "Pack up: nothing is transmitted until the final check-in at HQ. Continue?"],
+  "check-in": ["Final check-in", "Send everything HQ hasn't confirmed, now?"],
+  "cleanup-graywolf": ["Clean up graywolf messages", "Delete this race's messages from graywolf? Messages still needed are kept."],
+};
+
+const CHECKPOINT_ACTION_LABELS = {
+  start: ["Open checkpoint", "Open this checkpoint's keypad and start taking entries?"],
+  complete: ["Close checkpoint", "Close this checkpoint? The keypad stops taking entries (the race goes on elsewhere). Unsent entries keep going out, and HQ sees it as closed."],
+};
+
+// actionLabel is the button label and confirm question for a lifecycle
+// action in this role.
+export function actionLabel(action, role) {
+  return (role === "checkpoint" && CHECKPOINT_ACTION_LABELS[action]) || ACTION_LABELS[action] || [action, `${action}?`];
 }
 
 // keypadOpen reports whether the keypad takes entries.
@@ -119,8 +147,9 @@ export function cellText(cell, timeZone) {
 // healthFlags lists a checkpoint's problems for the HQ health panel.
 export function healthFlags(h, nowMs) {
   const flags = [];
+  if (h.ClosedAt) flags.push(`closed ${formatTime(h.ClosedAt).slice(0, 5)}`);
   if (!h.LastHeardAt) flags.push("never heard");
-  else if (nowMs - new Date(h.LastHeardAt).getTime() > 15 * 60 * 1000) flags.push("quiet for 15+ min");
+  else if (!h.ClosedAt && nowMs - new Date(h.LastHeardAt).getTime() > 15 * 60 * 1000) flags.push("quiet for 15+ min");
   if (h.Missing && h.Missing.length) flags.push(`${h.Missing.length} batch(es) missing`);
   if (h.GivenUp && h.GivenUp.length) flags.push(`${h.GivenUp.length} given up`);
   if (h.SenderMismatch) flags.push(`heard from ${h.LastSourceCall}, expected ${h.ExpectedCall}`);

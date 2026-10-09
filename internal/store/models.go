@@ -103,9 +103,12 @@ type CheckpointStatus struct {
 	HeartbeatLastSeq uint32     `gorm:"column:heartbeat_last_seq"`
 	// ClockSkewSec is checkpoint clock minus HQ race clock at the last
 	// heartbeat (includes a few seconds of RF latency). Nil until heard.
-	ClockSkewSec    *int   `gorm:"column:clock_skew_sec"`
-	MaxSeq          uint32 `gorm:"column:max_seq"`
-	BatchesReceived int    `gorm:"column:batches_received"`
+	ClockSkewSec *int `gorm:"column:clock_skew_sec"`
+	// ClosedAt is when the checkpoint's heartbeats first said it had
+	// closed (4.7); nil while open.
+	ClosedAt        *time.Time `gorm:"column:closed_at"`
+	MaxSeq          uint32     `gorm:"column:max_seq"`
+	BatchesReceived int        `gorm:"column:batches_received"`
 	// SeqReuseCount counts batches that reused a known seq with new
 	// text, which usually means the checkpoint's DB was reset.
 	SeqReuseCount int `gorm:"column:seq_reuse_count"`

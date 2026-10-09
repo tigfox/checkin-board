@@ -354,3 +354,28 @@ func TestSecureTravelAndFinalCheckIn(t *testing.T) {
 	}
 	assertExactlyOnce(t, hqNode, cp)
 }
+
+// A checkpoint early on the course closes while the race goes on (4.7):
+// HQ sees it as closed, and HQ's own race is untouched.
+func TestCheckpointClosesWhileRaceContinues(t *testing.T) {
+	s := newSim(t, 41, gwfake.Profile{Loss: 0.1, MaxDelay: 2 * time.Second})
+	hqNode := addNode(t, s, hqCall, HQSettings())
+	cp := addNode(t, s, "N0CALL-7", CheckpointSettings("AS1", hqCall))
+	for bib := store.Bib(1); bib <= 20; bib++ {
+		logBib(t, s, cp, bib)
+		s.Run(5 * time.Second)
+	}
+	if err := s.SetState(cp, store.RaceComplete); err != nil {
+		t.Fatal(err)
+	}
+	runUntilConfirmed(t, s, time.Hour, cp)
+	s.Run(10 * time.Minute) // at least one heartbeat after closing
+	sts, err := hqNode.Store.ListStatuses(ctx)
+	if err != nil || len(sts) != 1 || sts[0].ClosedAt == nil {
+		t.Fatalf("HQ status = %+v, %v", sts, err)
+	}
+	if state, _ := s.State(hqNode); state != store.RaceActive {
+		t.Fatalf("HQ state = %s, want the race still active", state)
+	}
+	assertExactlyOnce(t, hqNode, cp)
+}

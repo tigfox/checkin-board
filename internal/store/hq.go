@@ -211,6 +211,12 @@ func (s *Store) RecordHeartbeat(ctx context.Context, hb *Heartbeat, source strin
 				st.HeartbeatLastSeq = hb.LastSeq
 			}
 			st.ClockSkewSec = skew
+			switch {
+			case hb.Closed && st.ClosedAt == nil:
+				st.ClosedAt = &recv
+			case !hb.Closed:
+				st.ClosedAt = nil
+			}
 		})
 	})
 }

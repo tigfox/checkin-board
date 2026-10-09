@@ -20,7 +20,7 @@ export const ctx = {
   async reload() {
     ctx.settings = await get("/api/admin/settings");
     $("#title").textContent = ctx.settings.race_name ? `${ctx.settings.race_name} · Admin` : "Admin";
-    $("#state").textContent = L.stateLabel(ctx.settings.race_state);
+    $("#state").textContent = L.stateLabel(ctx.settings.race_state, ctx.settings.role);
     show($("#board-link"), ctx.settings.role === "hq");
     buildTabs();
   },

@@ -63,7 +63,8 @@ func entryToken(e Entry) string {
 	return fmt.Sprintf(" %s%d/%02d", void, e.Bib, e.Time%60)
 }
 
-// EncodeHeartbeat renders "RC1 H <cp> <lastseq> <HHMMSS>".
+// EncodeHeartbeat renders "RC1 H <cp> <lastseq> <HHMMSS>", plus " C"
+// for a closed checkpoint.
 func EncodeHeartbeat(h Heartbeat) (string, error) {
 	if !ValidCheckpointCode(h.CP) {
 		return "", fmt.Errorf("%w: invalid checkpoint code %q", ErrEncode, h.CP)
@@ -71,7 +72,11 @@ func EncodeHeartbeat(h Heartbeat) (string, error) {
 	if !h.Time.Valid() {
 		return "", fmt.Errorf("%w: invalid time %d", ErrEncode, h.Time)
 	}
-	return fmt.Sprintf("%s%c %s %d %s", Prefix, kindHeartbeat, h.CP, h.LastSeq, h.Time.hhmmss()), nil
+	text := fmt.Sprintf("%s%c %s %d %s", Prefix, kindHeartbeat, h.CP, h.LastSeq, h.Time.hhmmss())
+	if h.Closed {
+		text += " " + closedFlag
+	}
+	return text, nil
 }
 
 // PackGap encodes a gap request naming as many of seqs as fit in maxLen

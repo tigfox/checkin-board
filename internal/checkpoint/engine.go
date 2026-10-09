@@ -597,7 +597,10 @@ func (e *Engine) heartbeat(ctx context.Context, cfg store.Settings, now time.Tim
 		return err
 	}
 	raceNow, _ := e.clock.Now()
-	text, err := wire.EncodeHeartbeat(wire.Heartbeat{CP: cfg.CheckpointCode, LastSeq: last, Time: wire.TimeOfDayOf(raceNow)})
+	// Past Open, the checkpoint is closed (4.7): it says so, so HQ shows
+	// it closed rather than quiet once it packs up and travels.
+	closed := cfg.RaceState != store.RaceActive && cfg.RaceState != store.RaceSetup
+	text, err := wire.EncodeHeartbeat(wire.Heartbeat{CP: cfg.CheckpointCode, LastSeq: last, Time: wire.TimeOfDayOf(raceNow), Closed: closed})
 	if err != nil {
 		return err
 	}

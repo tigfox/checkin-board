@@ -418,3 +418,27 @@ func FuzzDecode(f *testing.F) {
 		}
 	})
 }
+
+// A closed checkpoint (4.7) marks its heartbeats with a trailing " C".
+func TestHeartbeatClosedFlag(t *testing.T) {
+	text, err := EncodeHeartbeat(Heartbeat{CP: "AS5", LastSeq: 41, Time: tod(7, 5, 9), Closed: true})
+	if err != nil || text != "RC1 H AS5 41 070509 C" {
+		t.Fatalf("encode = %q, %v", text, err)
+	}
+	m, err := Decode(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hb := m.(*Heartbeat); !hb.Closed || hb.LastSeq != 41 {
+		t.Fatalf("decode = %+v", hb)
+	}
+	open, _ := Decode("RC1 H AS5 41 070509")
+	if open.(*Heartbeat).Closed {
+		t.Fatal("heartbeat without the flag decoded as closed")
+	}
+	for _, bad := range []string{"RC1 H AS5 41 070509 X", "RC1 H AS5 41 070509 C C", "RC1 H AS5 41 070509 c"} {
+		if _, err := Decode(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

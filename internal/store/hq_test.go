@@ -287,3 +287,30 @@ func TestMissingSeqsBoundedByLimit(t *testing.T) {
 		t.Fatalf("MissingSeqs took %v", time.Since(start))
 	}
 }
+
+// A closed checkpoint's heartbeats (4.7) stamp closed_at once; a later
+// heartbeat without the flag (a new race after a reset) clears it.
+func TestHeartbeatClosedFlagMarksCheckpointClosed(t *testing.T) {
+	s := newTestStore(t)
+	hb := &Heartbeat{CP: "AS5", LastSeq: 3, Time: wire.TimeOfDayOf(t0)}
+	if err := s.RecordHeartbeat(ctx, hb, "N0CALL-7", t0, t0, true); err != nil {
+		t.Fatal(err)
+	}
+	closed := *hb
+	closed.Closed = true
+	for i := range 2 {
+		if err := s.RecordHeartbeat(ctx, &closed, "N0CALL-7", at(time.Duration(i+1)*time.Minute), t0, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, _ := s.ListStatuses(ctx)
+	if len(st) != 1 || st[0].ClosedAt == nil || !st[0].ClosedAt.Equal(at(time.Minute)) {
+		t.Fatalf("status = %+v", st)
+	}
+	if err := s.RecordHeartbeat(ctx, hb, "N0CALL-7", at(time.Hour), t0, true); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ = s.ListStatuses(ctx); st[0].ClosedAt != nil {
+		t.Fatalf("reopened checkpoint still closed: %+v", st[0])
+	}
+}

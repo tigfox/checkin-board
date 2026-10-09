@@ -140,8 +140,12 @@ func parseHHMM(s string) (TimeOfDay, error) {
 }
 
 func decodeHeartbeat(cp string, args []string) (Message, error) {
+	closed := false
+	if len(args) == 3 && args[2] == closedFlag {
+		closed, args = true, args[:2]
+	}
 	if len(args) != 2 {
-		return nil, decodeErr("heartbeat needs exactly lastseq and HHMMSS")
+		return nil, decodeErr("heartbeat needs lastseq and HHMMSS, then optionally C")
 	}
 	last, err := parseSeq(args[0])
 	if err != nil {
@@ -159,7 +163,7 @@ func decodeHeartbeat(cp string, args []string) (Message, error) {
 	if sec > 59 {
 		return nil, decodeErr("heartbeat time %q out of range", s)
 	}
-	return &Heartbeat{CP: cp, LastSeq: last, Time: minute + TimeOfDay(sec)}, nil
+	return &Heartbeat{CP: cp, LastSeq: last, Time: minute + TimeOfDay(sec), Closed: closed}, nil
 }
 
 func decodeGap(cp string, args []string) (Message, error) {

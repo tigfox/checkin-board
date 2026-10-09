@@ -183,7 +183,7 @@ func TestE2EAdminTabsCheckpoint(t *testing.T) {
 	b := newBrowser(t, e.srv.URL)
 	b.login(e.admin)
 	b.run(chromedp.Navigate(e.srv.URL + "/admin.html"))
-	b.waitText("#tab-race", "Race active")
+	b.waitText("#tab-race", "Checkpoint open")
 	b.waitText("#tabs", "Outbox")
 	for _, tab := range []struct{ name, sel, want string }{
 		{"Station", "#tab-station", "Race settings"},
@@ -321,15 +321,15 @@ func TestE2EClockBannerSetsTime(t *testing.T) {
 	b.noErrors()
 }
 
-func TestE2EAdminStartsRace(t *testing.T) {
+func TestE2EAdminOpensCheckpoint(t *testing.T) {
 	e := newEnv(t, checkpointSettings(store.RaceSetup))
 	b := newBrowser(t, e.srv.URL)
 	b.login(e.admin)
 	b.run(chromedp.Navigate(e.srv.URL + "/admin.html"))
-	b.waitText("#tab-race", "Race not started")
+	b.waitText("#tab-race", "Checkpoint not open")
 	// confirm() (with the link-check warning) is accepted by the harness.
-	b.run(chromedp.Click(`//section[@id="tab-race"]//button[text()="Start race"]`, chromedp.BySearch))
-	b.waitText("#state", "Race active")
+	b.run(chromedp.Click(`//section[@id="tab-race"]//button[text()="Open checkpoint"]`, chromedp.BySearch))
+	b.waitText("#state", "Checkpoint open")
 	cfg, _ := e.st.GetSettings(ctx)
 	if cfg.RaceState != store.RaceActive {
 		t.Fatalf("state = %s", cfg.RaceState)

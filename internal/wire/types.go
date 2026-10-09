@@ -145,11 +145,17 @@ type Report struct {
 
 // Heartbeat tells HQ a checkpoint is alive, the last batch it has
 // assigned (0 = none yet), and its race-clock time for skew checks.
+// Closed marks a checkpoint that has closed (4.7), so HQ shows it as
+// closed rather than quiet once it packs up.
 type Heartbeat struct {
 	CP      string
 	LastSeq uint32
 	Time    TimeOfDay
+	Closed  bool
 }
+
+// closedFlag is the trailing heartbeat token for a closed checkpoint.
+const closedFlag = "C"
 
 // GapRequest asks a checkpoint to resend the named batches. Seqs is
 // sorted and unique.

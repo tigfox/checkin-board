@@ -142,3 +142,24 @@ test("linkProgress describes a running check", () => {
   assert.equal(L.linkProgress({ state: "running", probes_sent: 5, count: 5, reply_received: false }), "All probes sent; waiting for the reply…");
   assert.equal(L.linkProgress({ state: "done", verdict: "PASS" }), "");
 });
+
+test("a checkpoint's states and actions use Open/Close checkpoint wording", () => {
+  assert.equal(L.stateLabel("active", "checkpoint"), "Checkpoint open");
+  assert.equal(L.stateLabel("complete", "checkpoint"), "Checkpoint closed");
+  assert.equal(L.stateLabel("setup", "checkpoint"), "Checkpoint not open");
+  assert.equal(L.stateLabel("secured", "checkpoint"), "Secured for travel");
+  assert.equal(L.stateLabel("complete", "hq"), "Race complete");
+  assert.equal(L.actionLabel("start", "checkpoint")[0], "Open checkpoint");
+  assert.equal(L.actionLabel("complete", "checkpoint")[0], "Close checkpoint");
+  assert.equal(L.actionLabel("complete", "hq")[0], "Complete race");
+  assert.equal(L.actionLabel("check-in", "checkpoint")[0], "Final check-in");
+});
+
+test("healthFlags shows a closed checkpoint as closed, not quiet", () => {
+  const now = Date.parse("2026-10-10T12:00:00Z");
+  const closed = { LastHeardAt: "2026-10-10T10:00:00Z", ClosedAt: "2026-10-10T09:58:00Z" };
+  const flags = L.healthFlags(closed, now);
+  assert.ok(flags[0].startsWith("closed "), flags.join("; "));
+  assert.ok(!flags.some((f) => f.includes("quiet")), flags.join("; "));
+  assert.ok(L.healthFlags({ LastHeardAt: "2026-10-10T10:00:00Z" }, now).some((f) => f.includes("quiet")));
+});

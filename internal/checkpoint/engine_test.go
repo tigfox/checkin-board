@@ -936,3 +936,15 @@ func (h *harness) tick2(cfg store.Settings) {
 		h.t.Fatalf("tick: %v", err)
 	}
 }
+
+// Once the checkpoint is closed (Complete, then the final check-in),
+// its heartbeats carry the closed flag so HQ shows it closed (4.7).
+func TestHeartbeatCarriesClosedFlagOnceClosed(t *testing.T) {
+	h := newHarness(t)
+	h.cfg.RaceState = store.RaceComplete
+	h.tick()
+	hbs := h.gw.TransmissionsWithPrefix("RC1 H ")
+	if len(hbs) != 1 || hbs[0].Text != "RC1 H AS5 0 130000 C" {
+		t.Fatalf("heartbeats = %+v", hbs)
+	}
+}

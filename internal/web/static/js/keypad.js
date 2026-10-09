@@ -169,11 +169,11 @@ async function refreshStation() {
   station = await get("/api/station");
   const name = [station.race_name, station.station_tactical, (station.local_codes || []).join("/")].filter(Boolean).join(" · ");
   $("#station-title").textContent = name || "checkin-board";
-  $("#race-state").textContent = L.stateLabel(station.race_state);
+  $("#race-state").textContent = L.stateLabel(station.race_state, station.role);
   $("#delivery").textContent = L.deliverySummary(station, Date.now());
   const gw = station.graywolf;
   banner($("#gw-banner"), gw.problem ? `${gw.problem}: entries are kept here and sent when it's back.` : "", "warn");
-  banner($("#state-banner"), L.keypadOpen(station.race_state) ? "" : `${L.stateLabel(station.race_state)}: the keypad is closed.`, "info");
+  banner($("#state-banner"), L.keypadOpen(station.race_state) ? "" : `${L.stateLabel(station.race_state, station.role)}: the keypad is closed.`, "info");
   const codes = station.local_codes || [];
   const sel = $("#cp-select");
   if (codes.length > 1 && sel.options.length !== codes.length) {

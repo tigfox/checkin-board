@@ -3,18 +3,10 @@ import { get, post } from "./api.js";
 import { h } from "./dom.js";
 import * as L from "./logic.js";
 
-const LABELS = {
-  start: ["Start race", "Open the keypad and start taking entries?"],
-  complete: ["Complete race", "Close the keypad? Unsent entries keep going out."],
-  secure: ["Secure for travel", "Pack up: nothing is transmitted until the final check-in at HQ. Continue?"],
-  "check-in": ["Final check-in", "Send everything HQ hasn't confirmed, now?"],
-  "cleanup-graywolf": ["Clean up graywolf messages", "Delete this race's messages from graywolf? Messages still needed are kept."],
-};
-
 export async function renderRace(sec, ctx) {
   const s = ctx.settings;
   sec.append(h("h1", {}, "Race"));
-  sec.append(h("p", {}, "State: ", h("strong", {}, L.stateLabel(s.race_state)),
+  sec.append(h("p", {}, "State: ", h("strong", {}, L.stateLabel(s.race_state, s.role)),
     s.race_started_at ? ` · started ${L.formatTime(s.race_started_at)}` : ""));
   if (!s.role) {
     sec.append(h("p", { class: "banner warn" }, "Choose this node's role on the Station tab first."));
@@ -32,7 +24,7 @@ export async function renderRace(sec, ctx) {
   const actions = L.actionsFor(s.role, s.race_state).filter((a) => a !== "reset");
   const row = h("div", { class: "row" });
   for (const a of actions) {
-    const [label, question] = LABELS[a];
+    const [label, question] = L.actionLabel(a, s.role);
     row.append(h("button", {
       type: "button", class: "primary",
       onclick: async () => {
