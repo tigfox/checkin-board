@@ -10,27 +10,48 @@ import (
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/font/inconsolata"
 	"golang.org/x/image/math/fixed"
 
 	"checkin-board/internal/panel/epd"
 )
 
 // Screens are 1-bit images (black text on white) the size of the panel.
-// The font is a fixed 7×13 ASCII bitmap: 35 characters a line.
+// Header, body and menus use a bold 8×16 bitmap font (31 characters a
+// line), readable on the 2.13" panel; the footer and button hints use
+// a small 7×13 one (35 characters).
 
 const (
-	charW    = 7
-	lineH    = 14
-	headerH  = 16
+	charW    = 8
+	smallW   = 7
+	lineH    = 17
+	headerH  = 18
 	maxChars = epd.Width / charW
-	// bodyTop is the first body line's baseline; six lines fit above the
-	// footer.
-	bodyTop    = headerH + 14
-	bodyLines  = 6
-	footerBase = epd.Height - 4
+	maxSmall = epd.Width / smallW
+	// bodyTop is the first body line's baseline; five lines fit above
+	// the footer.
+	bodyTop    = headerH + 16
+	bodyLines  = 5
+	footerBase = epd.Height - 3
 )
 
-var face = basicfont.Face7x13
+var (
+	face  font.Face = inconsolata.Bold8x16
+	small font.Face = basicfont.Face7x13
+)
+
+// mono thresholds a finished screen to pure black and white (the font's
+// edges carry grey levels the panel can't show).
+func mono(img *image.Gray) *image.Gray {
+	for i, v := range img.Pix {
+		if v < 128 {
+			img.Pix[i] = 0
+		} else {
+			img.Pix[i] = 255
+		}
+	}
+	return img
+}
 
 func newCanvas() *image.Gray {
 	img := image.NewGray(image.Rect(0, 0, epd.Width, epd.Height))
@@ -67,18 +88,22 @@ func ascii(s string) string {
 }
 
 func text(img *image.Gray, x, baseline int, s string, c color.Gray) {
-	d := font.Drawer{Dst: img, Src: image.NewUniform(c), Face: face, Dot: fixed.P(x, baseline)}
+	textIn(img, face, x, baseline, s, c)
+}
+
+func textIn(img *image.Gray, f font.Face, x, baseline int, s string, c color.Gray) {
+	d := font.Drawer{Dst: img, Src: image.NewUniform(c), Face: f, Dot: fixed.P(x, baseline)}
 	d.DrawString(ascii(s))
 }
 
 // bigText draws s at twice the size, for messages read from a distance.
 func bigText(img *image.Gray, x, top int, s string) {
-	small := image.NewGray(image.Rect(0, 0, len(s)*charW, 13))
-	draw.Draw(small, small.Bounds(), image.White, image.Point{}, draw.Src)
-	text(small, 0, 11, s, color.Gray{})
+	src := image.NewGray(image.Rect(0, 0, len(s)*smallW, 13))
+	draw.Draw(src, src.Bounds(), image.White, image.Point{}, draw.Src)
+	textIn(src, small, 0, 11, s, color.Gray{})
 	for y := range 13 {
-		for x2 := range small.Bounds().Dx() {
-			c := small.GrayAt(x2, y)
+		for x2 := range src.Bounds().Dx() {
+			c := src.GrayAt(x2, y)
 			for dy := range 2 {
 				for dx := range 2 {
 					img.SetGray(x+2*x2+dx, top+2*y+dy, c)
@@ -92,21 +117,21 @@ func bigText(img *image.Gray, x, top int, s string) {
 func header(img *image.Gray, left, right string) {
 	draw.Draw(img, image.Rect(0, 0, epd.Width, headerH), image.Black, image.Point{}, draw.Src)
 	right = clip(right, maxChars-2)
-	left = clip(left, maxChars-len(right)-2)
-	text(img, 3, 12, left, color.Gray{Y: 255})
-	text(img, epd.Width-3-len(right)*charW, 12, right, color.Gray{Y: 255})
+	left = clip(left, maxChars-len(right)-1)
+	text(img, 2, 14, left, color.Gray{Y: 255})
+	text(img, epd.Width-2-len(right)*charW, 14, right, color.Gray{Y: 255})
 }
 
 func line(img *image.Gray, i int, s string) {
 	if i < bodyLines {
-		text(img, 3, bodyTop+i*lineH, clip(s, maxChars-1), color.Gray{})
+		text(img, 2, bodyTop+i*lineH, clip(s, maxChars), color.Gray{})
 	}
 }
 
 func footer(img *image.Gray, left, right string) {
-	right = clip(right, maxChars-1)
-	text(img, 3, footerBase, clip(left, maxChars-len(right)-2), color.Gray{})
-	text(img, epd.Width-3-len(right)*charW, footerBase, right, color.Gray{})
+	right = clip(right, maxSmall-1)
+	textIn(img, small, 2, footerBase, clip(left, maxSmall-len(right)-2), color.Gray{})
+	textIn(img, small, epd.Width-2-len(right)*smallW, footerBase, right, color.Gray{})
 }
 
 // ago is a compact age: "now", "4m", "2h05m".
@@ -149,7 +174,7 @@ func StatusScreen(v View, addrs []string) *image.Gray {
 		lines = append(lines, fmt.Sprintf("Unsent %d, %s", st.Unconfirmed, hq))
 	case "hq":
 		if st.HQ != nil {
-			lines = append(lines, fmt.Sprintf("Checkpoints heard %d/%d, closed %d", st.HQ.Heard, st.HQ.Listed, st.HQ.Closed))
+			lines = append(lines, fmt.Sprintf("Heard %d/%d checkpoints, %d closed", st.HQ.Heard, st.HQ.Listed, st.HQ.Closed))
 			if st.HQ.Gaps > 0 {
 				lines = append(lines, fmt.Sprintf("Missing batches: %d", st.HQ.Gaps))
 			}
@@ -164,13 +189,14 @@ func StatusScreen(v View, addrs []string) *image.Gray {
 		}
 		lines = append(lines, "graywolf DOWN: "+problem)
 	}
+	// Warnings outrank the link line when space runs short.
+	for _, w := range st.Warnings {
+		lines = append(lines, "! "+w)
+	}
 	if st.LastLink != nil {
 		lines = append(lines, fmt.Sprintf("Link %s %d/%d, %s ago", st.LastLink.Verdict, st.LastLink.Uplink, st.LastLink.Count, ago(st.LastLink.At, now)))
 	} else {
 		lines = append(lines, "Link not checked yet")
-	}
-	for _, w := range st.Warnings {
-		lines = append(lines, "! "+w)
 	}
 	addr := "No network address"
 	if len(addrs) > 0 {
@@ -185,7 +211,7 @@ func StatusScreen(v View, addrs []string) *image.Gray {
 		line(img, i, l)
 	}
 	footer(img, st.RaceName, "Updated "+hhmm(now))
-	return img
+	return mono(img)
 }
 
 // MenuScreen lists labels with the cursor's item highlighted.
@@ -200,14 +226,14 @@ func MenuScreen(title string, labels []string, cursor int) *image.Gray {
 		row := i - first
 		base := bodyTop + row*lineH
 		if i == cursor {
-			draw.Draw(img, image.Rect(0, base-11, epd.Width, base+3), image.Black, image.Point{}, draw.Src)
-			text(img, 3, base, "> "+clip(labels[i], maxChars-3), color.Gray{Y: 255})
+			draw.Draw(img, image.Rect(0, base-14, epd.Width, base+3), image.Black, image.Point{}, draw.Src)
+			text(img, 2, base, "> "+clip(labels[i], maxChars-2), color.Gray{Y: 255})
 		} else {
-			text(img, 3, base, "  "+clip(labels[i], maxChars-3), color.Gray{})
+			text(img, 2, base, "  "+clip(labels[i], maxChars-2), color.Gray{})
 		}
 	}
 	footer(img, "TOP: next", "BOTTOM: select")
-	return img
+	return mono(img)
 }
 
 // ConfirmScreen asks before running an item.
@@ -215,9 +241,9 @@ func ConfirmScreen(label string) *image.Gray {
 	img := newCanvas()
 	header(img, "Confirm", "")
 	line(img, 0, label+"?")
-	line(img, 2, "BOTTOM button: yes, do it")
-	line(img, 3, "TOP button: cancel")
-	return img
+	line(img, 2, "BOTTOM: yes, do it")
+	line(img, 3, "TOP: cancel")
+	return mono(img)
 }
 
 // MessageScreen shows a title and a few lines (results, details).
@@ -227,7 +253,7 @@ func MessageScreen(title string, lines []string) *image.Gray {
 	for i, l := range lines {
 		line(img, i, l)
 	}
-	return img
+	return mono(img)
 }
 
 // WizardScreen is shown with each candidate controller while finding
@@ -239,7 +265,7 @@ func WizardScreen(controller string, i, n int) *image.Gray {
 	bigText(img, 3, 22, "Readable? Then")
 	bigText(img, 3, 52, "press a button.")
 	footer(img, "Trying "+controller, "")
-	return img
+	return mono(img)
 }
 
 // TestPattern helps check a controller by eye: a border, corner marks
@@ -259,20 +285,20 @@ func TestPattern(controller string) *image.Gray {
 		draw.Draw(img, image.Rect(c.X, c.Y, c.X+20, c.Y+20), image.Black, image.Point{}, draw.Src)
 	}
 	bigText(img, 30, 30, "Test pattern")
-	text(img, 30, 80, "controller: "+controller, color.Gray{})
-	return img
+	text(img, 30, 84, "controller: "+controller, color.Gray{})
+	return mono(img)
 }
 
 // AppDownScreen says the app isn't answering (the panel runs apart).
 func AppDownScreen(problem string, now time.Time) *image.Gray {
 	img := newCanvas()
 	header(img, "checkin-board", "")
-	line(img, 0, "The app is not responding.")
+	line(img, 0, "The app isn't responding.")
 	line(img, 1, problem)
-	line(img, 3, "Check the node; reports are")
-	line(img, 4, "kept and sent once it's back.")
+	line(img, 3, "Reports are kept and sent")
+	line(img, 4, "once it's back.")
 	footer(img, "", "Updated "+hhmm(now))
-	return img
+	return mono(img)
 }
 
 // Rotate returns img turned by deg (0 or 180).

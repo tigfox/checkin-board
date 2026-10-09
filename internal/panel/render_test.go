@@ -132,7 +132,7 @@ func TestTextHelpers(t *testing.T) {
 func TestBigTextFits(t *testing.T) {
 	// Double-size characters are 14 px wide: 17 fit across 250 px.
 	for _, s := range []string{"Readable? Then", "press a button.", "Test pattern"} {
-		if len(s)*2*charW+3 > 250 {
+		if len(s)*2*smallW+3 > 250 {
 			t.Errorf("%q is too wide for the panel", s)
 		}
 	}
