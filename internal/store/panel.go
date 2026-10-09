@@ -47,8 +47,11 @@ type PanelSettings struct {
 
 func (PanelSettings) TableName() string { return "panel_settings" }
 
+// defaultPanelSettings: the controller defaults to the current bonnet
+// revision. (The button wizard that detected it is shelved with the
+// buttons; older bonnets are chosen on Admin > Panel.)
 func defaultPanelSettings() PanelSettings {
-	return PanelSettings{ID: 1, Enabled: true, RefreshMin: 5}
+	return PanelSettings{ID: 1, Enabled: true, RefreshMin: 5, Controller: epd.SSD1680Z}
 }
 
 func validController(c string) bool { return c == "" || epd.Known(c) }

@@ -26,7 +26,10 @@ import (
 func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reader, log *slog.Logger) error {
 	fs := flag.NewFlagSet("panel", flag.ContinueOnError)
 	display := fs.String("display", "epd", `"epd" (the bonnet) or "png:DIR" (write frames to DIR)`)
-	buttons := fs.String("buttons", "gpio", `"gpio" (the bonnet, edge events), "poll" (the bonnet, polled), "stdin" (t/b lines) or "none"`)
+	// The buttons and menu are shelved (no partial refresh works on the
+	// bonnet, and a full refresh per press is too slow and too much wear),
+	// so the panel shows status only unless buttons are asked for.
+	buttons := fs.String("buttons", "none", `"none" (status only), "gpio" (the bonnet, edge events), "poll" (polled), or "stdin" (t/b lines)`)
 	test := fs.String("test", "", "draw a test pattern with this controller ("+strings.Join(epd.Controllers(), ", ")+") and exit")
 	testPartial := fs.String("test-partial", "", "bench: try each partial refresh variant with this controller, timing each, and exit")
 	if err := fs.Parse(args); err != nil {
@@ -78,7 +81,8 @@ func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reade
 		return fmt.Errorf("panel: unknown buttons %q", *buttons)
 	}
 	log.Info("panel starting", "app", cfg.AppURL, "display", *display, "buttons", *buttons)
-	p := panel.New(panel.Config{Source: panel.NewClient(cfg.AppURL, cfg.Token), Open: open, Addrs: panel.NodeAddrs, Log: log})
+	p := panel.New(panel.Config{Source: panel.NewClient(cfg.AppURL, cfg.Token), Open: open, Addrs: panel.NodeAddrs, Log: log,
+		NoButtons: *buttons == "none"})
 	return p.Run(ctx, btn)
 }
 

@@ -137,23 +137,16 @@ a PASS in the last 2 hours. The warning doesn't block the start.
 
 If the node has the e-ink bonnet and SPI is on, `install.sh` starts the
 panel service. To turn SPI on: `sudo raspi-config nonint do_spi 0`,
-reboot, and run `install.sh` again. The panel shows the node's status and
-the address volunteers should open, refreshing every few minutes.
+reboot, and run `install.sh` again.
 
-- **First start:** bonnets come in several revisions, so the panel finds
-  its own. It shows "Readable? Then press a button." with each candidate
-  in turn, about 20 s apart. Press either button when the text is clear.
-  If nothing is pressed after three rounds, it stops. Choose the
-  controller, or **Detect again**, on Admin → Panel.
-- **Buttons:**
-  - Any press opens the menu.
-  - **Top** moves to the next item; **bottom** selects.
-  - Actions that change the race, and link checks, ask again: bottom to
-    confirm, top to cancel.
-  - After 30 s untouched, the panel returns to the status screen.
-- **The menu** is edited on **Admin → Panel**: which items, their names
-  and order. Reset, cleanup and passwords are never on the panel.
-- **The display rests 3 minutes between full refreshes**, to protect it.
+- **What it shows:** the node's status, and the address volunteers
+  should open, refreshed every few minutes. The bonnet's buttons aren't
+  used.
+- **If the display stays blank or garbled:** the bonnet may be an older
+  revision. On **Admin → Panel**, show a test pattern with each
+  controller, then choose the one that draws it cleanly. SSD1680Z is the
+  current revision and the default.
+- **The display rests 3 minutes between refreshes**, to protect it.
   That's why the status can lag a change by a few minutes.
 
 ## 3. Race day

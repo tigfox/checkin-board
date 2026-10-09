@@ -352,26 +352,12 @@ func TestE2EPanelTab(t *testing.T) {
 	if width != 250 {
 		t.Fatalf("preview width = %d", width)
 	}
-	// Rename the first item and save the menu.
-	b.run(chromedp.SetValue(`#tab-panel tbody tr:first-child input[aria-label="Label"]`, "Home", chromedp.ByQuery),
-		chromedp.Evaluate(`document.querySelector('#tab-panel tbody tr:first-child input[aria-label="Label"]').dispatchEvent(new Event("input"))`, nil),
-		chromedp.Click(`//section[@id="tab-panel"]//button[text()="Save menu"]`, chromedp.BySearch))
-	b.waitText("#banner", "Menu saved")
-	items, edited, _ := e.st.PanelMenu(ctx)
-	if !edited || items[0].Label != "Home" {
-		t.Fatalf("menu = %+v (edited %v)", items[0], edited)
+	// The menu editor is shelved with the buttons.
+	var editors []*cdp.Node
+	b.run(chromedp.Nodes(`#tab-panel tbody input[aria-label="Label"]`, &editors, chromedp.ByQuery, chromedp.AtLeast(0)))
+	if len(editors) != 0 {
+		t.Fatal("menu editor still shown")
 	}
-	// A refused edit shows the server's reason. (Saving re-rendered the
-	// tab: act on the current elements in one step.)
-	time.Sleep(500 * time.Millisecond)
-	b.run(chromedp.Evaluate(`(() => {
-		const sec = document.querySelector("#tab-panel");
-		const input = sec.querySelector('tbody tr:first-child input[aria-label="Label"]');
-		input.value = "";
-		input.dispatchEvent(new Event("input"));
-		[...sec.querySelectorAll("button")].find((b) => b.textContent === "Save menu").click();
-	})()`, nil))
-	b.waitText("#banner", "label")
 	// Settings save.
 	b.run(chromedp.SetValue("#pn-refresh", "10", chromedp.ByQuery),
 		chromedp.Click(`//section[@id="tab-panel"]//button[text()="Save"]`, chromedp.BySearch))
@@ -379,7 +365,5 @@ func TestE2EPanelTab(t *testing.T) {
 	if ps, _ := e.st.GetPanelSettings(ctx); ps.RefreshMin != 10 {
 		t.Fatalf("refresh = %d", ps.RefreshMin)
 	}
-	b.mu.Lock()
-	b.errs = nil // the refused save logs a 400, as it should
-	b.mu.Unlock()
+	b.noErrors()
 }

@@ -11,7 +11,7 @@ import (
 func TestPanelSettingsDefaultsAndValidation(t *testing.T) {
 	s := newTestStore(t)
 	got, err := s.GetPanelSettings(ctx)
-	if err != nil || !got.Enabled || got.Controller != "" || got.RefreshMin != 5 || got.Rotation != 0 || got.LastFullAt != nil {
+	if err != nil || !got.Enabled || got.Controller != ControllerSSD1680Z || got.RefreshMin != 5 || got.Rotation != 0 || got.LastFullAt != nil {
 		t.Fatalf("defaults = %+v, %v", got, err)
 	}
 	ok := PanelSettings{Enabled: true, Controller: ControllerSSD1680Z, RefreshMin: 10, Rotation: 180}

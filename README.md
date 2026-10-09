@@ -107,8 +107,9 @@ a graywolf Action: [docs/linkcheck-action.md](docs/linkcheck-action.md).
 
 ## Node panel
 
-Nodes with an Adafruit 2.13" e-ink bonnet show their status on it and
-offer a two-button menu (Admin → Panel edits it; spec 8.4). The panel is
+Nodes with an Adafruit 2.13" e-ink bonnet show their status on it (spec
+8.4; the bonnet's buttons and menu are shelved, since the display can't
+update fast enough for a menu). The panel is
 its own service, `checkin-board-panel`, talking to the app over the
 local hook. `install.sh` sets it up when SPI is enabled
 (`sudo raspi-config nonint do_spi 0`, then reboot).

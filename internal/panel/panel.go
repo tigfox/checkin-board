@@ -75,6 +75,9 @@ type Config struct {
 	Addrs func() []string
 	Now   func() time.Time
 	Log   *slog.Logger
+	// NoButtons: status only (the buttons and menu are shelved), so no
+	// detection wizard either: it needs a press.
+	NoButtons bool
 }
 
 type mode int
@@ -147,6 +150,7 @@ type Panel struct {
 	until     time.Time
 	lastInput time.Time
 
+	warnedNoCtl  bool
 	wizardDraws  int
 	wizardNext   time.Time
 	wizardSwitch time.Time
@@ -243,7 +247,13 @@ func (p *Panel) poll(ctx context.Context, now time.Time) {
 	}
 	switch c := v.Settings.Controller; {
 	case c == "":
-		if v.Settings.DetectPending && p.mode != modeWizard {
+		switch {
+		case p.cfg.NoButtons:
+			if !p.warnedNoCtl {
+				p.warnedNoCtl = true
+				p.log.Warn("panel: no display controller set; choose one on Admin > Panel")
+			}
+		case v.Settings.DetectPending && p.mode != modeWizard:
 			p.mode, p.wizardDraws, p.wizardNext = modeWizard, 0, now
 		}
 	default:

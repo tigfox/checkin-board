@@ -560,3 +560,13 @@ func TestRunStopsWithContext(t *testing.T) {
 		t.Fatalf("Run = %v", err)
 	}
 }
+
+func TestNoButtonsMeansNoWizard(t *testing.T) {
+	r := newRig(t, true)
+	r.p.cfg.NoButtons = true
+	r.app.view.Settings.Controller, r.app.view.Settings.DetectPending = "", true
+	r.run(5 * time.Minute)
+	if len(r.order) != 0 {
+		t.Fatalf("wizard ran with no buttons to answer it: %v", r.order)
+	}
+}
