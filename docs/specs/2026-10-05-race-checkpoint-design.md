@@ -1197,6 +1197,26 @@ refresh is due, so changes made in the UI apply without a restart.
 
 ## 9. Delivery phases (each one PR-sized, TDD, 80%+ coverage, `-race`)
 
+**Status at a glance (2026-10-09).**
+
+- **Done:** phases 1–11 and 13–15.
+- **Phase 12** is done except the parts that need radios: (g) the RF
+  contract tests and the multi-node radio bench, and the rest of (h)
+  (CPU with graywolf decoding real audio).
+- **Phase 16** (field rehearsal) has not started.
+- **Node panel:** a status display only. Its buttons and menu are
+  shelved (8.4).
+- **Test nodes** (Pi Zero W, Raspbian 13, both with an e-ink bonnet):
+
+  | Node | Notes |
+  |---|---|
+  | 10.0.0.65 (Checkin-Board) | No radio connected yet. App set up. |
+  | 10.0.1.183 (Checkin-Board2) | AIOC connected. Built from bare by `install.sh`, graywolf included. |
+
+  Both run the current build, with SPI on and Wi-Fi power saving off.
+  Neither graywolf has a radio channel configured yet; that is graywolf's
+  own setup.
+
 | # | Phase | Output | Status |
 |---|---|---|---|
 | 0 | Sign-off | This spec approved | Answers received 2026-10-05; awaiting final approval |
