@@ -201,7 +201,7 @@ APRS client, in graywolf's Messages page and in the packet log:
 | Type | Direction | Text | ACKed by |
 |---|---|---|---|
 | Report | CP -> HQ call | `RC1 R <cp> <seq> @HHMM bib/ss bib/ss @HHMM bib/ss ...` | HQ's graywolf, automatically |
-| Heartbeat | CP -> HQ call | `RC1 H <cp> <lastseq> <HHMMSS>` | HQ's graywolf, automatically |
+| Heartbeat | CP -> HQ call | `RC1 H <cp> <lastseq> <HHMMSS>[ C]` (` C`: this checkpoint is closed, 4.7) | HQ's graywolf, automatically |
 | Gap request | HQ -> CP call | `RC1 G <cp> 12,14-16` | CP's graywolf, automatically (ignored by HQ logic: HQ repeats until filled) |
 | Link probe (**new**, 4.8) | prober -> responder | `RC1 P <cp> <run> <i>/<n>` | responder's graywolf, automatically (the ACK is the round-trip measurement) |
 | Probe reply (**new**, 4.8) | responder -> prober | `RC1 Q <cp> <run> <heard> <lvl> <via>` | prober's graywolf, automatically |
@@ -472,14 +472,30 @@ any state ─Reset→ setup
 | `checking_in` | off | yes: everything unconfirmed due at once, heartbeat at once | — |
 | `checked_in` | off | no | — |
 
+Each node's state is its own. On a checkpoint, the UI and the panel
+(8.4) call Start race and Complete race **Open checkpoint** and **Close
+checkpoint**. An aid station early on the course often closes, packs up
+and heads back to HQ while the race goes on elsewhere (user,
+2026-10-08). Closing a checkpoint never changes HQ's state or any other
+checkpoint's. A checkpoint's usual sequence is Open checkpoint → Close
+checkpoint → Secure for travel → HQ check-in.
+
 1. **Start race** (`setup` → `active`): requires a role, and stamps
    `race_started_at` from the race clock. The keypad works only in
    `active`; before that it shows "Race not started", so no entries are
    taken by accident. graywolf's retries are turned off for each peer
    before the first send to it (3.3), not at Start.
-2. **Complete race** (`active` → `complete`): the keypad stops taking new
-   entries, but voids (typo fixes) still work. A checkpoint flushes
-   anything queued at once and keeps delivering. HQ keeps sending gap
+2. **Complete race** (`active` → `complete`; "Close checkpoint" on a
+   checkpoint): the keypad stops taking new entries, but voids (typo
+   fixes) still work. A checkpoint flushes anything queued at once and
+   keeps delivering. From then on its heartbeats carry the closed flag
+   (` C`). HQ's health panel shows the checkpoint as **closed** at that
+   time, with its counts, instead of a "quiet" warning once it goes
+   silent to travel. HQ keeps asking a closed checkpoint for missing
+   batches until they arrive or it checks in. The codec accepts
+   heartbeats with or without the flag. A checkpoint on an older
+   release just looks quiet at HQ, so every node of an event should
+   run the same release. HQ keeps sending gap
    requests, so a checkpoint's final check-in can still recover a batch HQ
    lost after ACKing it. Results export and recovery imports stay
    available.
@@ -957,10 +973,27 @@ is optional: a node without a bonnet runs exactly as before.
 | Item | Detail |
 |---|---|
 | Display | 2.13", 250×122, monochrome e-ink |
-| Controller | Depends on the bonnet revision: SSD1675 (original), SSD1680 ("legacy"), SSD1680Z (current). Adafruit's advice is to try each. Selectable per node (below) |
+| Controller | Depends on the bonnet revision: SSD1675 (original), SSD1680 ("legacy"), SSD1680Z (current). Adafruit's advice is to try each. Nodes will carry a mix, so the panel finds the right one itself (below) |
 | Interface | SPI0 with CE0 (GPIO 8), MOSI GPIO 10, SCLK GPIO 11; DC GPIO 22, RST GPIO 27, BUSY GPIO 17 |
 | Buttons | GPIO 5 (top) and GPIO 6 (bottom), active low with pull-ups |
 | Refresh | Adafruit: don't refresh more often than every 3 minutes long-term, or the panel can be damaged. SSD1680 parts also support a fast partial refresh |
+| Other header users | None: the radio connects through an [AIOC](https://github.com/skuep/AIOC), which is all USB (sound card, virtual serial port, CM108-style PTT). Phase 14 checks graywolf's PTT is set to the AIOC, not a Pi GPIO |
+
+**Finding the controller.** Bonnet revisions will be mixed across nodes
+(user, 2026-10-08), so the controller is detected per node and saved in
+`panel_settings`:
+
+1. **Read-back probe** (if the bonnet wires it): read a controller
+   register over SPI and match the chip. Phase 14 checks whether the
+   bonnet allows this.
+2. **Button wizard** (the fallback, on first start or after "Detect
+   again"):
+   - The panel draws a large "Press a button if you can read this" with
+     each driver in turn, about 20 s each.
+   - The first press picks that driver.
+   - Unconfirmed drivers are tried again in a loop, so one person at the
+     node finishes setup with no laptop.
+3. **Manual override** on Admin → Panel, with a test pattern per driver.
 
 #### Architecture
 
@@ -1002,8 +1035,8 @@ content depends on the role:
 - **Checkpoint:** tactical name and checkpoint code; race state;
   "N unconfirmed, HQ heard 3 min ago"; graywolf OK or DOWN; the last link
   check (verdict and when).
-- **HQ:** race state; checkpoints heard out of those listed; open gaps;
-  graywolf OK or DOWN.
+- **HQ:** race state; checkpoints heard out of those listed, and how many
+  are closed or checked in; open gaps; graywolf OK or DOWN.
 - **Both:**
   - the web address volunteers should open (`http://<node IP>:8090`);
   - warnings that need attention (race clock not set, journal-only
@@ -1055,8 +1088,8 @@ is stored in the app database and kept by Reset, like branding.
 |---|---|---|
 | `status` | Back to the status screen | Status (both) |
 | `link_check` | Start a link check (4.8). Checkpoint: to HQ. HQ: pick a checkpoint from its list on a second menu. During the race this needs the confirm step, which counts as the operator's confirmation | Run link check (both) |
-| `start_race` | Start race (4.7) | Open checkpoint (checkpoint), Open race (HQ) |
-| `complete_race` | Complete race | Close checkpoint (checkpoint), Close race (HQ) |
+| `start_race` | Start race (4.7): on a checkpoint, opens this checkpoint only | Open checkpoint (checkpoint), Open race (HQ) |
+| `complete_race` | Complete race: on a checkpoint, closes this checkpoint only (keypad off, backlog sent, HQ told it's closed) while the race continues | Close checkpoint (checkpoint), Close race (HQ) |
 | `secure` | Secure for travel | Secure for travel (checkpoint) |
 | `check_in` | Final check-in | HQ check-in (checkpoint) |
 | `show_network` | Show the node's addresses and the web URL | Network (both) |
@@ -1075,8 +1108,8 @@ is stored in the app database and kept by Reset, like branding.
 #### Settings (Admin → Panel)
 
 - panel on or off;
-- controller (SSD1680Z, SSD1680, SSD1675, with a "show test pattern"
-  button to find the right one);
+- controller: detected (above), with "Detect again", a manual choice and
+  a test pattern per driver;
 - status refresh interval;
 - rotation (0° or 180°);
 - the menu editor.
@@ -1101,8 +1134,8 @@ refresh is due, so changes made in the UI apply without a restart.
 | 10 | Web UI | Admin + volunteer interfaces; JS unit tests for logic; scripted browser run of the real binary against the fake graywolf. **Branded status board (8.3):** CSS custom properties from saved branding, header/footer/logo, branding editor with live preview and contrast readout, print stylesheet | **Done** 2026-10-06. Plain HTML + ES modules in `internal/web/static`, no build step, no inline script or style (CSP holds; branding colours go through CSSOM after a hex check). Pages: login/setup, keypad, admin (Race, Station, Outbox, HQ, Branding, Passwords; tabs by role), branded status board with print stylesheet. All text goes through `textContent`. UI logic in `logic.js`, 13 `node --test` tests (`make jstest`). Keypad retries are idempotent: a `request_id` per bib, reused while a save might have happened; the server answers a retry from a 10 min cache, refuses a reused id for a different bib (422) and holds its cap. Browser E2E in headless Chrome against the whole server on the fake graywolf (`make e2e`, opt-in, chromedp is test-only and not in the binary): login, keypad log / double tap / void, admin tabs and settings save, HQ checkpoints, branding save, board. `internal/web` 81.9%. Review fixes: keypad keeps the id on 5xx/409-in-progress/unreadable replies, blocks double saves, sequences list refreshes; admin renders tabs without interleaving, follows lifecycle changes by polling, and survives a failed first load |
 | 11 | Packaging + docs | `GOARM=6` build, systemd unit (`After=graywolf.service`), install script, operator README incl. recovery and reset procedures | **Done** 2026-10-06. `make pi` / `make dist` (ARMv6 bundle: binary, unit, env template, `install.sh`, operator guide); `checkin-board version` (ldflags version + VCS revision). `deploy/checkin-board.service`: own system user, `StateDirectory`, `After=graywolf.service` (no network-online wait; field nodes often have no uplink), strict sandboxing with a soft-fail syscall filter, `GOMEMLIMIT=80MiB`, start-limit on config errors. `install.sh` is idempotent: never overwrites settings or the password, copies the DB aside before an upgrade, restarts the old version if the upgrade fails, refuses to write through symlinks in the service-owned state dir. Tested in Debian containers (arm64, and the ARMv6 bundle on armhf under emulation): install, re-run, upgrade, symlink refusal. `docs/operator-guide.md`: install, first-run setup, race day by role, recovery, lost admin password, reset. Idle RSS on Linux arm64 ≈ 20 MB; the Pi Zero figure and a syscall-filter smoke test wait for 12(h) |
 | 12 | Test campaign + deployment link check | **Link check (4.8):** `RC1 P/Q` behaviour on both sides, admin UI, HQ health column, Start-race warning, `checkin-board linkcheck` CLI with exit codes, Action recipe. **Test campaign:** (a) ≥80% coverage in every package; `go vet`, `staticcheck`, `govulncheck`. (b) Long fuzz runs (30 min each): `FuzzDecode`, roster CSV, journal reader. (c) Soak: simulated 12 h race, 500 runners, 8 checkpoints, 20% loss through the fake graywolf; asserts exactly-once, flat memory, bounded DB growth. (d) Fault injection: `kill -9` between POST and store and between batch and send; graywolf restart, password change and SSE drop mid-race; disk full; torn journal tail after a power cut; OS clock step; checkpoint reset mid-race (seq reuse). (e) Security: auth matrix, Content-Type guard, rate limits, CSV injection, upload limits, hostile logo files (SVG, polyglots, decompression bombs) and branding text (HTML, bidi overrides). (f) Browser E2E at phone width: keypad log/void, network loss, clock banner, admin lifecycle. (g) Real-graywolf bench: contract tests (fast + slow) against the deployed version, then 2-3 graywolf nodes on real radios (low power / dummy loads) replaying a scripted 100-runner race, plus a link check between every node and HQ. (h) Pi Zero W: RSS < 100 MB, CPU during a 20 bibs/min surge, startup time. **Exit criteria:** all green, 9b latency within acceptance, link check PASS on every bench pair; results written to `docs/test-report-<date>.md` | **In progress** 2026-10-06. **Link check done** (4.8, as built): `internal/linkcheck` (87.1%) ticked by the app and simulated end to end; admin tab, HQ health column, Start-race warning; `checkin-board linkcheck` CLI (exit 0/1/2, `--json`, `--brief`); optional webhook Action recipe (2.2, local hooks); review fixes (guarded store transitions, no probe bursts after a stall, stale requests expire, resends budgeted). **Test campaign:** (a) every package ≥80% except `cmd`; `go vet`, `staticcheck` clean; `govulncheck` one unfixed, uncalled `x/crypto` advisory. (b) all five fuzz targets 30 min each, ≈428 M executions, no failures. (c) 12 h soak, 500 runners, 8 checkpoints, 20% loss: exactly once, ≈90 bytes per passage at each checkpoint. (d) graywolf API outage and repeated kill/restart keep exactly once; other faults mapped to existing tests. (e) polyglot logo, safe hook text. (f) 8 browser E2E tests. Report: `docs/test-report-2026-10-06.md`. **Waiting for hardware:** (g) and (h) |
-| 13 | Node panel software | **8.4:** status and menu model; 1-bit renderer with golden-PNG tests; panel loop with the refresh rules (3-minute floor, change-driven, partial only while navigating); fake display and fake buttons; `panel_menu` and `panel_settings` migrations with per-role defaults; action allowlist enforced in the app; local-hook panel endpoints; Admin → Panel tab (menu editor, settings, live preview); `checkin-board panel` subcommand; `checkin-board-panel.service` with device access; install script installs it only when SPI is enabled and a bonnet answers | Not started |
-| 14 | Node panel on hardware | `internal/panel/epd` drivers for SSD1680Z, SSD1680 and SSD1675 on periph.io; controller test pattern; bench on the test node (checklist: each controller, both rotations, partial vs full refresh, button debounce, idle timeout, app down, graywolf down, reboot); measure refresh times and the panel service's RSS on the Pi | Not started (needs the bonnet; shell access to the test node) |
+| 13 | Node panel software + close checkpoint | **4.7:** "Open/Close checkpoint" wording on checkpoints, the heartbeat closed flag (` C`, codec + fuzz) and HQ's "closed" health state. **8.4:** status and menu model; 1-bit renderer with golden-PNG tests; panel loop with the refresh rules (3-minute floor, change-driven, partial only while navigating); fake display and fake buttons; `panel_menu` and `panel_settings` migrations with per-role defaults; action allowlist enforced in the app; local-hook panel endpoints; Admin → Panel tab (menu editor, settings, live preview); `checkin-board panel` subcommand; `checkin-board-panel.service` with device access; install script installs it only when SPI is enabled and a bonnet answers | Not started |
+| 14 | Node panel on hardware | `internal/panel/epd` drivers for SSD1680Z, SSD1680 and SSD1675 on periph.io; controller detection (read-back probe if wired, else the button wizard) and test patterns; check graywolf's PTT is on the AIOC; bench on the test node (checklist: each controller, both rotations, partial vs full refresh, button debounce, idle timeout, app down, graywolf down, reboot); measure refresh times and the panel service's RSS on the Pi | Not started (needs the bonnet; shell access to the test node) |
 | 15 | Field rehearsal | Deploy to real locations; **run the link check at every node first**; then a walk-around on the course | Not started |
 
 Phase 1 comes first on purpose: every later phase rests on graywolf
@@ -1188,8 +1221,9 @@ seconds at low loss.)
 | E-ink panel worn out by refreshing too often | 3-minute floor on full refreshes, enforced in the app (not only the panel); partial refreshes only during button use, rate-limited; no refresh when nothing changed |
 | Panel fault takes the node down | Separate process and service; only it gets SPI/GPIO; it talks to the app over the local hook; the app runs normally without it |
 | Someone presses the buttons and changes the race state | Allowlisted actions only, nothing destructive; lifecycle actions always confirmed; items can be disabled per node; actions logged with source `panel` |
-| Wrong controller for the bonnet revision | Selectable controller with a test pattern; the bench (phase 14) checks all three |
-| Bonnet pins clash with other hardware on the Pi header (radio interface, PTT GPIO) | Pin list in 8.4; check against the radio interface before phase 14 (open question) |
+| Wrong controller for the bonnet revision (revisions are mixed across nodes) | Detected per node: read-back probe if wired, else the button wizard; manual override and test patterns; the bench (phase 14) checks all three |
+| Bonnet pins clash with other hardware on the Pi header | The radio uses an AIOC (USB only), so nothing else is on the header; phase 14 confirms graywolf's PTT isn't set to a Pi GPIO |
+| HQ raises a false "quiet" alarm for a checkpoint that closed early and is travelling | Closed flag on the checkpoint's heartbeats; HQ shows it as closed (4.7) |
 | Operator deletes race rows in graywolf mid-race | CP: resend 404 means send it new (HQ dedups). HQ: rows already ingested are unaffected |
 | Accidental reset | Type-the-race-name confirm, stronger warning while active, automatic backup before clearing |
 | Cleanup deletes operator messages | Deletes only app-recorded row ids whose text starts `RC1 `; never thread deletes |
@@ -1233,6 +1267,21 @@ Added 2026-10-06:
 6. **Branding.** The status board's logo, colour scheme, and header and
    footer text are configurable in the admin panel (8.3).
 
+Answered 2026-10-08 (node panel, 8.4):
+
+7. **Bonnet revision:** unknown on the first unit, and nodes will have
+   a mix. So the controller is detected per node (probe or button
+   wizard), with a manual override.
+8. **Header pins:** the radio connects through an AIOC (USB sound card,
+   serial and CM108 PTT), so nothing else uses the header. Phase 14
+   confirms graywolf's PTT setting.
+9. **Close checkpoint:** a checkpoint often closes before the race is
+   complete (early on the course), then returns to HQ. "Close
+   checkpoint" is that node's Complete, and HQ is told through the
+   heartbeat's closed flag (4.7).
+10. **Test node:** the test node has a bonnet attached, and there is
+    shell access to it.
+
 ## 12. Fallback transport (not planned)
 
 If the Messages API turns out unworkable in phase 1, graywolf also serves
@@ -1245,21 +1294,7 @@ This is a decision for after phase 1, not part of the MVP.
 
 ## 13. Open questions
 
-Node panel (8.4), to answer before phase 14:
-
-1. **Bonnet revision** on the nodes (SSD1680Z is the current one). The
-   controller setting and test pattern cover any of them, but knowing
-   it lets phase 14 start with the right driver.
-2. **Pins.** Does the radio interface, or graywolf's PTT, use any of
-   GPIO 5, 6, 8, 10, 11, 17, 22 or 27, or SPI0?
-3. **Menu wording.** "Open checkpoint" and "Close checkpoint" are taken
-   to mean Start race and Complete race (4.7) on a checkpoint. Confirm,
-   or say if they should mean something else (e.g. opening the keypad
-   without starting the race).
-4. **Test access.** Phase 14 needs shell access to the test node with a
-   bonnet attached.
-
-Otherwise none blocking. The admin settings page shows the fields in 8.1 plus the
+None blocking. The admin settings page shows the fields in 8.1 plus the
 batching and timing knobs (batch after, batches in flight, heartbeat,
 gap grace); confirm in the field whether those should be hidden behind
 an "advanced" toggle.
