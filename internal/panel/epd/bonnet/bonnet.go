@@ -155,52 +155,27 @@ func Open(ctrl string) (epd.Display, error) {
 	return epd.NewPanel(b, ctrl)
 }
 
-// Button is a press of one of the bonnet's buttons.
-type Button int
-
-// The buttons.
-const (
-	Top Button = iota
-	Bottom
-)
-
-// debounce ignores contact bounce after a press.
-const debounce = 150 * time.Millisecond
-
-// Buttons reports presses of the bonnet's two buttons (active low, with
-// the bonnet's pull-ups) until ctx ends.
-func Buttons(ctx context.Context, out chan<- Button) error {
+// Buttons reports presses of the bonnet's two buttons (active low,
+// pulled up) until ctx ends. It polls the pin levels (epd.PollButtons):
+// the kernel's GPIO edge events proved unreliable on the bench.
+func Buttons(ctx context.Context, out chan<- epd.Button) error {
 	if err := initHost(); err != nil {
 		return fmt.Errorf("bonnet: init GPIO: %w", err)
 	}
-	var wg sync.WaitGroup
-	for _, bt := range []struct {
-		name string
-		b    Button
-	}{{pinTop, Top}, {pinBot, Bottom}} {
-		p, err := pin(bt.name)
-		if err != nil {
-			return err
-		}
-		if err := p.In(gpio.PullUp, gpio.FallingEdge); err != nil {
-			return fmt.Errorf("bonnet: button %s: %w", bt.name, err)
-		}
-		wg.Go(func() {
-			var last time.Time
-			for ctx.Err() == nil {
-				if !p.WaitForEdge(500 * time.Millisecond) {
-					continue
-				}
-				if now := time.Now(); now.Sub(last) >= debounce && p.Read() == gpio.Low {
-					last = now
-					select {
-					case out <- bt.b:
-					case <-ctx.Done():
-					}
-				}
-			}
-		})
+	top, err := pin(pinTop)
+	if err != nil {
+		return err
 	}
-	wg.Wait()
+	bottom, err := pin(pinBot)
+	if err != nil {
+		return err
+	}
+	for _, p := range []gpio.PinIO{top, bottom} {
+		if err := p.In(gpio.PullUp, gpio.NoEdge); err != nil {
+			return fmt.Errorf("bonnet: button %s: %w", p, err)
+		}
+	}
+	read := func() (bool, bool) { return top.Read() == gpio.Low, bottom.Read() == gpio.Low }
+	epd.PollButtons(ctx, read, epd.PollEvery, time.Now, out)
 	return ctx.Err()
 }

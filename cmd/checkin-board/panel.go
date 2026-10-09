@@ -48,7 +48,7 @@ func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reade
 		go readButtons(stdin, btn)
 	case "gpio":
 		go func() {
-			raw := make(chan bonnet.Button, 8)
+			raw := make(chan epd.Button, 8)
 			go func() {
 				if err := bonnet.Buttons(ctx, raw); err != nil && ctx.Err() == nil {
 					log.Error("panel: buttons", "err", err)
@@ -59,6 +59,8 @@ func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reade
 				case <-ctx.Done():
 					return
 				case b := <-raw:
+					// Logged so a press can be confirmed from the journal.
+					log.Info("panel: button", "button", map[epd.Button]string{epd.Top: "top", epd.Bottom: "bottom"}[b])
 					btn <- panel.Button(b)
 				}
 			}
