@@ -1,5 +1,5 @@
 [Unit]
-Description=checkin-board node panel (e-ink status display and buttons)
+Description=checkin-board node panel (e-ink status display)
 Documentation=file:///usr/local/share/doc/checkin-board/operator-guide.md
 # The panel shows the app's status and runs menu items through it; it
 # copes with the app being down (and says so), so this is ordering only.

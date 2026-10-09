@@ -10,7 +10,9 @@ installed beside it. Volunteers use their phones on the node's Wi-Fi.
 
 ## 1. Install
 
-You need a node with graywolf already running, and shell access.
+You need a Raspberry Pi (or other Debian machine) with shell access. If
+graywolf isn't installed, the script installs its latest release first
+(see below).
 
 1. Copy the release bundle to the node and unpack it in `/tmp` (it's in RAM, which spares the SD card's limited writes), and delete both once installed, because a Pi Zero has little RAM to spare:
    ```sh
@@ -21,6 +23,18 @@ You need a node with graywolf already running, and shell access.
    cd /tmp && rm -rf checkin-board-<version> checkin-board-<version>-linux.tar.gz
    ```
    The script:
+   - **if graywolf isn't installed**: downloads graywolf's latest release
+     for this machine (`.deb` for `dpkg --print-architecture`), checks it
+     against the release's checksums, installs and starts it, then
+     creates **your graywolf admin login**. It asks for the username and
+     password, or reads them from `GRAYWOLF_ADMIN_USER` and
+     `GRAYWOLF_ADMIN_PASSWORD_FILE`. Do this at home: offline, the script
+     carries on without graywolf. `--graywolf-version v0.14.14` pins a
+     version, and `--no-graywolf` skips this step. An installed graywolf
+     is never upgraded. The script only notes when its version differs
+     from the one this release was tested with. Setting up graywolf's
+     radio side (callsign, AIOC sound card, PTT) is graywolf's own
+     setup: see its handbook;
    - creates a `checkin-board` system user;
    - installs the binary to `/usr/local/bin`;
    - writes `/etc/checkin-board/checkin-board.env`;
