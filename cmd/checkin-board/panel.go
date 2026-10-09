@@ -3,36 +3,42 @@ package main
 import (
 	"bufio"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
 	"checkin-board/internal/config"
 	"checkin-board/internal/panel"
 	"checkin-board/internal/panel/epd"
+	"checkin-board/internal/panel/epd/bonnet"
 )
 
 // runPanel runs the node panel (spec 8.4) as its own process: it reads
 // the app's address and hook token from the app's environment, and
-// drives the e-ink display and buttons. Until the hardware drivers land
-// (phase 14), -display png:DIR writes each frame to DIR as a PNG and
-// -buttons stdin reads "t" (top) and "b" (bottom) lines, for trying the
-// panel on any machine.
+// drives the e-ink bonnet's display and buttons. For trying it on any
+// machine, -display png:DIR writes each frame to DIR as a PNG and
+// -buttons stdin reads "t" (top) and "b" (bottom) lines. -test
+// CONTROLLER draws a test pattern and a partial update on the bonnet
+// and reports how long each took, without the app.
 func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reader, log *slog.Logger) error {
 	fs := flag.NewFlagSet("panel", flag.ContinueOnError)
 	display := fs.String("display", "epd", `"epd" (the bonnet) or "png:DIR" (write frames to DIR)`)
-	buttons := fs.String("buttons", "stdin", `"gpio" (the bonnet), "stdin" (t/b lines) or "none"`)
+	buttons := fs.String("buttons", "gpio", `"gpio" (the bonnet), "stdin" (t/b lines) or "none"`)
+	test := fs.String("test", "", "draw a test pattern with this controller ("+strings.Join(epd.Controllers(), ", ")+") and exit")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.PanelFrom(env)
+	open, err := displayOpener(*display)
 	if err != nil {
 		return err
 	}
-	open, err := displayOpener(*display)
+	if *test != "" {
+		return testDisplay(open, *test, log)
+	}
+	cfg, err := config.PanelFrom(env)
 	if err != nil {
 		return err
 	}
@@ -40,13 +46,59 @@ func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reade
 	switch *buttons {
 	case "stdin":
 		go readButtons(stdin, btn)
+	case "gpio":
+		go func() {
+			raw := make(chan bonnet.Button, 8)
+			go func() {
+				if err := bonnet.Buttons(ctx, raw); err != nil && ctx.Err() == nil {
+					log.Error("panel: buttons", "err", err)
+				}
+			}()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case b := <-raw:
+					btn <- panel.Button(b)
+				}
+			}
+		}()
 	case "none":
 	default:
-		return fmt.Errorf("panel: buttons %q: the bonnet's GPIO buttons arrive with its driver (phase 14); use stdin or none", *buttons)
+		return fmt.Errorf("panel: unknown buttons %q", *buttons)
 	}
 	log.Info("panel starting", "app", cfg.AppURL, "display", *display, "buttons", *buttons)
 	p := panel.New(panel.Config{Source: panel.NewClient(cfg.AppURL, cfg.Token), Open: open, Addrs: panel.NodeAddrs, Log: log})
 	return p.Run(ctx, btn)
+}
+
+// testDisplay draws a test pattern (full refresh) and then a menu
+// (partial refresh, where the controller has one), timing each: a
+// refresh that returns at once or times out points at the wrong
+// controller or a loose bonnet.
+func testDisplay(open panel.Opener, controller string, log *slog.Logger) error {
+	if !epd.Known(controller) {
+		return fmt.Errorf("panel: unknown controller %q (one of %s)", controller, strings.Join(epd.Controllers(), ", "))
+	}
+	d, err := open(controller)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	start := time.Now()
+	if err := d.Full(panel.TestPattern(controller)); err != nil {
+		return err
+	}
+	log.Info("panel test: full refresh", "controller", controller, "took", time.Since(start).Round(10*time.Millisecond))
+	if !d.CanPartial() {
+		return nil
+	}
+	start = time.Now()
+	if err := d.Partial(panel.MenuScreen("Partial refresh test", []string{"If this replaced the", "test pattern cleanly,", "partial refresh works."}, 0)); err != nil {
+		return err
+	}
+	log.Info("panel test: partial refresh", "controller", controller, "took", time.Since(start).Round(10*time.Millisecond))
+	return nil
 }
 
 // displayOpener picks the display backend.
@@ -59,7 +111,7 @@ func displayOpener(spec string) (panel.Opener, error) {
 			return panel.NewPNGDisplay(dir, c, c != epd.SSD1675), nil
 		}, nil
 	case spec == "epd":
-		return nil, errors.New("panel: the e-ink driver arrives in phase 14; use -display png:DIR to try the panel")
+		return bonnet.Open, nil
 	}
 	return nil, fmt.Errorf("panel: unknown display %q", spec)
 }

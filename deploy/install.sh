@@ -29,6 +29,8 @@ ENV_FILE=$ETC/checkin-board.env
 PW_FILE=$ETC/gw-password
 STATE=/var/lib/checkin-board
 UNIT=/etc/systemd/system/checkin-board.service
+PANEL_UNIT=/etc/systemd/system/checkin-board-panel.service
+HOOK_FILE=$ETC/hook-token
 # graywolf's own database, for creating the app's graywolf login
 # (override with GRAYWOLF_DB=/path/to/graywolf.db).
 GW_DB=${GRAYWOLF_DB:-/var/lib/graywolf/graywolf.db}
@@ -58,14 +60,20 @@ UPGRADE=no
 [ -f "$STATE/checkin-board.db" ] && UPGRADE=yes # a node that has run before
 STOPPED=no
 DONE=no
+PANEL_WAS=no
 restart_on_failure() {
 	if [ "$STOPPED" = yes ] && [ "$DONE" = no ]; then
 		say "install: failed; starting the previous version again" >&2
 		systemctl start checkin-board || true
+		[ "$PANEL_WAS" = yes ] && systemctl start checkin-board-panel || true
 	fi
 }
 trap restart_on_failure EXIT
 if [ -f "$UNIT" ]; then
+	if systemctl is-active --quiet checkin-board-panel 2>/dev/null; then
+		PANEL_WAS=yes
+	fi
+	systemctl stop checkin-board-panel 2>/dev/null || true
 	systemctl stop checkin-board
 	STOPPED=yes
 fi
@@ -168,7 +176,19 @@ fi
 chown "$USER_NAME:$USER_NAME" "$PW_FILE"
 chmod 0600 "$PW_FILE"
 
+# The local hook token (spec 2.2): the node panel uses it, and so can a
+# graywolf webhook Action (docs/linkcheck-action.md).
+if [ ! -s "$HOOK_FILE" ]; then
+	(umask 077 && od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$HOOK_FILE")
+fi
+chown "$USER_NAME:$USER_NAME" "$HOOK_FILE"
+chmod 0600 "$HOOK_FILE"
+if ! grep -q '^CB_HOOK_TOKEN_FILE=' "$ENV_FILE"; then
+	printf '\nCB_HOOK_TOKEN_FILE=%s\n' "$HOOK_FILE" >>"$ENV_FILE"
+fi
+
 install -m 0644 "$HERE/checkin-board.service" "$UNIT"
+install -m 0644 "$HERE/checkin-board-panel.service" "$PANEL_UNIT"
 if [ -f "$HERE/operator-guide.md" ]; then
 	install -d -m 0755 "$DOC"
 	install -m 0644 "$HERE/operator-guide.md" "$DOC/operator-guide.md"
@@ -186,6 +206,17 @@ if [ ! -s "$PW_FILE" ]; then
 fi
 
 systemctl start checkin-board
+
+# The node panel (spec 8.4) needs SPI and the spi/gpio groups.
+if [ -e /dev/spidev0.0 ] && getent group spi >/dev/null && getent group gpio >/dev/null; then
+	systemctl enable --quiet checkin-board-panel
+	systemctl restart checkin-board-panel
+	say "Node panel started (e-ink bonnet)."
+else
+	systemctl disable --quiet checkin-board-panel 2>/dev/null || true
+	say "Node panel not started: SPI is off (no /dev/spidev0.0). With an e-ink"
+	say "bonnet attached: sudo raspi-config nonint do_spi 0, reboot, run this again."
+fi
 DONE=yes
 if [ "$UPGRADE" = yes ]; then
 	say "Upgraded and restarted."

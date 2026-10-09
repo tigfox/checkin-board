@@ -49,7 +49,7 @@ func TestPanelCommandDryRun(t *testing.T) {
 		time.Sleep(1200 * time.Millisecond)
 		_, _ = pw.Write([]byte("t\n"))
 	}()
-	err := runPanel(ctx, env, []string{"-display", "png:" + frames}, pr, slog.New(slog.DiscardHandler))
+	err := runPanel(ctx, env, []string{"-display", "png:" + frames, "-buttons", "stdin"}, pr, slog.New(slog.DiscardHandler))
 	if err != nil && err != context.DeadlineExceeded {
 		t.Fatal(err)
 	}
@@ -64,10 +64,23 @@ func TestPanelCommandArgs(t *testing.T) {
 	if err := runPanel(context.Background(), env, []string{"-display", "png:/tmp"}, strings.NewReader(""), slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), config.EnvHookTokenFile) {
 		t.Fatalf("no token: %v", err)
 	}
-	for _, bad := range []string{"epd", "lcd", "png:"} {
+	for _, bad := range []string{"lcd", "png:"} {
 		if _, err := displayOpener(bad); err == nil {
 			t.Errorf("display %q accepted", bad)
 		}
+	}
+	frames := t.TempDir()
+	if err := runPanel(context.Background(), env, []string{"-display", "png:" + frames, "-test", "ssd1680z"}, strings.NewReader(""), slog.New(slog.DiscardHandler)); err != nil {
+		t.Fatalf("test mode: %v", err)
+	}
+	if files, _ := filepath.Glob(filepath.Join(frames, "*.png")); len(files) != 2 {
+		t.Fatalf("test mode frames = %v (pattern, then partial)", files)
+	}
+	if err := runPanel(context.Background(), env, []string{"-display", "png:" + t.TempDir(), "-test", "il0373"}, strings.NewReader(""), slog.New(slog.DiscardHandler)); err == nil {
+		t.Fatal("unknown controller accepted")
+	}
+	if err := runPanel(context.Background(), env, []string{"-display", "png:/tmp", "-buttons", "x"}, strings.NewReader(""), slog.New(slog.DiscardHandler)); err == nil {
+		t.Fatal("unknown buttons accepted")
 	}
 	if b, ok := parseButton("top"); !ok || b != panel.Top {
 		t.Error("top")

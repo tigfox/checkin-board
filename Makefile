@@ -19,7 +19,7 @@ dist:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/bin/checkin-board-linux-armv6 ./cmd/checkin-board
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/bin/checkin-board-linux-arm64 ./cmd/checkin-board
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/bin/checkin-board-linux-amd64 ./cmd/checkin-board
-	cp deploy/checkin-board.service deploy/checkin-board.env deploy/install.sh docs/operator-guide.md docs/linkcheck-action.md README.md $(DIST)/
+	cp deploy/checkin-board.service deploy/checkin-board-panel.service deploy/checkin-board.env deploy/install.sh docs/operator-guide.md docs/linkcheck-action.md README.md $(DIST)/
 	cd $(DIST) && shasum -a 256 bin/* > SHA256SUMS
 	COPYFILE_DISABLE=1 tar -C dist -czf $(DIST)-linux.tar.gz checkin-board-$(VERSION)
 

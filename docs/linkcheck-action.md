@@ -26,18 +26,16 @@ Don't put a reverse proxy (nginx, Caddy) on the same node in front of
 the app. Every client would then appear to come from the node itself,
 and only the token would protect the hook.
 
-## 1. On the checkpoint node: give the app a hook token
+## 1. On the checkpoint node: the hook token
+
+`install.sh` creates it (`/etc/checkin-board/hook-token`); the node panel
+uses it too. Copy it for step 2:
 
 ```sh
-head -c 32 /dev/urandom | base64 | tr -d '/+=' | sudo tee /etc/checkin-board/hook-token >/dev/null
-sudo chown checkin-board:checkin-board /etc/checkin-board/hook-token
-sudo chmod 600 /etc/checkin-board/hook-token
-echo 'CB_HOOK_TOKEN_FILE=/etc/checkin-board/hook-token' | sudo tee -a /etc/checkin-board/checkin-board.env
-sudo systemctl restart checkin-board
-sudo cat /etc/checkin-board/hook-token     # copy it for step 2
+sudo cat /etc/checkin-board/hook-token
 ```
 
-The startup log line `starting config=… hook=on` confirms it.
+The startup log line `starting config=… hook=on` confirms the hook is on.
 
 ## 2. In the checkpoint's graywolf: define the Action
 

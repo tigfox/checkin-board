@@ -129,6 +129,29 @@ checkpoint from its own Link check tab, and its health panel shows each
 checkpoint's latest result. **Start race** warns about any link without
 a PASS in the last 2 hours. The warning doesn't block the start.
 
+### The node panel (e-ink display)
+
+If the node has the e-ink bonnet and SPI is on, `install.sh` starts the
+panel service. To turn SPI on: `sudo raspi-config nonint do_spi 0`,
+reboot, and run `install.sh` again. The panel shows the node's status and
+the address volunteers should open, refreshing every few minutes.
+
+- **First start:** bonnets come in several revisions, so the panel finds
+  its own. It shows "Readable? Then press a button." with each candidate
+  in turn, about 20 s apart. Press either button when the text is clear.
+  If nothing is pressed after three rounds, it stops. Choose the
+  controller, or **Detect again**, on Admin → Panel.
+- **Buttons:**
+  - Any press opens the menu.
+  - **Top** moves to the next item; **bottom** selects.
+  - Actions that change the race, and link checks, ask again: bottom to
+    confirm, top to cancel.
+  - After 30 s untouched, the panel returns to the status screen.
+- **The menu** is edited on **Admin → Panel**: which items, their names
+  and order. Reset, cleanup and passwords are never on the panel.
+- **The display rests 3 minutes between full refreshes**, to protect it.
+  That's why the status can lag a change by a few minutes.
+
 ## 3. Race day
 
 | When | Checkpoint admin | HQ admin |

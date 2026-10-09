@@ -1,0 +1,47 @@
+[Unit]
+Description=checkin-board node panel (e-ink status display and buttons)
+Documentation=file:///usr/local/share/doc/checkin-board/operator-guide.md
+# The panel shows the app's status and runs menu items through it; it
+# copes with the app being down (and says so), so this is ordering only.
+After=checkin-board.service
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/checkin-board/checkin-board.env
+ExecStart=/usr/local/bin/checkin-board panel
+Restart=on-failure
+RestartSec=10
+
+User=checkin-board
+Group=checkin-board
+# The bonnet: SPI for the display, GPIO for its control lines and buttons.
+SupplementaryGroups=spi gpio
+
+# The panel only reads its token and talks to the app over loopback;
+# it needs the SPI and GPIO devices, so PrivateDevices stays off.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+UMask=0077
+# AF_NETLINK: reading the node's addresses for the status screen.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectClock=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

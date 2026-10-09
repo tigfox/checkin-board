@@ -109,16 +109,25 @@ a graywolf Action: [docs/linkcheck-action.md](docs/linkcheck-action.md).
 
 Nodes with an Adafruit 2.13" e-ink bonnet show their status on it and
 offer a two-button menu (Admin → Panel edits it; spec 8.4). The panel is
-its own process, `checkin-board panel`, talking to the app over the local
-hook (`CB_HOOK_TOKEN_FILE` must be set for both). Until the e-ink driver
-lands (phase 14), try it on any machine:
+its own service, `checkin-board-panel`, talking to the app over the
+local hook. `install.sh` sets it up when SPI is enabled
+(`sudo raspi-config nonint do_spi 0`, then reboot).
+
+Check the bonnet without the app, once per controller until the test
+pattern is readable (a refresh that returns at once or times out points
+at the wrong controller):
 
 ```sh
-CB_HOOK_TOKEN_FILE=... CB_LISTEN=:8090 checkin-board panel -display png:/tmp/frames
+sudo systemctl stop checkin-board-panel
+sudo -u checkin-board checkin-board panel -test ssd1680z
 ```
 
-Each refresh is written to `/tmp/frames` as a PNG. Type `t` (top button)
-or `b` (bottom) and Enter to press the buttons.
+Try the panel on any machine, with frames written as PNGs and the
+buttons on the keyboard (`t` top, `b` bottom):
+
+```sh
+CB_HOOK_TOKEN_FILE=... CB_LISTEN=:8090 checkin-board panel -display png:/tmp/frames -buttons stdin
+```
 
 ## Development
 
