@@ -128,6 +128,8 @@ internal/journal/         power-safe CSV journal (port)
 internal/recovery/        CP export, HQ import (port)
 internal/lifecycle/       complete race, graywolf cleanup, reset (section 4.7)
 internal/web/             HTTP server, auth, REST handlers, embedded static UI
+internal/panel/           node panel (8.4): status/menu model, 1-bit renderer, panel loop
+internal/panel/epd/       e-ink drivers (SSD1675, SSD1680, SSD1680Z) on periph.io SPI/GPIO
 web/                      static HTML/CSS/JS (embedded with go:embed)
 ```
 
@@ -174,10 +176,11 @@ app, it is a graywolf **webhook Action** calling a local hook on the app
 - They reply 200 with one short line, because graywolf relays only
   "error: http NNN" for anything else.
 
-The first hook is the remote link check (4.8.7). The same path is meant
-for future triggers: physical buttons on a node (e.g. "log", "start race"
-or "link check" wired to GPIO and fed to graywolf as a trigger), and a
-remote restart or status query.
+The first hook is the remote link check (4.8.7). The node panel (8.4) is
+the second user: its own service reads the e-ink bonnet's buttons and
+calls `/api/hook/panel/...`. The same path stays open for more triggers,
+such as a remote restart or status query through a graywolf webhook
+Action.
 
 Phase 1 must verify each row against the target graywolf version. One
 example: the conversation-prefs route answers on 0.14.14, but it's missing
@@ -690,6 +693,8 @@ and details it left open:
 | `inbox_state` | both | cursor (singleton) |
 | `link_checks` | both | run, role (prober/responder), peer_call, started_at, n, heard, acked, reply_received, rtt_median_ms, remote_lvl, local_lvl, via, verdict (phase 12) |
 | `auth` | both | bcrypt hashes of the admin and volunteer passwords, session secret (migration added in phase 9) |
+| `panel_menu` | both | position, label, action, confirm, roles, enabled (8.4); defaults seeded per role; kept by Reset |
+| `panel_settings` | both | enabled, controller, refresh interval, rotation; last full refresh time (8.4) |
 | `sessions` | both | token hash, role (`admin`/`volunteer`), created_at, expires_at; deleted on logout, on expiry, and for every session of a role when that role's password changes (phase 9) |
 
 The station **callsign** isn't stored in the app: graywolf's
@@ -771,6 +776,11 @@ Admin interface (admin session only; a volunteer session gets 403):
 | GET | `/api/branding`, `/api/branding/logo` | HQ, any session: what the board renders. The logo is served with its stored type, `X-Content-Type-Options: nosniff` and an ETag (its sha256) |
 | POST | `/api/admin/linkcheck` | both: start a link check (`{to?, count?}`), 409 if one is running or rate-limited |
 | GET | `/api/admin/linkchecks`, `/api/admin/linkchecks/{id}` | both: history / live progress |
+| GET/PUT | `/api/admin/panel`, `/api/admin/panel/menu` | both: panel settings and menu (8.4); PUT validates labels and the action allowlist |
+| GET | `/api/admin/panel/preview.png` | both: the panel's current screen, rendered as it would be on the display |
+| POST | `/api/admin/panel/refresh`, `/api/admin/panel/test-pattern` | both: ask the panel for a full refresh (3-minute rule applies) or a controller test pattern |
+| GET | `/api/hook/panel` | panel service only (local hook, 2.2): status snapshot, menu with availability, refresh due |
+| POST | `/api/hook/panel/actions/{id}` | panel service only: run a menu item; the app checks role, state and allowlist |
 
 The UI polls every 5 s. There are no WebSockets from the app to the
 browser.
@@ -932,6 +942,148 @@ same at every event.
   crew). Printing the board uses the branding, with background colours
   dropped for paper.
 
+### 8.4 Node panel: e-ink status display and buttons (new, 2026-10-08)
+
+Each node's Raspberry Pi carries an [Adafruit 2.13" e-ink
+bonnet](https://learn.adafruit.com/2-13-in-e-ink-bonnet). It has a
+250×122 monochrome display and two buttons. The panel shows the node's
+status at a glance, updated every few minutes. The two buttons drive a
+short menu of commands (run a link check, open or close the checkpoint,
+final check-in at HQ…). The menu is edited on the admin page. The panel
+is optional: a node without a bonnet runs exactly as before.
+
+**Hardware** (from Adafruit's guide):
+
+| Item | Detail |
+|---|---|
+| Display | 2.13", 250×122, monochrome e-ink |
+| Controller | Depends on the bonnet revision: SSD1675 (original), SSD1680 ("legacy"), SSD1680Z (current). Adafruit's advice is to try each. Selectable per node (below) |
+| Interface | SPI0 with CE0 (GPIO 8), MOSI GPIO 10, SCLK GPIO 11; DC GPIO 22, RST GPIO 27, BUSY GPIO 17 |
+| Buttons | GPIO 5 (top) and GPIO 6 (bottom), active low with pull-ups |
+| Refresh | Adafruit: don't refresh more often than every 3 minutes long-term, or the panel can be damaged. SSD1680 parts also support a fast partial refresh |
+
+#### Architecture
+
+- **A separate process: `checkin-board panel`** (same binary), run as its
+  own systemd service, `checkin-board-panel.service`. Only this process
+  touches hardware.
+  - It gets `/dev/spidev0.0` and `/dev/gpiochip0`
+    (`SupplementaryGroups=spi gpio`, `DeviceAllow=`).
+  - The main service keeps `PrivateDevices=yes` and its other
+    sandboxing.
+  - A display or GPIO fault can't stop race reporting. If the main app
+    is down, the panel says so.
+- **It talks to the app only through local hooks** (2.2): loopback, with a
+  bearer token. `install.sh` generates the token and gives it to both
+  services, so the panel needs no login.
+  - `GET /api/hook/panel` returns the status snapshot and the menu with
+    each item's availability.
+  - `POST /api/hook/panel/actions/{id}` runs one menu item.
+  - The app, not the panel, checks every action against the node's role
+    and race state.
+- **Pure Go**, like the rest of the app. It uses periph.io for SPI and
+  GPIO (no cgo). The display driver is a small `internal/panel/epd`
+  package with the three controllers' init and refresh sequences. Its
+  starting points are periph.io's pure-Go SSD1680 driver (Waveshare 2.13"
+  v3/v4) and Adafruit's MIT-licensed driver as reference, with
+  attribution. Rendering is `image/draw` onto a 1-bit image with a
+  bundled bitmap font.
+- **Testable without hardware.** The renderer produces an `image.Image`.
+  A fake display records frames, and golden-PNG tests pin every screen.
+  The admin page shows a live preview of the panel
+  (`/api/admin/panel/preview.png`), so the layout can be checked from a
+  browser.
+
+#### Status screen
+
+The status screen uses five or six lines of a small fixed font, and its
+content depends on the role:
+
+- **Checkpoint:** tactical name and checkpoint code; race state;
+  "N unconfirmed, HQ heard 3 min ago"; graywolf OK or DOWN; the last link
+  check (verdict and when).
+- **HQ:** race state; checkpoints heard out of those listed; open gaps;
+  graywolf OK or DOWN.
+- **Both:**
+  - the web address volunteers should open (`http://<node IP>:8090`);
+  - warnings that need attention (race clock not set, journal-only
+    saves, graywolf login failing);
+  - the time of the update, so a stale screen is obvious.
+- **Cadence:**
+  - a full refresh every 5 minutes by default (adjustable from 3 to 30;
+    never under 3);
+  - an important change (race state, graywolf lost, a warning) moves the
+    next refresh up, but never sooner than 3 minutes after the last;
+  - nothing is refreshed when nothing changed.
+
+#### Buttons and menu
+
+The bonnet has only two buttons, so the scheme stays simple:
+
+- **Top = next, bottom = select.** Any press on the status screen opens
+  the menu.
+- The highlighted item moves with **partial refreshes** (fast, about a
+  second), rate-limited to one per second.
+- A menu session ends with a full refresh back to the status screen, on
+  **Back** or after 30 s idle.
+- **Confirmation.**
+  - An item marked "confirm" shows "Press SELECT again to confirm, NEXT
+    to cancel". Lifecycle actions are always confirmed.
+  - The result ("Link check started", "Can't: race not started") shows
+    for 10 s.
+  - On panels without partial refresh (SSD1675), navigation uses full
+    refreshes. It's slower, and the 3-minute rule is relaxed only while
+    someone is using the buttons.
+- **Visibility.** Items not available in the current role and state are
+  hidden. For example, "Open checkpoint" shows only before the start.
+
+#### Menu items (editable on Admin → Panel)
+
+Each item has:
+
+- a label (up to 20 characters, plain text);
+- an **action from a fixed allowlist**;
+- confirm on or off (forced on for lifecycle actions);
+- the roles it shows for;
+- enabled on or off.
+
+The admin can add, remove, rename, reorder and disable items, preview
+the panel, and send a refresh (subject to the 3-minute rule). The menu
+is stored in the app database and kept by Reset, like branding.
+
+| Action | Does | Default label (role) |
+|---|---|---|
+| `status` | Back to the status screen | Status (both) |
+| `link_check` | Start a link check (4.8). Checkpoint: to HQ. HQ: pick a checkpoint from its list on a second menu. During the race this needs the confirm step, which counts as the operator's confirmation | Run link check (both) |
+| `start_race` | Start race (4.7) | Open checkpoint (checkpoint), Open race (HQ) |
+| `complete_race` | Complete race | Close checkpoint (checkpoint), Close race (HQ) |
+| `secure` | Secure for travel | Secure for travel (checkpoint) |
+| `check_in` | Final check-in | HQ check-in (checkpoint) |
+| `show_network` | Show the node's addresses and the web URL | Network (both) |
+| `show_link` | Show the last link check in detail | Last link check (both) |
+| `refresh` | Full refresh now (subject to the 3-minute rule) | Refresh screen (both) |
+
+- **Never on the panel:** Reset, graywolf cleanup, password and callsign
+  changes, and anything else that loses data or changes graywolf. They
+  stay on the admin page.
+- **Logging.** Panel actions are logged like admin actions, with source
+  `panel`.
+- **Physical access.** Anyone standing at the node can press the buttons.
+  The confirm step and the admin's choice of items are the safeguards.
+  An optional button-sequence lock is a later option.
+
+#### Settings (Admin → Panel)
+
+- panel on or off;
+- controller (SSD1680Z, SSD1680, SSD1675, with a "show test pattern"
+  button to find the right one);
+- status refresh interval;
+- rotation (0° or 180°);
+- the menu editor.
+
+The panel service polls the app (default 30 s) and the app decides when a
+refresh is due, so changes made in the UI apply without a restart.
+
 ## 9. Delivery phases (each one PR-sized, TDD, 80%+ coverage, `-race`)
 
 | # | Phase | Output | Status |
@@ -948,25 +1100,10 @@ same at every event.
 | 9 | App REST + auth | Handlers, DTO validation, volunteer/admin login and role middleware (table test: every route × no session / volunteer / admin), first-run setup, password change + session revocation, `reset-admin-password` CLI, rate limit, session expiry, graywolf credential handling. **Branding (8.3):** migration + store, validation (text rules, `#RRGGBB`, WCAG contrast), logo decode/re-encode (PNG/JPEG/WebP only, size and pixel caps), branding endpoints; fuzz the logo decoder with malformed images | **Done** 2026-10-06. Migrations 0003 (auth, sessions) and 0004 (branding). `internal/auth` (89.0%), `internal/branding` (96.9%; logo decoder fuzzed 60 s; pixel cap lowered to 12 MP after a test showed a 4096² image slipped through), `internal/web` (81.2%: 55 routes in a role-guarded table; the access test walks every route as nobody, volunteer and admin). `main` serves the API on `CB_LISTEN` (default `:8090`) with timeouts and graceful shutdown, purges sessions hourly, and has a `reset-admin-password` command. Smoke-tested as a real binary. Security review: no bypass, CSRF or upload hole. Hardening applied: setup code, setup refuses before hashing, bcrypt concurrency cap, attempt-first lockout with IPv6 /64 keys that fails closed when full, `Sec-Fetch-Site` check, stricter CSP, large uploads spill to disk, the volunteer banner never shows raw graywolf errors, and a wrong current admin password returns 400, not 401. `cmd` coverage is 10.5% (wiring; covered by the smoke run) |
 | 10 | Web UI | Admin + volunteer interfaces; JS unit tests for logic; scripted browser run of the real binary against the fake graywolf. **Branded status board (8.3):** CSS custom properties from saved branding, header/footer/logo, branding editor with live preview and contrast readout, print stylesheet | **Done** 2026-10-06. Plain HTML + ES modules in `internal/web/static`, no build step, no inline script or style (CSP holds; branding colours go through CSSOM after a hex check). Pages: login/setup, keypad, admin (Race, Station, Outbox, HQ, Branding, Passwords; tabs by role), branded status board with print stylesheet. All text goes through `textContent`. UI logic in `logic.js`, 13 `node --test` tests (`make jstest`). Keypad retries are idempotent: a `request_id` per bib, reused while a save might have happened; the server answers a retry from a 10 min cache, refuses a reused id for a different bib (422) and holds its cap. Browser E2E in headless Chrome against the whole server on the fake graywolf (`make e2e`, opt-in, chromedp is test-only and not in the binary): login, keypad log / double tap / void, admin tabs and settings save, HQ checkpoints, branding save, board. `internal/web` 81.9%. Review fixes: keypad keeps the id on 5xx/409-in-progress/unreadable replies, blocks double saves, sequences list refreshes; admin renders tabs without interleaving, follows lifecycle changes by polling, and survives a failed first load |
 | 11 | Packaging + docs | `GOARM=6` build, systemd unit (`After=graywolf.service`), install script, operator README incl. recovery and reset procedures | **Done** 2026-10-06. `make pi` / `make dist` (ARMv6 bundle: binary, unit, env template, `install.sh`, operator guide); `checkin-board version` (ldflags version + VCS revision). `deploy/checkin-board.service`: own system user, `StateDirectory`, `After=graywolf.service` (no network-online wait; field nodes often have no uplink), strict sandboxing with a soft-fail syscall filter, `GOMEMLIMIT=80MiB`, start-limit on config errors. `install.sh` is idempotent: never overwrites settings or the password, copies the DB aside before an upgrade, restarts the old version if the upgrade fails, refuses to write through symlinks in the service-owned state dir. Tested in Debian containers (arm64, and the ARMv6 bundle on armhf under emulation): install, re-run, upgrade, symlink refusal. `docs/operator-guide.md`: install, first-run setup, race day by role, recovery, lost admin password, reset. Idle RSS on Linux arm64 ≈ 20 MB; the Pi Zero figure and a syscall-filter smoke test wait for 12(h) |
-| 12 | Test campaign + deployment link check | **Link check (4.8):** `RC1 P/Q` behaviour on both sides, admin UI, HQ health column, Start-race warning, `checkin-board linkcheck` CLI with exit codes, Action recipe. **Test campaign:** (a) ≥80% coverage in every package; `go vet`, `staticcheck`, `govulncheck`. (b) Long fuzz runs (30 min each): `FuzzDecode`, roster CSV, journal reader. (c) Soak: simulated 12 h race, 500 runners, 8 checkpoints, 20% loss through the fake graywolf; asserts exactly-once, flat memory, bounded DB growth. (d) Fault injection: `kill -9` between POST and store and between batch and send; graywolf restart, password change and SSE drop mid-race; disk full; torn journal tail after a power cut; OS clock step; checkpoint reset mid-race (seq reuse). (e) Security: auth matrix, Content-Type guard, rate limits, CSV injection, upload limits, hostile logo files (SVG, polyglots, decompression bombs) and branding text (HTML, bidi overrides). (f) Browser E2E at phone width: keypad log/void, network loss, clock banner, admin lifecycle. (g) Real-graywolf bench: contract tests (fast + slow) against the deployed version, then 2-3 graywolf nodes on real radios (low power / dummy loads) replaying a scripted 100-runner race, plus a link check between every node and HQ. (h) Pi Zero W: RSS < 100 MB, CPU during a 20 bibs/min surge, startup time. **Exit criteria:** all green, 9b latency within acceptance, link check PASS on every bench pair; results written to `docs/test-report-<date>.md` | **In progress** 2026-10-06. **Link check done** (4.8, as built):
-- `internal/linkcheck` (87.1%) is ticked by the app and simulated end to end. Verdicts track loss; a dead link fails with only its probes on air; reply airtime is budgeted.
-- Admin tab, HQ health column and Start-race warning.
-- `checkin-board linkcheck` CLI (exit 0/1/2, `--json`, `--brief`).
-- Optional graywolf webhook Action recipe through a token-guarded loopback hook.
-- Review fixes: guarded store transitions so concurrent writers can't resurrect a cancelled run or lose a reply; no probe bursts after a stall; stale requests expire; resends count against the budget.
-
-**Test campaign so far:**
-- (a) Every package ≥80% except `cmd` (wiring; CLI and version tested). `go vet` and `staticcheck` are clean. `govulncheck`: one advisory in `golang.org/x/crypto` with no fix yet, not called by the app.
-- (b) 30-minute runs of all five fuzz targets: ≈428 M executions, no failures.
-- (c) Soak: 12 h, 500 runners, 8 checkpoints, 20% loss. Exactly once; databases ≈90 bytes per passage at each checkpoint.
-- (d) Fault injection: graywolf API outage and repeated kill/restart mid-race keep exactly once; the remaining cases are mapped to existing tests.
-- (e) Extra security cases added (polyglot logo; safe hook text).
-- (f) Browser E2E (8 tests) covers login, keypad (log, double tap, void, lost reply), the clock banner, Start race, admin tabs, settings, HQ checkpoints, branding, board and link check.
-
-Report: `docs/test-report-2026-10-06.md`.
-
-**Waiting for hardware:** (g) and (h) |
-| 13 | Field rehearsal | Deploy to real locations; **run the link check at every node first**; then a walk-around on the course | Not started |
+| 12 | Test campaign + deployment link check | **Link check (4.8):** `RC1 P/Q` behaviour on both sides, admin UI, HQ health column, Start-race warning, `checkin-board linkcheck` CLI with exit codes, Action recipe. **Test campaign:** (a) ≥80% coverage in every package; `go vet`, `staticcheck`, `govulncheck`. (b) Long fuzz runs (30 min each): `FuzzDecode`, roster CSV, journal reader. (c) Soak: simulated 12 h race, 500 runners, 8 checkpoints, 20% loss through the fake graywolf; asserts exactly-once, flat memory, bounded DB growth. (d) Fault injection: `kill -9` between POST and store and between batch and send; graywolf restart, password change and SSE drop mid-race; disk full; torn journal tail after a power cut; OS clock step; checkpoint reset mid-race (seq reuse). (e) Security: auth matrix, Content-Type guard, rate limits, CSV injection, upload limits, hostile logo files (SVG, polyglots, decompression bombs) and branding text (HTML, bidi overrides). (f) Browser E2E at phone width: keypad log/void, network loss, clock banner, admin lifecycle. (g) Real-graywolf bench: contract tests (fast + slow) against the deployed version, then 2-3 graywolf nodes on real radios (low power / dummy loads) replaying a scripted 100-runner race, plus a link check between every node and HQ. (h) Pi Zero W: RSS < 100 MB, CPU during a 20 bibs/min surge, startup time. **Exit criteria:** all green, 9b latency within acceptance, link check PASS on every bench pair; results written to `docs/test-report-<date>.md` | **In progress** 2026-10-06. **Link check done** (4.8, as built): `internal/linkcheck` (87.1%) ticked by the app and simulated end to end; admin tab, HQ health column, Start-race warning; `checkin-board linkcheck` CLI (exit 0/1/2, `--json`, `--brief`); optional webhook Action recipe (2.2, local hooks); review fixes (guarded store transitions, no probe bursts after a stall, stale requests expire, resends budgeted). **Test campaign:** (a) every package ≥80% except `cmd`; `go vet`, `staticcheck` clean; `govulncheck` one unfixed, uncalled `x/crypto` advisory. (b) all five fuzz targets 30 min each, ≈428 M executions, no failures. (c) 12 h soak, 500 runners, 8 checkpoints, 20% loss: exactly once, ≈90 bytes per passage at each checkpoint. (d) graywolf API outage and repeated kill/restart keep exactly once; other faults mapped to existing tests. (e) polyglot logo, safe hook text. (f) 8 browser E2E tests. Report: `docs/test-report-2026-10-06.md`. **Waiting for hardware:** (g) and (h) |
+| 13 | Node panel software | **8.4:** status and menu model; 1-bit renderer with golden-PNG tests; panel loop with the refresh rules (3-minute floor, change-driven, partial only while navigating); fake display and fake buttons; `panel_menu` and `panel_settings` migrations with per-role defaults; action allowlist enforced in the app; local-hook panel endpoints; Admin → Panel tab (menu editor, settings, live preview); `checkin-board panel` subcommand; `checkin-board-panel.service` with device access; install script installs it only when SPI is enabled and a bonnet answers | Not started |
+| 14 | Node panel on hardware | `internal/panel/epd` drivers for SSD1680Z, SSD1680 and SSD1675 on periph.io; controller test pattern; bench on the test node (checklist: each controller, both rotations, partial vs full refresh, button debounce, idle timeout, app down, graywolf down, reboot); measure refresh times and the panel service's RSS on the Pi | Not started (needs the bonnet; shell access to the test node) |
+| 15 | Field rehearsal | Deploy to real locations; **run the link check at every node first**; then a walk-around on the course | Not started |
 
 Phase 1 comes first on purpose: every later phase rests on graywolf
 behaviours that this design assumes but hasn't tested through the API.
@@ -1048,6 +1185,11 @@ seconds at low loss.)
 | graywolf ACKs reports the app then fails to ingest | graywolf's inbox is durable; the cursor only advances after commit; the next catch-up retries |
 | Undecodable report can't be REJected | Stored in `bad_reports`, shown per sender at HQ; CP export is the recovery path |
 | Race traffic clutters graywolf Messages | Mark-read during the race; cleanup only after Complete (4.7) |
+| E-ink panel worn out by refreshing too often | 3-minute floor on full refreshes, enforced in the app (not only the panel); partial refreshes only during button use, rate-limited; no refresh when nothing changed |
+| Panel fault takes the node down | Separate process and service; only it gets SPI/GPIO; it talks to the app over the local hook; the app runs normally without it |
+| Someone presses the buttons and changes the race state | Allowlisted actions only, nothing destructive; lifecycle actions always confirmed; items can be disabled per node; actions logged with source `panel` |
+| Wrong controller for the bonnet revision | Selectable controller with a test pattern; the bench (phase 14) checks all three |
+| Bonnet pins clash with other hardware on the Pi header (radio interface, PTT GPIO) | Pin list in 8.4; check against the radio interface before phase 14 (open question) |
 | Operator deletes race rows in graywolf mid-race | CP: resend 404 means send it new (HQ dedups). HQ: rows already ingested are unaffected |
 | Accidental reset | Type-the-race-name confirm, stronger warning while active, automatic backup before clearing |
 | Cleanup deletes operator messages | Deletes only app-recorded row ids whose text starts `RC1 `; never thread deletes |
@@ -1103,7 +1245,21 @@ This is a decision for after phase 1, not part of the MVP.
 
 ## 13. Open questions
 
-None blocking. The admin settings page shows the fields in 8.1 plus the
+Node panel (8.4), to answer before phase 14:
+
+1. **Bonnet revision** on the nodes (SSD1680Z is the current one). The
+   controller setting and test pattern cover any of them, but knowing
+   it lets phase 14 start with the right driver.
+2. **Pins.** Does the radio interface, or graywolf's PTT, use any of
+   GPIO 5, 6, 8, 10, 11, 17, 22 or 27, or SPI0?
+3. **Menu wording.** "Open checkpoint" and "Close checkpoint" are taken
+   to mean Start race and Complete race (4.7) on a checkpoint. Confirm,
+   or say if they should mean something else (e.g. opening the keypad
+   without starting the race).
+4. **Test access.** Phase 14 needs shell access to the test node with a
+   bonnet attached.
+
+Otherwise none blocking. The admin settings page shows the fields in 8.1 plus the
 batching and timing knobs (batch after, batches in flight, heartbeat,
 gap grace); confirm in the field whether those should be hidden behind
 an "advanced" toggle.
@@ -1113,7 +1269,6 @@ an "advanced" toggle.
 Unchanged: cutoff times and overdue highlighting; `RC1 T` RF time
 broadcast; DNF / drops; time-out / dwell; roster push over RF; webhook push
 to timing software. New: the KISS/AGW transport (section 12);
-hardware buttons on a node (GPIO through graywolf triggers to webhook
-Actions and local hooks, 2.2); a webhook Action for remote restart and
-status of `checkin-board`; per-person admin
+a button-sequence lock for the node panel (8.4); a webhook Action for
+remote restart and status of `checkin-board`; per-person admin
 accounts if one admin password per station proves too coarse.
