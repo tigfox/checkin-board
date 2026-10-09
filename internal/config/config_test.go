@@ -188,3 +188,20 @@ func TestHookTokenFile(t *testing.T) {
 		t.Fatalf("readable token: %v", err)
 	}
 }
+
+func TestPanelConfig(t *testing.T) {
+	tok := strings.Repeat("k", MinHookTokenLen)
+	p, err := PanelFrom(envFrom(map[string]string{EnvHookTokenFile: writeSecret(t, tok+"\n", 0o600), EnvListen: ":9001"}))
+	if err != nil || p.AppURL != "http://127.0.0.1:9001" || p.Token != tok {
+		t.Fatalf("panel config = %+v, %v", p, err)
+	}
+	if p, _ := PanelFrom(envFrom(map[string]string{EnvHookTokenFile: writeSecret(t, tok, 0o600), EnvListen: "192.168.4.1:8090"})); p.AppURL != "http://192.168.4.1:8090" {
+		t.Fatalf("explicit host = %q", p.AppURL)
+	}
+	if _, err := PanelFrom(envFrom(map[string]string{})); err == nil || !strings.Contains(err.Error(), EnvHookTokenFile) {
+		t.Fatalf("no token: %v", err)
+	}
+	if _, err := PanelFrom(envFrom(map[string]string{EnvHookTokenFile: writeSecret(t, tok, 0o600), EnvListen: "nonsense"})); err == nil {
+		t.Fatal("bad listen address accepted")
+	}
+}

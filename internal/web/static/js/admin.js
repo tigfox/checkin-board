@@ -9,9 +9,10 @@ import { renderHQ } from "./admin-hq.js";
 import { renderBranding } from "./admin-branding.js";
 import { renderPasswords } from "./admin-passwords.js";
 import { renderLinkCheck } from "./admin-linkcheck.js";
+import { renderPanel } from "./admin-panel.js";
 
 const renderers = {
-  "tab-race": renderRace, "tab-station": renderStation, "tab-outbox": renderOutbox, "tab-link": renderLinkCheck,
+  "tab-race": renderRace, "tab-station": renderStation, "tab-outbox": renderOutbox, "tab-link": renderLinkCheck, "tab-panel": renderPanel,
   "tab-hq": renderHQ, "tab-branding": renderBranding, "tab-passwords": renderPasswords,
 };
 

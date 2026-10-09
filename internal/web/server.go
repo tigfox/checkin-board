@@ -77,13 +77,16 @@ type Deps struct {
 	HookToken string
 	// LinkTiming bounds the hook's wait for a link check (zero: default).
 	LinkTiming linkcheck.Timing
+	// WebPort is the port the UI listens on, shown on the node panel.
+	WebPort int
 }
 
 type server struct {
 	Deps
-	log   *slog.Logger
-	now   func() time.Time
-	dedup *requestDedup
+	log      *slog.Logger
+	now      func() time.Time
+	dedup    *requestDedup
+	panelReq panelRequests
 }
 
 // NewHandler builds the HTTP handler.
@@ -100,6 +103,7 @@ func NewHandler(d Deps) (http.Handler, error) {
 		s.now = time.Now
 	}
 	s.dedup = newRequestDedup(s.now)
+	s.panelReq.boot = time.Now().UnixNano()
 	static := d.Static
 	if static == nil {
 		sub, err := fs.Sub(staticFS, "static")

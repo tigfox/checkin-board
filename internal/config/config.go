@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -200,4 +201,33 @@ func valueOr(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+// Panel is what the node panel process needs: where the app is, and the
+// local hook token (spec 8.4).
+type Panel struct {
+	AppURL string
+	Token  string
+}
+
+// PanelFrom reads the panel's settings from the app's own environment
+// file: CB_LISTEN (the app's address) and CB_HOOK_TOKEN_FILE.
+func PanelFrom(env Env) (Panel, error) {
+	path := env.Getenv(EnvHookTokenFile)
+	if path == "" {
+		return Panel{}, fmt.Errorf("%s is required for the panel (the app's local hook token)", EnvHookTokenFile)
+	}
+	tok, err := readSecretFile(env, EnvHookTokenFile, path)
+	if err != nil {
+		return Panel{}, err
+	}
+	listen := valueOr(strings.TrimSpace(env.Getenv(EnvListen)), DefaultListen)
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return Panel{}, fmt.Errorf("%s %q: %w", EnvListen, listen, err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1" // the hook answers loopback only
+	}
+	return Panel{AppURL: "http://" + net.JoinHostPort(host, port), Token: tok}, nil
 }

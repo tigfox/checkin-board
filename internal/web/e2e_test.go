@@ -336,3 +336,50 @@ func TestE2EAdminOpensCheckpoint(t *testing.T) {
 	}
 	b.noErrors()
 }
+
+func TestE2EPanelTab(t *testing.T) {
+	e := newEnv(t, checkpointSettings(store.RaceSetup))
+	b := newBrowser(t, e.srv.URL)
+	b.login(e.admin)
+	b.run(chromedp.Navigate(e.srv.URL+"/admin.html"),
+		chromedp.Click(`//nav[@id="tabs"]/button[text()="Panel"]`, chromedp.BySearch),
+		chromedp.WaitVisible(`#tab-panel img.panel-preview`, chromedp.ByQuery))
+	// The preview is a real rendering of the status screen.
+	var width int
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && width == 0; time.Sleep(100 * time.Millisecond) {
+		b.run(chromedp.Evaluate(`document.querySelector("#tab-panel img.panel-preview").naturalWidth`, &width))
+	}
+	if width != 250 {
+		t.Fatalf("preview width = %d", width)
+	}
+	// Rename the first item and save the menu.
+	b.run(chromedp.SetValue(`#tab-panel tbody tr:first-child input[aria-label="Label"]`, "Home", chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('#tab-panel tbody tr:first-child input[aria-label="Label"]').dispatchEvent(new Event("input"))`, nil),
+		chromedp.Click(`//section[@id="tab-panel"]//button[text()="Save menu"]`, chromedp.BySearch))
+	b.waitText("#banner", "Menu saved")
+	items, edited, _ := e.st.PanelMenu(ctx)
+	if !edited || items[0].Label != "Home" {
+		t.Fatalf("menu = %+v (edited %v)", items[0], edited)
+	}
+	// A refused edit shows the server's reason. (Saving re-rendered the
+	// tab: act on the current elements in one step.)
+	time.Sleep(500 * time.Millisecond)
+	b.run(chromedp.Evaluate(`(() => {
+		const sec = document.querySelector("#tab-panel");
+		const input = sec.querySelector('tbody tr:first-child input[aria-label="Label"]');
+		input.value = "";
+		input.dispatchEvent(new Event("input"));
+		[...sec.querySelectorAll("button")].find((b) => b.textContent === "Save menu").click();
+	})()`, nil))
+	b.waitText("#banner", "label")
+	// Settings save.
+	b.run(chromedp.SetValue("#pn-refresh", "10", chromedp.ByQuery),
+		chromedp.Click(`//section[@id="tab-panel"]//button[text()="Save"]`, chromedp.BySearch))
+	b.waitText("#banner", "Panel settings saved")
+	if ps, _ := e.st.GetPanelSettings(ctx); ps.RefreshMin != 10 {
+		t.Fatalf("refresh = %d", ps.RefreshMin)
+	}
+	b.mu.Lock()
+	b.errs = nil // the refused save logs a 400, as it should
+	b.mu.Unlock()
+}

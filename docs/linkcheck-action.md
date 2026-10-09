@@ -18,7 +18,7 @@ node. A command Action can't be used: graywolf's service runs with
 that owns the app's database.
 
 The hook stays off until you give it a token. Even then, it answers only
-requests from the node itself (loopback) that carry that token. It
+requests from the node itself that carry that token. It
 starts no run during the race: during the race, run the check from the
 admin page.
 

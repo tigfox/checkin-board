@@ -147,7 +147,8 @@ export function cellText(cell, timeZone) {
 // healthFlags lists a checkpoint's problems for the HQ health panel.
 export function healthFlags(h, nowMs) {
   const flags = [];
-  if (h.ClosedAt) flags.push(`closed ${formatTime(h.ClosedAt).slice(0, 5)}`);
+  // When HQ heard the close, which may be later than the close itself.
+  if (h.ClosedAt) flags.push(`closed (heard ${formatTime(h.ClosedAt).slice(0, 5)})`);
   if (!h.LastHeardAt) flags.push("never heard");
   else if (!h.ClosedAt && nowMs - new Date(h.LastHeardAt).getTime() > 15 * 60 * 1000) flags.push("quiet for 15+ min");
   if (h.Missing && h.Missing.length) flags.push(`${h.Missing.length} batch(es) missing`);

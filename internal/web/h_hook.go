@@ -27,8 +27,7 @@ func (s *server) checkHook(r *http.Request) error {
 	if s.HookToken == "" {
 		return &httpError{http.StatusNotFound, "not_found", "not found"}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
+	if !sameHost(r) {
 		return &httpError{http.StatusForbidden, "forbidden", "the automation hook only answers this node"}
 	}
 	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -36,6 +35,26 @@ func (s *server) checkHook(r *http.Request) error {
 		return &httpError{http.StatusUnauthorized, "bad_token", "bad token"}
 	}
 	return nil
+}
+
+// sameHost reports whether the request comes from this machine: over
+// loopback, or from the very address it arrived on (the panel reaching
+// an app that listens on one LAN address only).
+func sameHost(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	ip := net.ParseIP(host)
+	if err != nil || ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		return false
+	}
+	lhost, _, err := net.SplitHostPort(local.String())
+	return err == nil && net.ParseIP(lhost).Equal(ip)
 }
 
 // postHookLinkCheck runs a link check and answers one short text line,

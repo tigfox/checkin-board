@@ -26,6 +26,9 @@ internal/web/static/   the UI: plain HTML + ES modules, no build step, no inline
 internal/web/jstest/   `node --test` unit tests for the UI logic
 internal/peers/        graywolf per-peer retry settings (backup / restore)
 internal/linkcheck/    deployment link check: RC1 P probes, RC1 Q replies, verdicts
+internal/panel/        node panel: e-ink status screen and two-button menu (renderer, state machine, hook client)
+internal/panel/menu/   the panel's action allowlist, default menu and validation
+internal/panel/epd/    e-ink controllers (drivers arrive in phase 14)
 internal/gwfake/       in-memory fake of graywolf's Messages API + simulated RF channel (tests)
 internal/sim/          whole-node simulation: exactly-once and latency tests
 deploy/                systemd unit, env template, install script
@@ -101,6 +104,21 @@ a graywolf Action: [docs/linkcheck-action.md](docs/linkcheck-action.md).
 | `/keypad.html` | volunteer or admin | log bibs, void entries, set the race clock from the phone |
 | `/admin.html` | admin | race lifecycle and reset, station settings and graywolf callsign, outbox and export (checkpoint), checkpoints, roster, health and recovery imports (HQ), board branding (HQ), passwords |
 | `/board.html` | admin | HQ status board in the configured branding, printable |
+
+## Node panel
+
+Nodes with an Adafruit 2.13" e-ink bonnet show their status on it and
+offer a two-button menu (Admin → Panel edits it; spec 8.4). The panel is
+its own process, `checkin-board panel`, talking to the app over the local
+hook (`CB_HOOK_TOKEN_FILE` must be set for both). Until the e-ink driver
+lands (phase 14), try it on any machine:
+
+```sh
+CB_HOOK_TOKEN_FILE=... CB_LISTEN=:8090 checkin-board panel -display png:/tmp/frames
+```
+
+Each refresh is written to `/tmp/frames` as a PNG. Type `t` (top button)
+or `b` (bottom) and Enter to press the buttons.
 
 ## Development
 

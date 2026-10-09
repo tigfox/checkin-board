@@ -307,10 +307,35 @@ func TestHeartbeatClosedFlagMarksCheckpointClosed(t *testing.T) {
 	if len(st) != 1 || st[0].ClosedAt == nil || !st[0].ClosedAt.Equal(at(time.Minute)) {
 		t.Fatalf("status = %+v", st)
 	}
-	if err := s.RecordHeartbeat(ctx, hb, "N0CALL-7", at(time.Hour), t0, true); err != nil {
+	restarted := &Heartbeat{CP: "AS5", LastSeq: 0, Time: wire.TimeOfDayOf(t0)} // reset for a new race
+	if err := s.RecordHeartbeat(ctx, restarted, "N0CALL-7", at(time.Hour), t0, true); err != nil {
 		t.Fatal(err)
 	}
 	if st, _ = s.ListStatuses(ctx); st[0].ClosedAt != nil {
 		t.Fatalf("reopened checkpoint still closed: %+v", st[0])
+	}
+}
+
+// A delayed pre-close heartbeat (reordered on the way) doesn't reopen a
+// closed checkpoint; a checkpoint whose numbering restarted (it was
+// reset for a new race) does.
+func TestClosedSurvivesLateOpenHeartbeat(t *testing.T) {
+	s := newTestStore(t)
+	closed := &Heartbeat{CP: "AS5", LastSeq: 9, Time: wire.TimeOfDayOf(t0), Closed: true}
+	_ = s.RecordHeartbeat(ctx, closed, "N0CALL-7", t0, t0, true)
+	late := &Heartbeat{CP: "AS5", LastSeq: 8, Time: wire.TimeOfDayOf(t0)}
+	_ = s.RecordHeartbeat(ctx, late, "N0CALL-7", at(time.Minute), t0, true)
+	if st, _ := s.ListStatuses(ctx); st[0].ClosedAt == nil {
+		t.Fatal("late open heartbeat reopened the checkpoint")
+	}
+	same := &Heartbeat{CP: "AS5", LastSeq: 9, Time: wire.TimeOfDayOf(t0)}
+	_ = s.RecordHeartbeat(ctx, same, "N0CALL-7", at(2*time.Minute), t0, true)
+	if st, _ := s.ListStatuses(ctx); st[0].ClosedAt == nil {
+		t.Fatal("open heartbeat with the same seq reopened it")
+	}
+	restarted := &Heartbeat{CP: "AS5", LastSeq: 0, Time: wire.TimeOfDayOf(t0)}
+	_ = s.RecordHeartbeat(ctx, restarted, "N0CALL-7", at(3*time.Minute), t0, true)
+	if st, _ := s.ListStatuses(ctx); st[0].ClosedAt != nil {
+		t.Fatal("restarted checkpoint still closed")
 	}
 }

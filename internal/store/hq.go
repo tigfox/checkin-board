@@ -205,16 +205,20 @@ func (s *Store) RecordHeartbeat(ctx context.Context, hb *Heartbeat, source strin
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return touchStatus(tx, hb.CP, func(st *CheckpointStatus) {
+			prevSeq := st.HeartbeatLastSeq
 			heard(st, source, recv)
 			st.HeartbeatAt = &recv
 			if plausibleSeq(st, hb.LastSeq) {
 				st.HeartbeatLastSeq = hb.LastSeq
 			}
 			st.ClockSkewSec = skew
+			// Closed sticks: a delayed pre-close heartbeat can't reopen
+			// the checkpoint. Only restarted numbering does: a checkpoint
+			// reset for a new race heartbeats seq 0 before sending anything.
 			switch {
 			case hb.Closed && st.ClosedAt == nil:
 				st.ClosedAt = &recv
-			case !hb.Closed:
+			case !hb.Closed && st.ClosedAt != nil && hb.LastSeq == 0 && prevSeq > 0:
 				st.ClosedAt = nil
 			}
 		})

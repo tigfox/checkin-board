@@ -9,6 +9,17 @@ CREATE TABLE panel_settings (
     controller TEXT NOT NULL DEFAULT '',
     refresh_min INTEGER NOT NULL DEFAULT 5,
     rotation INTEGER NOT NULL DEFAULT 0,
+    -- The panel's last full refresh, so the 3-minute floor survives a
+    -- panel restart (8.4).
+    last_full_at DATETIME,
+    -- Set once the menu has been edited: until then the defaults apply.
+    menu_edited INTEGER NOT NULL DEFAULT 0,
+    -- Bumped on every menu edit, so a panel acting on an old view of the
+    -- menu is refused.
+    menu_rev INTEGER NOT NULL DEFAULT 0,
+    -- The detection wizard gave up: it runs again only on "Detect again",
+    -- not on every panel restart (each pass refreshes the panel).
+    detect_gave_up INTEGER NOT NULL DEFAULT 0,
     updated_at DATETIME NOT NULL
 );
 

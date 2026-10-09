@@ -9,6 +9,8 @@
 //	checkin-board linkcheck [--to CALL] [--count N] [--json] [--yes]
 //	                                      run a deployment link check through the
 //	                                      running service; exit 0 PASS, 1 MARGINAL, 2 FAIL
+//	checkin-board panel [-display png:DIR] [-buttons stdin|none]
+//	                                      run the node panel (e-ink display and buttons)
 package main
 
 import (
@@ -18,12 +20,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -57,6 +61,13 @@ func main() {
 		err = resetAdminPassword(context.Background(), config.DBPathFrom(os.Getenv), os.Stdin, os.Stdout)
 	case len(os.Args) > 1 && os.Args[1] == "version":
 		printVersion(os.Stdout)
+	case len(os.Args) > 1 && os.Args[1] == "panel":
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		err = runPanel(ctx, config.OSEnv(), os.Args[2:], os.Stdin, logger)
+		stop()
+		if errors.Is(err, context.Canceled) {
+			err = nil
+		}
 	case len(os.Args) > 1 && os.Args[1] == "linkcheck":
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		code := runLinkCheckCLI(ctx, config.DBPathFrom(os.Getenv), os.Args[2:], os.Stdout, linkcheck.DefaultTiming)
@@ -158,7 +169,7 @@ func run(logger *slog.Logger) error {
 	}
 	handler, err := web.NewHandler(web.Deps{
 		Store: st, Auth: authSvc, Ops: a.Ops, HQ: a.HQ, Checkpoint: a.Checkpoint, Inbox: a.Inbox,
-		Clock: a.Clock, Graywolf: gw, Logger: logger, HookToken: cfg.HookToken,
+		Clock: a.Clock, Graywolf: gw, Logger: logger, HookToken: cfg.HookToken, WebPort: listenPort(cfg.Listen),
 	})
 	if err != nil {
 		return fmt.Errorf("web handler: %w", err)
@@ -223,4 +234,15 @@ func checkGraywolf(ctx context.Context, gw *graywolf.Client, logger *slog.Logger
 		return
 	}
 	logger.Info("graywolf ready", "version", ver.Version, "callsign", station.Callsign)
+}
+
+// listenPort is the port in a listen address, for the node panel's
+// "open this address" line (0 if it can't be told).
+func listenPort(addr string) int {
+	_, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(p)
+	return n
 }

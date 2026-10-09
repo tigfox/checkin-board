@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -93,5 +94,28 @@ func TestHookErrorTextIsSafe(t *testing.T) {
 	}
 	if line, known := hookError(linkcheck.ErrBusy); !known || line == "" {
 		t.Fatalf("busy = %q", line)
+	}
+}
+
+// With the app listening on one address only (e.g. the hotspot), the
+// panel on the same node connects from that address to that address.
+func TestHookAcceptsSameHostOnALANAddress(t *testing.T) {
+	e := newEnvWith(t, checkpointSettings(store.RaceSetup), func(d *Deps) { d.HookToken = hookTok })
+	h, _ := NewHandler(e.deps)
+	req := httptest.NewRequest("GET", "/api/hook/panel", nil)
+	req.RemoteAddr = "192.168.4.1:40000"
+	req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP("192.168.4.1"), Port: 8090}))
+	req.Header.Set("Authorization", "Bearer "+hookTok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("same-host hook = %d", rec.Code)
+	}
+	// Another machine on that LAN is still refused.
+	req.RemoteAddr = "192.168.4.20:40000"
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("other host = %d", rec.Code)
 	}
 }

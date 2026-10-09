@@ -45,8 +45,24 @@ func (s *server) routes() []route {
 		{method: "POST", pattern: "/api/admin/linkcheck/{id}/cancel", access: admin, h: s.postLinkCheckCancel},
 		{method: "GET", pattern: "/api/admin/linkcheck/readiness", access: admin, h: s.getLinkReadiness},
 
-		// Local automation (graywolf webhook Action), token from loopback only.
+		// Admin: node panel (8.4).
+		{method: "GET", pattern: "/api/admin/panel", access: admin, h: s.getPanel},
+		{method: "PUT", pattern: "/api/admin/panel", access: admin, h: s.putPanel},
+		{method: "GET", pattern: "/api/admin/panel/menu", access: admin, h: s.getPanelMenu},
+		{method: "PUT", pattern: "/api/admin/panel/menu", access: admin, h: s.putPanelMenu},
+		{method: "POST", pattern: "/api/admin/panel/menu/reset", access: admin, h: s.postPanelMenuReset},
+		{method: "GET", pattern: "/api/admin/panel/preview.png", access: admin, h: s.getPanelPreview},
+		{method: "POST", pattern: "/api/admin/panel/refresh", access: admin, h: s.postPanelRefresh},
+		{method: "POST", pattern: "/api/admin/panel/test-pattern", access: admin, h: s.postPanelTestPattern},
+		{method: "POST", pattern: "/api/admin/panel/detect", access: admin, h: s.postPanelDetect},
+
+		// Local automation (graywolf webhook Action, node panel), token from loopback only.
 		{method: "POST", pattern: "/api/hook/linkcheck", access: hook, h: s.postHookLinkCheck},
+		{method: "GET", pattern: "/api/hook/panel", access: hook, h: s.getHookPanel},
+		{method: "POST", pattern: "/api/hook/panel/actions/{id}", access: hook, h: s.postHookPanelAction},
+		{method: "POST", pattern: "/api/hook/panel/refreshed", access: hook, h: s.postHookPanelRefreshed},
+		{method: "PUT", pattern: "/api/hook/panel/controller", access: hook, h: s.putHookPanelController},
+		{method: "POST", pattern: "/api/hook/panel/detect-gave-up", access: hook, h: s.postHookPanelGaveUp},
 		{method: "POST", pattern: "/api/admin/race/reset", access: admin, h: s.postReset},
 
 		// Admin: checkpoint tools.
