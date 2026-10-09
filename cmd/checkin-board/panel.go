@@ -26,7 +26,7 @@ import (
 func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reader, log *slog.Logger) error {
 	fs := flag.NewFlagSet("panel", flag.ContinueOnError)
 	display := fs.String("display", "epd", `"epd" (the bonnet) or "png:DIR" (write frames to DIR)`)
-	buttons := fs.String("buttons", "gpio", `"gpio" (the bonnet), "stdin" (t/b lines) or "none"`)
+	buttons := fs.String("buttons", "gpio", `"gpio" (the bonnet, edge events), "poll" (the bonnet, polled), "stdin" (t/b lines) or "none"`)
 	test := fs.String("test", "", "draw a test pattern with this controller ("+strings.Join(epd.Controllers(), ", ")+") and exit")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -46,11 +46,15 @@ func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reade
 	switch *buttons {
 	case "stdin":
 		go readButtons(stdin, btn)
-	case "gpio":
+	case "gpio", "poll":
+		read := bonnet.Buttons
+		if *buttons == "poll" {
+			read = bonnet.PollButtons
+		}
 		go func() {
 			raw := make(chan epd.Button, 8)
 			go func() {
-				if err := bonnet.Buttons(ctx, raw); err != nil && ctx.Err() == nil {
+				if err := read(ctx, raw); err != nil && ctx.Err() == nil {
 					log.Error("panel: buttons", "err", err)
 				}
 			}()

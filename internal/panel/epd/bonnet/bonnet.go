@@ -156,26 +156,63 @@ func Open(ctrl string) (epd.Display, error) {
 }
 
 // Buttons reports presses of the bonnet's two buttons (active low,
-// pulled up) until ctx ends. It polls the pin levels (epd.PollButtons):
-// the kernel's GPIO edge events proved unreliable on the bench.
+// pulled up) until ctx ends, from GPIO edge events, with a debounce.
 func Buttons(ctx context.Context, out chan<- epd.Button) error {
-	if err := initHost(); err != nil {
-		return fmt.Errorf("bonnet: init GPIO: %w", err)
-	}
-	top, err := pin(pinTop)
+	top, bottom, err := buttonPins(gpio.FallingEdge)
 	if err != nil {
 		return err
 	}
-	bottom, err := pin(pinBot)
+	var wg sync.WaitGroup
+	for b, p := range map[epd.Button]gpio.PinIO{epd.Top: top, epd.Bottom: bottom} {
+		wg.Go(func() {
+			var last time.Time
+			for ctx.Err() == nil {
+				if !p.WaitForEdge(500 * time.Millisecond) {
+					continue
+				}
+				if now := time.Now(); now.Sub(last) >= debounce && p.Read() == gpio.Low {
+					last = now
+					select {
+					case out <- b:
+					case <-ctx.Done():
+					}
+				}
+			}
+		})
+	}
+	wg.Wait()
+	return ctx.Err()
+}
+
+// PollButtons is Buttons by polling the pin levels (epd.PollButtons),
+// for a kernel whose GPIO edge events don't arrive.
+func PollButtons(ctx context.Context, out chan<- epd.Button) error {
+	top, bottom, err := buttonPins(gpio.NoEdge)
 	if err != nil {
 		return err
-	}
-	for _, p := range []gpio.PinIO{top, bottom} {
-		if err := p.In(gpio.PullUp, gpio.NoEdge); err != nil {
-			return fmt.Errorf("bonnet: button %s: %w", p, err)
-		}
 	}
 	read := func() (bool, bool) { return top.Read() == gpio.Low, bottom.Read() == gpio.Low }
 	epd.PollButtons(ctx, read, epd.PollEvery, time.Now, out)
 	return ctx.Err()
+}
+
+// debounce ignores contact bounce after an edge.
+const debounce = 150 * time.Millisecond
+
+func buttonPins(edge gpio.Edge) (top, bottom gpio.PinIO, err error) {
+	if err := initHost(); err != nil {
+		return nil, nil, fmt.Errorf("bonnet: init GPIO: %w", err)
+	}
+	if top, err = pin(pinTop); err != nil {
+		return nil, nil, err
+	}
+	if bottom, err = pin(pinBot); err != nil {
+		return nil, nil, err
+	}
+	for _, p := range []gpio.PinIO{top, bottom} {
+		if err := p.In(gpio.PullUp, edge); err != nil {
+			return nil, nil, fmt.Errorf("bonnet: button %s: %w", p, err)
+		}
+	}
+	return top, bottom, nil
 }

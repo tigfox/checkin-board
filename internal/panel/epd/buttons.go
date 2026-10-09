@@ -16,10 +16,10 @@ const (
 
 // Button timing.
 const (
-	// PollEvery is how often the buttons are read. Polling the pin
-	// levels works on any kernel; the GPIO edge events don't always
-	// (on the test node's 6.18 kernel they never arrived).
-	PollEvery = 20 * time.Millisecond
+	// PollEvery is how often polled buttons are read (the fallback when
+	// a kernel's GPIO edge events don't work; edges cost no CPU, polling
+	// about 1% of a Pi Zero).
+	PollEvery = 50 * time.Millisecond
 	// debounce ignores contact bounce after a press.
 	debounce = 150 * time.Millisecond
 )

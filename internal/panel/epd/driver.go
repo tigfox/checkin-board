@@ -1,7 +1,6 @@
 package epd
 
 import (
-	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -234,7 +233,9 @@ func (p *panel) Partial(img image.Image) error {
 		return fmt.Errorf("epd %s: no partial refresh", p.ctrl)
 	}
 	if p.last == nil {
-		return errors.New("epd: partial refresh needs a full one first")
+		// Nothing of ours on the panel yet (just opened, or the last
+		// refresh failed): there's no previous frame to compare with.
+		return p.Full(img)
 	}
 	frame := Pack(img)
 	s := &seq{bus: p.bus}

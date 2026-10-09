@@ -139,10 +139,18 @@ func TestPartialRefresh(t *testing.T) {
 	if old.CanPartial() || old.Partial(next) == nil {
 		t.Fatal("SSD1675 has no partial refresh")
 	}
-	// Partial needs a previous frame: the first refresh must be full.
-	fresh, _ := NewPanel(newRec(), SSD1680)
-	if err := fresh.Partial(next); err == nil {
-		t.Fatal("partial refresh with nothing on the panel")
+	// With no frame of ours on the panel yet (the process just started),
+	// a partial refresh can't compare: it becomes a full one.
+	rb := newRec()
+	fresh, _ := NewPanel(rb, SSD1680)
+	if err := fresh.Partial(next); err != nil {
+		t.Fatal(err)
+	}
+	if rb.data[0x22][0] != 0xF4 || !bytes.Equal(rb.data[0x24], Pack(next)) {
+		t.Fatalf("first partial: mode % X (want a full refresh, F4)", rb.data[0x22])
+	}
+	if err := fresh.Partial(first); err != nil || rb.data[0x22][0] != 0xFC {
+		t.Fatalf("second partial: %v, mode % X", err, rb.data[0x22])
 	}
 }
 
