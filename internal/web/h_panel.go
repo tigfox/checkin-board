@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"checkin-board/internal/hostmon"
 	"errors"
 	"fmt"
 	"image/png"
@@ -191,7 +192,7 @@ func (s *server) getPanelPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, err)
 		return
 	}
-	img := panel.Rotate(panel.StatusScreen(v, []string{"<node address>"}), v.Settings.Rotation)
+	img := panel.Rotate(panel.StatusScreen(v, []string{"<node address>"}, hostmon.Snapshot{}), v.Settings.Rotation)
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		writeError(w, r, s.log, err)

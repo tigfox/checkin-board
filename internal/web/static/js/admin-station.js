@@ -36,6 +36,8 @@ export async function renderStation(sec, ctx) {
 
   sec.append(raceSettingsForm(s, ctx), messagingSettingsForm(s, ctx));
 
+  sec.append(radioCard());
+
   sec.append(h("div", { class: "card" },
     h("h2", {}, "graywolf connection"),
     h("p", {}, gw.reachable ? `graywolf ${gw.version} reachable` : "graywolf not reachable",
@@ -65,6 +67,35 @@ export async function renderStation(sec, ctx) {
       await ctx.run(() => post("/api/admin/inbox/reread", { since: new Date(since.value).toISOString() }), "Re-reading graywolf messages.");
     } }, "Re-read")),
   ));
+}
+
+// radioCard is the radio check (feedback 2026-10-09, item 6): is the
+// radio set up in graywolf, and working? It runs on request, since it
+// asks graywolf several questions.
+function radioCard() {
+  const out = h("div", { id: "radio-result" });
+  const run = async () => {
+    out.replaceChildren(h("p", { class: "muted" }, "Checking…"));
+    try {
+      const { report, host } = await get("/api/admin/radio");
+      const sum = L.radioSummary(report);
+      out.replaceChildren(
+        h("p", { class: `banner ${sum.kind}` }, sum.text.replace(" See Station → Radio.", "")),
+        h("ul", { class: "checklist" }, ...report.items.map((it) => h("li", { class: `check-${it.status}` },
+          h("span", { class: "check-icon", "aria-hidden": "true" }, L.radioIcon(it.status)), " ",
+          h("strong", {}, it.label), ": ", it.detail))),
+        typeof host.cpu_percent === "number"
+          ? h("p", { class: "muted" }, `CPU ${Math.round(host.cpu_percent)}% over 5 minutes${host.machine ? ` (${host.machine})` : ""}.`)
+          : null);
+    } catch (e) {
+      out.replaceChildren(h("p", { class: "error" }, e.message));
+    }
+  };
+  return h("div", { class: "card" },
+    h("h2", {}, "Radio"),
+    h("p", { class: "muted" }, "Checks that the radio is set up in graywolf and working: build, channel, audio devices, push-to-talk, sample rate, receive level, packets decoded, and whether graywolf's modem keeps up. Nothing is transmitted."),
+    h("p", {}, h("button", { type: "button", id: "radio-check", onclick: run }, "Check radio")),
+    out);
 }
 
 // afterSave re-reads the settings (without re-rendering, so unsaved

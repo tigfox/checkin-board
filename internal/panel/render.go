@@ -13,6 +13,7 @@ import (
 	"golang.org/x/image/font/inconsolata"
 	"golang.org/x/image/math/fixed"
 
+	"checkin-board/internal/hostmon"
 	"checkin-board/internal/panel/epd"
 )
 
@@ -150,11 +151,17 @@ func ago(t, now time.Time) string {
 
 func hhmm(t time.Time) string { return t.Local().Format("15:04") }
 
+// cpuWarnPercent is the 5-minute CPU average that becomes a warning
+// line: a Pi Zero runs ~55-65% at 24 kHz, and graywolf's modem falls
+// behind when it can't get its share (feedback 2026-10-09, item 13).
+const cpuWarnPercent = 80
+
 // StatusScreen is the panel's resting screen. addrs are the node's
-// network addresses (the panel reads them; the app can't).
-func StatusScreen(v View, addrs []string) *image.Gray {
+// network addresses and health its CPU and radio modem (the panel reads
+// both itself; the app can't).
+func StatusScreen(v View, addrs []string, health hostmon.Snapshot) *image.Gray {
 	img := newCanvas()
-	st, now := v.Status, v.Status.Now
+	st := v.Status
 	title := st.Station
 	switch {
 	case st.Role == "checkpoint" && st.CPCode != "":
@@ -165,7 +172,17 @@ func StatusScreen(v View, addrs []string) *image.Gray {
 		title = "Not set up"
 	}
 	header(img, title, st.StateLabel)
-	var lines []string
+	lines, right := statusLines(v, addrs, health)
+	for i, l := range lines {
+		line(img, i, l)
+	}
+	footer(img, st.RaceName, right)
+	return mono(img)
+}
+
+// statusLines is the status screen's body and footer text.
+func statusLines(v View, addrs []string, health hostmon.Snapshot) (lines []string, footerRight string) {
+	st, now := v.Status, v.Status.Now
 	switch st.Role {
 	case "checkpoint":
 		hq := "HQ not heard yet"
@@ -182,7 +199,13 @@ func StatusScreen(v View, addrs []string) *image.Gray {
 		}
 	}
 	if st.GraywolfOK {
-		lines = append(lines, "graywolf OK")
+		gw := "graywolf OK"
+		if k := health.ModemKeepingUp; k != nil && *k {
+			gw += ", modem keeping up"
+		} else if k != nil {
+			gw += ", modem BEHIND"
+		}
+		lines = append(lines, gw)
 	} else {
 		problem := strings.TrimPrefix(st.GraywolfProblem, "graywolf ")
 		if problem == "" {
@@ -191,6 +214,9 @@ func StatusScreen(v View, addrs []string) *image.Gray {
 		lines = append(lines, "graywolf DOWN: "+problem)
 	}
 	// Warnings outrank the link line when space runs short.
+	if cpuHigh(health) {
+		lines = append(lines, fmt.Sprintf("! CPU %.0f%% over 5 min", *health.CPUPercent))
+	}
 	for _, w := range st.Warnings {
 		lines = append(lines, "! "+w)
 	}
@@ -208,12 +234,17 @@ func StatusScreen(v View, addrs []string) *image.Gray {
 		lines = lines[:bodyLines-1]
 	}
 	lines = append(lines, addr)
-	for i, l := range lines {
-		line(img, i, l)
+	footerRight = "Updated " + hhmm(now)
+	if health.CPUPercent != nil {
+		footerRight = fmt.Sprintf("CPU %.0f%% | %s", *health.CPUPercent, hhmm(now)) // ASCII: the panel font has no "·"
 	}
-	footer(img, st.RaceName, "Updated "+hhmm(now))
-	return mono(img)
+	return lines, footerRight
 }
+
+func cpuHigh(h hostmon.Snapshot) bool { return h.CPUPercent != nil && *h.CPUPercent >= cpuWarnPercent }
+
+// modemBehind is a measured "falling behind", not an unknown.
+func modemBehind(h hostmon.Snapshot) bool { return h.ModemKeepingUp != nil && !*h.ModemKeepingUp }
 
 // MenuScreen lists labels with the cursor's item highlighted.
 func MenuScreen(title string, labels []string, cursor int) *image.Gray {

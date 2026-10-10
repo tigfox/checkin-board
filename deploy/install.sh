@@ -6,14 +6,17 @@
 #   sudo ./install.sh /path/to/checkin-board
 #   sudo ./install.sh --graywolf-version v0.14.14   # pin graywolf if it's installed now
 #   sudo ./install.sh --no-graywolf                 # never install graywolf
+#   sudo ./install.sh --graywolf-deb FILE.deb       # install this graywolf package
+#                                                   # (e.g. the Pi Zero build; replaces one)
 #
 # If graywolf isn't installed, its latest release is installed first
 # (spec 2.3), and your graywolf admin login is set up: interactively, or
 # from GRAYWOLF_ADMIN_USER and GRAYWOLF_ADMIN_PASSWORD_FILE.
 #
 # Safe to re-run: settings and the graywolf password are never
-# overwritten, an installed graywolf is never upgraded, and on upgrade
-# the database is copied aside first.
+# overwritten, an installed graywolf is never upgraded (unless
+# --graywolf-deb gives a package), and on upgrade the database is copied
+# aside first.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -28,17 +31,28 @@ default_binary() {
 	esac
 }
 GW_VERSION=latest
+GW_VERSION_SET=no
 GW_INSTALL=yes
+GW_DEB=
 BIN_ARG=
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--graywolf-version)
 		[ $# -ge 2 ] || { printf 'install: --graywolf-version needs a version\n' >&2; exit 2; }
-		GW_VERSION=$2
+		GW_VERSION=$2 GW_VERSION_SET=yes
 		shift 2
 		;;
 	--graywolf-version=*)
-		GW_VERSION=${1#*=}
+		GW_VERSION=${1#*=} GW_VERSION_SET=yes
+		shift
+		;;
+	--graywolf-deb)
+		[ $# -ge 2 ] || { printf 'install: --graywolf-deb needs a .deb file\n' >&2; exit 2; }
+		GW_DEB=$2
+		shift 2
+		;;
+	--graywolf-deb=*)
+		GW_DEB=${1#*=}
 		shift
 		;;
 	--no-graywolf)
@@ -46,7 +60,7 @@ while [ $# -gt 0 ]; do
 		shift
 		;;
 	-h | --help)
-		sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+		sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
 		exit 0
 		;;
 	--)
@@ -66,6 +80,29 @@ while [ $# -gt 0 ]; do
 		;;
 	esac
 done
+# --graywolf-deb is checked before anything else happens.
+if [ -n "$GW_DEB" ]; then
+	if [ "$GW_INSTALL" = no ] || [ "$GW_VERSION_SET" = yes ]; then
+		printf 'install: --graywolf-deb can'"'"'t be combined with --no-graywolf or --graywolf-version\n' >&2
+		exit 2
+	fi
+	case "$GW_DEB" in
+	*.deb) ;;
+	*)
+		printf 'install: --graywolf-deb %s isn'"'"'t a .deb file\n' "$GW_DEB" >&2
+		exit 2
+		;;
+	esac
+	[ -f "$GW_DEB" ] || { printf 'install: --graywolf-deb %s: not found\n' "$GW_DEB" >&2; exit 2; }
+	if command -v dpkg-deb >/dev/null 2>&1; then
+		pkg=$(dpkg-deb --field "$GW_DEB" Package 2>/dev/null || true)
+		if [ "$pkg" != graywolf ]; then
+			printf 'install: --graywolf-deb %s isn'"'"'t a graywolf package (Package: %s)\n' "$GW_DEB" "${pkg:-unreadable}" >&2
+			exit 2
+		fi
+	fi
+	GW_DEB=$(cd "$(dirname "$GW_DEB")" && pwd)/$(basename "$GW_DEB") # apt needs a path
+fi
 BIN_SRC=${BIN_ARG:-$(default_binary)}
 [ -f "$BIN_SRC" ] || [ -n "$BIN_ARG" ] || BIN_SRC=$HERE/checkin-board
 # graywolf's releases (overridable for tests).
@@ -239,6 +276,53 @@ install_graywolf() {
 	GW_FRESH=yes
 }
 
+# install_graywolf_deb: the package given with --graywolf-deb, over any
+# installed graywolf (that's how a Pi Zero gets the fixed build,
+# deploy/graywolf-armv6). Like install_graywolf, returns non-zero after
+# saying why.
+install_graywolf_deb() {
+	pkg=$(dpkg-deb --field "$GW_DEB" Package 2>/dev/null || true)
+	if [ "$pkg" != graywolf ]; then
+		say "graywolf: $GW_DEB isn't a graywolf package (Package: '${pkg:-unreadable}'); not installing it."
+		return 1
+	fi
+	was=no
+	graywolf_installed && was=yes
+	say "Installing graywolf from $(basename "$GW_DEB")..."
+	if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -q -o DPkg::Lock::Timeout=120 --allow-downgrades "$GW_DEB"; then
+		say "graywolf: apt couldn't install it (see above)."
+		return 1
+	fi
+	if [ "$(dpkg-query -W -f='${Status}' graywolf 2>/dev/null)" != "install ok installed" ]; then
+		say "graywolf: the package didn't install cleanly; check 'dpkg -s graywolf'."
+		return 1
+	fi
+	systemctl enable --quiet graywolf 2>/dev/null || true
+	systemctl restart graywolf 2>/dev/null || true
+	[ "$was" = no ] && GW_FRESH=yes
+	return 0
+}
+
+# pi_zero_notes: a Pi Zero W / Pi 1 (ARMv6) needs graywolf's fixed build
+# and 24 kHz audio, or it transmits a silent carrier and receives
+# nothing (docs/feedback-2026-10-09.md, items 8 and 10).
+pi_zero_notes() {
+	[ "$(uname -m)" = armv6l ] || return 0
+	gwv=$(dpkg-query -W -f='${Version}' graywolf 2>/dev/null || true)
+	case "$gwv" in
+	*armv6buf*)
+		say "Pi Zero: graywolf $gwv has the Pi Zero fixes. Set its AIOC audio to 24 kHz if you haven't (station guide, Pi Zero nodes)."
+		;;
+	'') ;;
+	*)
+		say "WARNING: this is a Pi Zero (ARMv6), and graywolf $gwv lacks the Pi Zero fixes:"
+		say "  it transmits a silent carrier and drops received audio. Build the fixed package"
+		say "  (deploy/graywolf-armv6/build.sh), install it with --graywolf-deb, and set the"
+		say "  AIOC audio to 24 kHz (station guide, Pi Zero nodes)."
+		;;
+	esac
+}
+
 # graywolf_admin: a fresh graywolf has no users, and its web UI offers
 # "Create Admin Account" until one exists. The app's own login (created
 # below) would be the first and hide that screen, so the operator's admin
@@ -304,7 +388,9 @@ graywolf_admin() {
 }
 
 GW_FRESH=no
-if graywolf_installed; then
+if [ -n "$GW_DEB" ]; then
+	install_graywolf_deb || die "graywolf: --graywolf-deb $GW_DEB wasn't installed (see above)"
+elif graywolf_installed; then
 	gwv=$(dpkg-query -W -f='${Version}' graywolf 2>/dev/null || true)
 	if [ -n "$gwv" ]; then
 		warn_version "$gwv"
@@ -313,6 +399,7 @@ elif [ "$GW_INSTALL" = yes ]; then
 	# Before the app is stopped for an upgrade: downloads can take a while.
 	install_graywolf || true
 fi
+pi_zero_notes
 
 # Upgrade: stop the service (also a crash-looping one) and copy the
 # database aside before the new binary migrates it. If anything below

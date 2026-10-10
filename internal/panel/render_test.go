@@ -2,6 +2,7 @@ package panel
 
 import (
 	"bytes"
+	"checkin-board/internal/hostmon"
 	"flag"
 	"image"
 	"image/png"
@@ -78,8 +79,8 @@ func TestScreens(t *testing.T) {
 		HQ: &HQ{Listed: 8, Heard: 6, Closed: 2, Gaps: 1}, GraywolfOK: false, GraywolfProblem: "graywolf unreachable",
 		Warnings: []string{"Race clock not set"}, Port: 8090, Now: tNow,
 	}}
-	golden(t, "status-checkpoint", StatusScreen(cpView(), []string{"192.168.4.1"}))
-	golden(t, "status-hq", StatusScreen(hqv, nil))
+	golden(t, "status-checkpoint", StatusScreen(cpView(), []string{"192.168.4.1"}, healthy()))
+	golden(t, "status-hq", StatusScreen(hqv, nil, overloaded()))
 	golden(t, "menu", MenuScreen("Menu", []string{"Status", "Run link check", "Close checkpoint", "Secure for travel", "HQ check-in", "Network", "Refresh screen", "Back"}, 6))
 	golden(t, "confirm", ConfirmScreen("Close checkpoint"))
 	golden(t, "message", MessageScreen("Link check", []string{"Started: probing N0CALL-10.", "Result in 1-3 minutes."}))
@@ -91,7 +92,7 @@ func TestScreens(t *testing.T) {
 func TestStatusAlwaysShowsAddress(t *testing.T) {
 	v := cpView()
 	v.Status.Warnings = []string{"one", "two", "three", "four", "five"}
-	img := StatusScreen(v, []string{"10.1.2.3"})
+	img := StatusScreen(v, []string{"10.1.2.3"}, hostmon.Snapshot{})
 	// The last body line is the address, even with many warnings: check
 	// the address line isn't blank.
 	base := bodyTop + (bodyLines-1)*lineH
@@ -141,4 +142,42 @@ func TestBigTextFits(t *testing.T) {
 			t.Errorf("%q is too wide for the panel", s)
 		}
 	}
+}
+
+func TestStatusLinesShowHealth(t *testing.T) {
+	cpu := func(v float64) *float64 { return &v }
+	up, behind := true, false
+	v := cpView()
+	lines, foot := statusLines(v, []string{"10.1.2.3"}, hostmon.Snapshot{CPUPercent: cpu(52.4), ModemKeepingUp: &up})
+	if !contains(lines, "graywolf OK, modem keeping up") || foot != "CPU 52% | 13:05" {
+		t.Errorf("healthy: lines %q, footer %q", lines, foot)
+	}
+	lines, _ = statusLines(v, nil, hostmon.Snapshot{CPUPercent: cpu(91), ModemKeepingUp: &behind})
+	if !contains(lines, "graywolf OK, modem BEHIND") || !contains(lines, "! CPU 91% over 5 min") {
+		t.Errorf("overloaded: lines %q", lines)
+	}
+	// Not measured (preview, or no modem yet): no claim either way.
+	lines, foot = statusLines(v, nil, hostmon.Snapshot{})
+	if !contains(lines, "graywolf OK") || foot != "Updated 13:05" {
+		t.Errorf("unknown: lines %q, footer %q", lines, foot)
+	}
+}
+
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
+
+func healthy() hostmon.Snapshot {
+	cpu, up := 52.0, true
+	return hostmon.Snapshot{CPUPercent: &cpu, ModemKeepingUp: &up}
+}
+
+func overloaded() hostmon.Snapshot {
+	cpu, up := 91.0, false
+	return hostmon.Snapshot{CPUPercent: &cpu, ModemKeepingUp: &up}
 }

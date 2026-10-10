@@ -28,6 +28,7 @@ func (s *server) routes() []route {
 		{method: "PUT", pattern: "/api/admin/settings/messaging", access: admin, h: s.putMessagingSettings},
 		{method: "PUT", pattern: "/api/admin/callsign", access: admin, h: s.putCallsign},
 		{method: "GET", pattern: "/api/admin/gw", access: admin, h: s.getGraywolf},
+		{method: "GET", pattern: "/api/admin/radio", access: admin, h: s.getRadio},
 		// The local configuration guide (an admin page, not an API).
 		{method: "GET", pattern: "/guide", access: admin, page: true, h: s.getGuide},
 		{method: "GET", pattern: "/api/admin/peers", access: admin, h: s.getPeers},

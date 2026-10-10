@@ -196,3 +196,27 @@ test("linkTargets lists HQ's checkpoints for the link check", () => {
   assert.deepEqual(L.linkTargets([], now), []);
   assert.deepEqual(L.linkTargets(undefined, now), []);
 });
+
+test("radioSummary says what's wrong in one line", () => {
+  assert.deepEqual(L.radioSummary({ status: "ok", items: [{ key: "build", label: "graywolf", status: "ok" }] }),
+    { kind: "info", text: "Radio: all checks pass." });
+  const r = { status: "fail", items: [
+    { key: "build", label: "graywolf", status: "fail" },
+    { key: "rate", label: "Audio sample rate", status: "fail" },
+    { key: "level", label: "Receive audio level", status: "warn" },
+    { key: "keepup", label: "Modem keeping up", status: "unknown" },
+  ] };
+  assert.deepEqual(L.radioSummary(r), { kind: "bad",
+    text: "Radio: graywolf, Audio sample rate failed; Receive audio level needs a look. See Station → Radio." });
+  assert.deepEqual(L.radioSummary({ status: "warn", items: [{ label: "Packets decoded", status: "warn" }] }),
+    { kind: "warn", text: "Radio: Packets decoded needs a look. See Station → Radio." });
+  // Unchecked items are said, not hidden behind "all checks pass".
+  assert.deepEqual(L.radioSummary({ status: "ok", items: [
+    { label: "graywolf", status: "ok" }, { label: "Modem keeping up", status: "unknown" },
+  ] }), { kind: "info", text: "Radio: no problems found; Modem keeping up not checked yet." });
+  assert.equal(L.radioSummary(undefined), null);
+  assert.equal(L.radioIcon("ok"), "✓");
+  assert.equal(L.radioIcon("fail"), "✗");
+  assert.equal(L.radioIcon("warn"), "⚠");
+  assert.equal(L.radioIcon("unknown"), "?");
+});

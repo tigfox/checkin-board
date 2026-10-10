@@ -234,3 +234,25 @@ export function linkTargets(health, nowMs) {
   }
   return out;
 }
+
+// radioIcon marks a radio check item's status.
+export function radioIcon(status) {
+  return { ok: "✓", warn: "⚠", fail: "✗" }[status] || "?";
+}
+
+// radioSummary is the radio check (/api/admin/radio report) in one line
+// for the Race page: {kind: banner kind, text}, or null with no report.
+export function radioSummary(report) {
+  if (!report || !Array.isArray(report.items)) return null;
+  const labels = (st) => report.items.filter((i) => i.status === st).map((i) => i.label).join(", ");
+  const failed = labels("fail");
+  const warned = labels("warn");
+  const unchecked = labels("unknown");
+  if (!failed && !warned) {
+    return { kind: "info", text: unchecked ? `Radio: no problems found; ${unchecked} not checked yet.` : "Radio: all checks pass." };
+  }
+  const parts = [];
+  if (failed) parts.push(`${failed} failed`);
+  if (warned) parts.push(`${warned} needs a look`);
+  return { kind: failed ? "bad" : "warn", text: `Radio: ${parts.join("; ")}. See Station → Radio.` };
+}

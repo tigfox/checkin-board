@@ -36,6 +36,7 @@ import (
 	"checkin-board/internal/auth"
 	"checkin-board/internal/config"
 	"checkin-board/internal/graywolf"
+	"checkin-board/internal/hostmon"
 	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/store"
 	"checkin-board/internal/web"
@@ -167,9 +168,14 @@ func run(logger *slog.Logger) error {
 		// Proves whoever sets the admin password can see this node's log.
 		logger.Warn("first-run setup: open the web page and enter this setup code", "setup_code", code)
 	}
+	// The node's own health for the radio check: CPU and whether
+	// graywolf's modem keeps up (hostmon reads /proc; unknown elsewhere).
+	host := hostmon.New("/proc")
+	go host.Run(ctx, hostmon.SampleEvery, time.Now)
 	handler, err := web.NewHandler(web.Deps{
 		Store: st, Auth: authSvc, Ops: a.Ops, HQ: a.HQ, Checkpoint: a.Checkpoint, Inbox: a.Inbox,
 		Clock: a.Clock, Graywolf: gw, Logger: logger, HookToken: cfg.HookToken, WebPort: listenPort(cfg.Listen),
+		Host: host,
 	})
 	if err != nil {
 		return fmt.Errorf("web handler: %w", err)

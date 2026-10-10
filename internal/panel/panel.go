@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"checkin-board/internal/hostmon"
 	"checkin-board/internal/panel/epd"
 	"checkin-board/internal/panel/menu"
 )
@@ -73,8 +74,11 @@ type Config struct {
 	Open   Opener
 	// Addrs lists the node's network addresses for the status screen.
 	Addrs func() []string
-	Now   func() time.Time
-	Log   *slog.Logger
+	// Health is the node's CPU and radio modem state (hostmon), for the
+	// status screen; nil leaves it out.
+	Health func() hostmon.Snapshot
+	Now    func() time.Time
+	Log    *slog.Logger
 	// NoButtons: status only (the buttons and menu are shelved), so no
 	// detection wizard either: it needs a press.
 	NoButtons bool
@@ -122,6 +126,7 @@ type Panel struct {
 	seenRef  int64
 	seenTest int64
 	addrs    []string
+	health   hostmon.Snapshot
 	key, imp string // what the status screen would show now
 
 	disp           epd.Display
@@ -163,6 +168,9 @@ func New(cfg Config) *Panel {
 	}
 	if cfg.Addrs == nil {
 		cfg.Addrs = func() []string { return nil }
+	}
+	if cfg.Health == nil {
+		cfg.Health = func() hostmon.Snapshot { return hostmon.Snapshot{} }
 	}
 	log := cfg.Log
 	if log == nil {
@@ -228,6 +236,7 @@ func (p *Panel) Tick(ctx context.Context) {
 
 func (p *Panel) poll(ctx context.Context, now time.Time) {
 	p.addrs = p.cfg.Addrs()
+	p.health = p.cfg.Health()
 	v, err := p.cfg.Source.View(ctx)
 	if err != nil {
 		p.viewErr, p.nextPoll = err, now.Add(retryEvery)
@@ -389,19 +398,23 @@ func (p *Panel) interactive(ctx context.Context, img *image.Gray, now time.Time)
 func (p *Panel) statusKey() (key, important string) {
 	st := p.view.Status
 	st.Now = time.Time{}
+	// Only health warnings count, not the CPU figure: it changes all the
+	// time and shows with whatever refresh happens anyway.
+	high, behind := cpuHigh(p.health), modemBehind(p.health)
 	b, _ := json.Marshal(struct {
-		S     Status
-		Addrs []string
-		Rot   int
-	}{st, p.addrs, p.view.Settings.Rotation})
-	return string(b), fmt.Sprint(st.Role, st.RaceState, st.GraywolfOK, len(st.Warnings))
+		S            Status
+		Addrs        []string
+		Rot          int
+		High, Behind bool
+	}{st, p.addrs, p.view.Settings.Rotation, high, behind})
+	return string(b), fmt.Sprint(st.Role, st.RaceState, st.GraywolfOK, len(st.Warnings), high, behind)
 }
 
 func (p *Panel) statusScreen(now time.Time) *image.Gray {
 	if p.viewErr != nil {
 		return AppDownScreen(shortErr(p.viewErr), now)
 	}
-	return StatusScreen(*p.view, p.addrs)
+	return StatusScreen(*p.view, p.addrs, p.health)
 }
 
 func (p *Panel) statusTick(ctx context.Context, now time.Time) {

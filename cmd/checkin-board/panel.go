@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"checkin-board/internal/config"
+	"checkin-board/internal/hostmon"
 	"checkin-board/internal/panel"
 	"checkin-board/internal/panel/epd"
 	"checkin-board/internal/panel/epd/bonnet"
@@ -81,8 +82,12 @@ func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reade
 		return fmt.Errorf("panel: unknown buttons %q", *buttons)
 	}
 	log.Info("panel starting", "app", cfg.AppURL, "display", *display, "buttons", *buttons)
+	// CPU and radio modem health for the status screen (feedback
+	// 2026-10-09, item 15), read from /proc by the panel itself.
+	health := hostmon.New("/proc")
+	go health.Run(ctx, hostmon.SampleEvery, time.Now)
 	p := panel.New(panel.Config{Source: panel.NewClient(cfg.AppURL, cfg.Token), Open: open, Addrs: panel.NodeAddrs, Log: log,
-		NoButtons: *buttons == "none"})
+		Health: health.Snapshot, NoButtons: *buttons == "none"})
 	return p.Run(ctx, btn)
 }
 

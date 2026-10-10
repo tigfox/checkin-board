@@ -18,6 +18,7 @@ import (
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 
+	"checkin-board/internal/gwfake"
 	"checkin-board/internal/raceclock"
 	"checkin-board/internal/store"
 )
@@ -384,5 +385,24 @@ func TestE2EPanelTab(t *testing.T) {
 	if ps, _ := e.st.GetPanelSettings(ctx); ps.RefreshMin != 10 {
 		t.Fatalf("refresh = %d", ps.RefreshMin)
 	}
+	b.noErrors()
+}
+
+// The radio check: a summary before Start, the checklist on request.
+func TestE2ERadioCheck(t *testing.T) {
+	e := newEnv(t, checkpointSettings(store.RaceSetup))
+	b := newBrowser(t, e.srv.URL)
+	b.login(e.admin)
+	b.run(chromedp.Navigate(e.srv.URL + "/admin.html"))
+	// No host monitor in tests: the modem's keep-up is honestly unchecked.
+	b.waitText("#radio-summary", "Radio: no problems found; Modem keeping up not checked yet")
+	b.run(chromedp.Click(`//nav[@id="tabs"]/button[text()="Station"]`, chromedp.BySearch),
+		chromedp.Click("#radio-check", chromedp.ByQuery))
+	b.waitText("#radio-result", "Push-to-talk")
+	b.waitText("#radio-result", "Modem keeping up")
+	// A broken setup shows up in the summary.
+	e.gw.EditRadio(func(r *gwfake.RadioSetup) { r.Channels[0].PTT.Configured = false })
+	b.run(chromedp.Click(`//nav[@id="tabs"]/button[text()="Race"]`, chromedp.BySearch))
+	b.waitText("#radio-summary", "Push-to-talk failed")
 	b.noErrors()
 }

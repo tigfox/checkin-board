@@ -95,6 +95,18 @@ type downGraywolf struct{}
 func (downGraywolf) Version(context.Context) (graywolf.Version, error) {
 	return graywolf.Version{}, errors.New("dial tcp: connection refused")
 }
+func (downGraywolf) AudioDevices(context.Context) ([]graywolf.AudioDevice, error) {
+	return nil, errors.New("down")
+}
+func (downGraywolf) AudioLevels(context.Context) (map[uint32]graywolf.DeviceLevel, error) {
+	return nil, errors.New("down")
+}
+func (downGraywolf) Channels(context.Context) ([]graywolf.Channel, error) {
+	return nil, errors.New("down")
+}
+func (downGraywolf) ChannelStats(context.Context, uint32) (graywolf.ChannelStats, error) {
+	return graywolf.ChannelStats{}, errors.New("down")
+}
 func (downGraywolf) StationConfig(context.Context) (graywolf.StationConfig, error) {
 	return graywolf.StationConfig{}, errors.New("down")
 }

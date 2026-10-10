@@ -76,8 +76,11 @@
     <ol>
       <li><strong>A fixed graywolf build:</strong> graywolf with cpal 0.18 (a silent carrier on transmit
         otherwise) and the ARMv6 audio-buffer patch, built with checkin-board's
-        <span class="mono">deploy/graywolf-armv6/build.sh</span>. Install checkin-board with
-        <span class="mono">install.sh --no-graywolf</span> so a release never replaces it.</li>
+        <span class="mono">deploy/graywolf-armv6/build.sh</span>. Install it with
+        <span class="mono">install.sh --graywolf-deb FILE.deb</span> (it replaces an installed graywolf),
+        and later checkin-board upgrades with plain <span class="mono">install.sh</span> keep it (an installed
+        graywolf is never replaced without <span class="mono">--graywolf-deb</span>). On a Pi Zero the installer
+        warns when graywolf lacks these fixes.</li>
       <li><strong>24 kHz audio in graywolf</strong> for the AIOC (input and output). At 48 kHz the Zero
         can't keep up and receives nothing.</li>
     </ol>
@@ -123,6 +126,12 @@ rm -f &quot;$J&quot;</pre>
   <section id="testing">
     <h2>Testing a link</h2>
     <ul>
+      <li><strong>Radio check</strong> (Station → Radio → Check radio): checks graywolf's build, channel,
+        audio devices, push-to-talk, sample rate, receive level, packets decoded, and whether graywolf's
+        modem keeps up with its audio. Nothing is transmitted. The Race page shows its summary before Start.</li>
+      <li><strong>Node panel:</strong> shows "modem keeping up" (or BEHIND) and the CPU use over 5
+        minutes; above 80% it adds a warning line. A modem that falls behind drops received audio
+        without any error.</li>
       <li><strong>Link check</strong> (Admin → Link check): run it at every station's location before the
         race. A few short test messages confirm the link to HQ (or, at HQ, to a checkpoint).</li>
       <li><strong>Listen with a third radio</strong> tuned to the frequency, squelch open, while a node

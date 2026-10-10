@@ -22,6 +22,17 @@ export async function renderRace(sec, ctx) {
     }
   }
   const actions = L.actionsFor(s.role, s.race_state).filter((a) => a !== "reset");
+  // Before Start: is the radio working? (It warns; it doesn't block.)
+  // Filled in after the page renders: the check can take seconds when
+  // graywolf is slow.
+  if (actions.includes("start")) {
+    const slot = h("p", { class: "muted", id: "radio-summary" }, "Radio: checking…");
+    sec.append(slot);
+    get("/api/admin/radio").then((radio) => {
+      const sum = L.radioSummary(radio.report);
+      if (sum) slot.replaceWith(h("p", { class: `banner ${sum.kind}`, id: "radio-summary" }, sum.text));
+    }).catch(() => slot.replaceWith(h("p", { class: "banner warn", id: "radio-summary" }, "Radio: couldn't check (Station → Radio).")));
+  }
   const row = h("div", { class: "row" });
   for (const a of actions) {
     const [label, question] = L.actionLabel(a, s.role);
@@ -30,8 +41,13 @@ export async function renderRace(sec, ctx) {
       onclick: async () => {
         let ask = question;
         if (a === "start") {
-          const r = await get("/api/admin/linkcheck/readiness").catch(() => ({ warnings: [] }));
-          if (r.warnings.length) ask = `${r.warnings.join("\n")}\n\n${question}`;
+          const [r, radio] = await Promise.all([
+            get("/api/admin/linkcheck/readiness").catch(() => ({ warnings: [] })),
+            get("/api/admin/radio").catch(() => null), // checked now, not when the page opened
+          ]);
+          const radioFailed = (radio?.report?.items || []).filter((i) => i.status === "fail").map((i) => `Radio: ${i.label}: ${i.detail}`);
+          const warnings = [...radioFailed, ...r.warnings];
+          if (warnings.length) ask = `${warnings.join("\n")}\n\n${question}`;
         }
         if (!confirm(ask)) return;
         await ctx.run(() => post(`/api/admin/race/${a}`), (r) =>

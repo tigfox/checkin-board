@@ -20,11 +20,13 @@ import (
 	"checkin-board/internal/auth"
 	"checkin-board/internal/checkpoint"
 	"checkin-board/internal/graywolf"
+	"checkin-board/internal/hostmon"
 	"checkin-board/internal/hq"
 	"checkin-board/internal/inbox"
 	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/ops"
 	"checkin-board/internal/raceclock"
+	"checkin-board/internal/radiocheck"
 	"checkin-board/internal/store"
 )
 
@@ -38,9 +40,10 @@ const (
 	sessionCookie = "cb_session"
 )
 
-// Graywolf is what the admin pages read from (and set in) graywolf.
+// Graywolf is what the admin pages read from (and set in) graywolf,
+// including the read-only radio setup the radio check needs.
 type Graywolf interface {
-	Version(ctx context.Context) (graywolf.Version, error)
+	radiocheck.Graywolf
 	StationConfig(ctx context.Context) (graywolf.StationConfig, error)
 	SetStationCallsign(ctx context.Context, callsign string) (graywolf.StationConfig, error)
 	MessagePreferences(ctx context.Context) (graywolf.MessagePreferences, error)
@@ -79,10 +82,19 @@ type Deps struct {
 	LinkTiming linkcheck.Timing
 	// WebPort is the port the UI listens on, shown on the node panel.
 	WebPort int
+	// Host is the node's own health (CPU, radio modem keeping up), for
+	// the radio check; nil leaves it unknown.
+	Host HostMonitor
+}
+
+// HostMonitor is the node health sampler (hostmon.Monitor).
+type HostMonitor interface {
+	Snapshot() hostmon.Snapshot
 }
 
 type server struct {
 	Deps
+	radio    *radiocheck.Checker
 	log      *slog.Logger
 	now      func() time.Time
 	dedup    *requestDedup
@@ -103,6 +115,7 @@ func NewHandler(d Deps) (http.Handler, error) {
 		s.now = time.Now
 	}
 	s.dedup = newRequestDedup(s.now)
+	s.radio = radiocheck.NewChecker(s.now)
 	s.panelReq.boot = time.Now().UnixNano()
 	static := d.Static
 	if static == nil {

@@ -28,12 +28,15 @@ internal/web/static/   the UI: plain HTML + ES modules, no build step, no inline
 internal/web/jstest/   `node --test` unit tests for the UI logic
 internal/peers/        graywolf per-peer retry settings (backup / restore)
 internal/linkcheck/    deployment link check: RC1 P probes, RC1 Q replies, verdicts
+internal/radiocheck/   radio status check: graywolf build, channel, audio, PTT, rate, level, decodes, modem keep-up
+internal/hostmon/      node health from /proc: CPU 5-min average, graywolf modem keeping up, machine
 internal/panel/        node panel: e-ink status screen and two-button menu (renderer, state machine, hook client)
 internal/panel/menu/   the panel's action allowlist, default menu and validation
-internal/panel/epd/    e-ink controllers (drivers arrive in phase 14)
+internal/panel/epd/    e-ink controllers (SSD1680Z/SSD1680/SSD1675 over periph.io)
 internal/gwfake/       in-memory fake of graywolf's Messages API + simulated RF channel (tests)
 internal/sim/          whole-node simulation: exactly-once and latency tests
-deploy/                systemd unit, env template, install script
+deploy/                systemd unit, env template, install script (+ option tests)
+deploy/graywolf-armv6/ ARMv6 (Pi Zero) graywolf build kit: audio-buffer patch, build.sh
 docs/specs/            design spec
 docs/operator-guide.md install, race day, recovery, reset (for station operators)
 ```
@@ -48,6 +51,11 @@ machine. See
 [`docs/operator-guide.md`](docs/operator-guide.md) for setup, race day,
 recovery and reset. The service runs as `checkin-board` with its data
 in `/var/lib/checkin-board` and starts after `graywolf.service`.
+
+**Pi Zero W nodes** need a patched graywolf and 24 kHz audio: build it
+with [`deploy/graywolf-armv6/`](deploy/graywolf-armv6/README.md) and
+install it with `sudo ./install.sh --graywolf-deb FILE.deb`. Then
+**Admin → Station → Radio → Check radio** confirms the radio works.
 
 ## Configuration
 
@@ -104,7 +112,8 @@ a graywolf Action: [docs/linkcheck-action.md](docs/linkcheck-action.md).
 | `/` | any | sends you to the right page for your login |
 | `/login.html` | none | first-run setup (setup code + admin password) and login |
 | `/keypad.html` | volunteer or admin | log bibs, void entries, set the race clock from the phone |
-| `/admin.html` | admin | race lifecycle and reset, station settings and graywolf callsign, outbox and export (checkpoint), checkpoints, roster, health and recovery imports (HQ), board branding (HQ), passwords |
+| `/admin.html` | admin | race lifecycle and reset, station settings and graywolf callsign, radio check, outbox and export (checkpoint), checkpoints, roster, health and recovery imports (HQ), board branding (HQ), passwords |
+| `/guide` | admin | station guide: settings, radio and graywolf setup, Pi Zero notes, link testing, 2 m band plan (served by the node; no internet needed) |
 | `/board.html` | admin | HQ status board in the configured branding, printable |
 
 ## Node panel

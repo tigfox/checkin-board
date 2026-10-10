@@ -62,6 +62,15 @@ Data lives in `/var/lib/checkin-board/`:
 - `backups/`: written on every reset and upgrade, never deleted by the
   app.
 
+**Pi Zero W nodes** need a fixed graywolf build and 24 kHz audio, or they
+transmit a silent carrier and receive nothing. Build the package with
+`deploy/graywolf-armv6/build.sh` and install it with
+`sudo ./install.sh --graywolf-deb FILE.deb` (it replaces an installed
+graywolf), then set graywolf's audio to 24 kHz (station guide, "Pi Zero
+nodes"). Later upgrades with plain `sudo ./install.sh` keep it (an
+installed graywolf is never replaced without `--graywolf-deb`). On a Pi
+Zero the installer warns when graywolf lacks the fixes.
+
 **Upgrading:** run `sudo ./install.sh` from the new bundle. Settings and
 the password are kept, and the database is copied to
 `backups/pre-upgrade-<time>/` before the new version starts. If the
@@ -124,6 +133,12 @@ file). If the node also has an uplink you don't want it on, set
      otherwise. They save separately with **Save messaging settings**.
    - Check the **graywolf connection** panel. It should say reachable,
      with live updates on.
+   - **Radio → Check radio:** checks graywolf's build, channel, audio
+     devices, push-to-talk, sample rate, receive level, packets decoded,
+     and whether graywolf's modem keeps up with its audio. Nothing is
+     transmitted. Fix anything marked ✗ before the race; the Race page
+     shows the same summary before **Start race**, and Start lists any
+     failures in its confirmation.
 
 ### HQ extra setup
 
@@ -172,6 +187,11 @@ reboot, and run `install.sh` again.
 - **What it shows:** the node's status, and the address volunteers
   should open, refreshed every few minutes. The bonnet's buttons aren't
   used.
+- **Radio health:** the graywolf line says "modem keeping up" or "modem
+  BEHIND" (a modem that falls behind drops received audio without any
+  error), and the footer shows the CPU use over the last 5 minutes. Above
+  80% a warning line appears. These warnings refresh the display early;
+  the CPU figure alone doesn't.
 - **If the display stays blank or garbled:** the bonnet may be an older
   revision. On **Admin → Panel**, show a test pattern with each
   controller, then choose the one that draws it cleanly. SSD1680Z is the

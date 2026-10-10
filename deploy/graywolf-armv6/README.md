@@ -44,14 +44,25 @@ proves the `gw_armv6` flag is set only there).
 
 ## Install on a node
 
+With checkin-board's installer (from the unpacked release on the node):
+
+```sh
+sudo ./install.sh --graywolf-deb /tmp/graywolf_<version>+<commit>.armv6buf_armhf.deb
+```
+
+It installs that package over any graywolf (a release included) and
+restarts graywolf. Later checkin-board upgrades with plain `install.sh`
+keep it: an installed graywolf is never replaced without
+`--graywolf-deb`. On a Pi Zero the installer warns when the installed
+graywolf lacks the fixes.
+
+Or by hand, keeping the old binaries for a quick rollback:
+
 ```sh
 scp graywolf_*_armhf.deb pi@NODE:/tmp/
 ssh pi@NODE 'sudo mkdir -p /tmp/gw-rollback && sudo cp -p /usr/bin/graywolf /usr/bin/graywolf-modem /tmp/gw-rollback/ &&
   sudo dpkg -i /tmp/graywolf_*_armhf.deb && sudo systemctl restart graywolf && rm /tmp/graywolf_*_armhf.deb'
 ```
-
-Install checkin-board with `install.sh --no-graywolf` on these nodes, so
-the installer never replaces the patched graywolf with a release.
 
 Then set the AIOC audio to 24 kHz. graywolf's web UI can't (its sample
 rate list is 8000/16000/44100/48000); use the API script in
@@ -62,4 +73,7 @@ rate list is 8000/16000/44100/48000); use the API script in
   "input buffer 2048 frames/period";
 - `grep -E 'rate|period_size' /proc/asound/card0/pcm0c/sub0/hw_params`
   shows `rate: 24000` and `period_size: 2048`;
-- no `cpal ... stream` errors in graywolf's log.
+- no `cpal ... stream` errors in graywolf's log;
+- checkin-board's **Station → Radio → Check radio** passes, including
+  "graywolf" (the fixed build), "Audio sample rate" and "Modem keeping
+  up".

@@ -105,3 +105,11 @@ main.guide { max-width: 52rem; }
 .guide pre { overflow-x: auto; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; font-size: 0.85rem; }
 .guide dt { font-weight: 600; margin-top: 8px; }
 .guide dd { margin: 2px 0 0 0; }
+
+/* Radio check (Station page). */
+.checklist { list-style: none; padding: 0; margin: 8px 0; }
+.checklist li { padding: 4px 0; border-bottom: 1px solid var(--line); }
+.checklist .check-icon { display: inline-block; width: 1.4em; font-weight: 700; }
+.checklist .check-ok .check-icon { color: var(--ok); }
+.checklist .check-warn .check-icon { color: var(--warn); }
+.checklist .check-fail .check-icon { color: var(--bad); }

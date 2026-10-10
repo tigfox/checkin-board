@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"checkin-board/internal/hostmon"
 	"checkin-board/internal/panel/epd"
 	"checkin-board/internal/panel/menu"
 )
@@ -84,6 +85,7 @@ func (a *fakeApp) SetController(_ context.Context, c string) error {
 
 type rig struct {
 	t      *testing.T
+	health hostmon.Snapshot
 	now    time.Time
 	app    *fakeApp
 	opened map[string]*fakeDisplay
@@ -126,8 +128,9 @@ func (r *rig) start(partial bool) {
 			r.opened[c] = d
 			return d, nil
 		},
-		Addrs: func() []string { return []string{"192.168.4.1"} },
-		Now:   func() time.Time { return r.now },
+		Addrs:  func() []string { return []string{"192.168.4.1"} },
+		Health: func() hostmon.Snapshot { return r.health },
+		Now:    func() time.Time { return r.now },
 	})
 }
 
@@ -524,7 +527,7 @@ func TestTestPatternAndRotation(t *testing.T) {
 	r := newRig(t, true)
 	r.app.view.Settings.Rotation = 180
 	r.run(time.Second)
-	if !sameImage(r.disp().full[0], Rotate(StatusScreen(r.app.view, []string{"192.168.4.1"}), 180)) {
+	if !sameImage(r.disp().full[0], Rotate(StatusScreen(r.app.view, []string{"192.168.4.1"}, r.health), 180)) {
 		t.Fatal("status not rotated")
 	}
 	r.app.view.TestPattern, r.app.view.TestPatternSeq = epd.SSD1675, 1
@@ -568,5 +571,35 @@ func TestNoButtonsMeansNoWizard(t *testing.T) {
 	r.run(5 * time.Minute)
 	if len(r.order) != 0 {
 		t.Fatalf("wizard ran with no buttons to answer it: %v", r.order)
+	}
+}
+
+// CPU use and the radio modem show on the panel (feedback 2026-10-09,
+// item 15), but a changing CPU figure alone never costs a refresh: only
+// crossing the warning threshold or the modem falling behind does, early.
+func TestHealthRedrawsOnlyOnWarnings(t *testing.T) {
+	r := newRig(t, true)
+	cpu := func(v float64) *float64 { return &v }
+	up := true
+	r.health = hostmon.Snapshot{CPUPercent: cpu(52), ModemKeepingUp: &up}
+	r.run(time.Second)
+	if n := len(r.disp().full); n != 1 {
+		t.Fatalf("first draw: %d", n)
+	}
+	r.health.CPUPercent = cpu(61)
+	r.run(6 * time.Minute)
+	if n := len(r.disp().full); n != 1 {
+		t.Fatalf("redrew for a CPU figure change: %d", n)
+	}
+	behind := false
+	r.health.ModemKeepingUp = &behind
+	r.run(90 * time.Second)
+	if n := len(r.disp().full); n != 2 {
+		t.Fatalf("modem falling behind not drawn early: %d", n)
+	}
+	r.health.CPUPercent = cpu(91)
+	r.run(3*time.Minute + 30*time.Second)
+	if n := len(r.disp().full); n != 3 {
+		t.Fatalf("high CPU not drawn early: %d", n)
 	}
 }

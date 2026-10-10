@@ -53,7 +53,10 @@ type Health struct {
 
 // Version is the payload of GET /api/version.
 type Version struct {
-	Version  string `json:"version"`
+	Version string `json:"version"`
+	// Commit is the build's commit stamp; a local ARMv6 build for the Pi
+	// Zero ends in "-armv6buf" (deploy/graywolf-armv6).
+	Commit   string `json:"commit"`
 	Platform string `json:"platform"`
 }
 

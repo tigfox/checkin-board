@@ -31,11 +31,11 @@ type Transmission struct {
 	Resend bool
 }
 
-// Station fakes one graywolf's Messages API.
 // ladderFirstRetry is when graywolf's retry ladder would first resend
 // an unacked DM (spec 3.3: 30/60/120/300 s).
 const ladderFirstRetry = 30 * time.Second
 
+// Station fakes one graywolf's Messages API.
 type Station struct {
 	Call string
 	// EchoClientID makes rows remember the client_id they were sent with.
@@ -63,6 +63,10 @@ type Station struct {
 	packets    []graywolf.Packet    // packet log of frames heard (RX)
 	rxLevel    map[string]float64   // sender -> receive level; absent = no level (TNC)
 	apiDown    bool                 // the API is unreachable (graywolf restarting)
+	// setup is the radio setup the read-only setup calls report
+	// (AudioDevices, Channels, ...): a working AIOC channel by default;
+	// tests change it with EditRadio.
+	setup RadioSetup
 }
 
 // SetAPIDown makes every API call fail as if graywolf were unreachable
@@ -89,7 +93,8 @@ var errAPIDown = errors.New("gwfake: dial tcp 127.0.0.1:8080: connect: connectio
 // New returns a station with the given callsign.
 func New(call string) *Station {
 	return &Station{Call: call, Now: time.Now, rows: map[uint64]*graywolf.Message{}, inFlight: map[uint64]bool{},
-		prefs: map[string]graywolf.ConversationPrefs{}, updated: map[uint64]uint64{}, subs: map[chan graywolf.Event]struct{}{}}
+		prefs: map[string]graywolf.ConversationPrefs{}, updated: map[uint64]uint64{}, subs: map[chan graywolf.Event]struct{}{},
+		setup: DefaultRadioSetup()}
 }
 
 func apiErr(code int, msg string) error {
@@ -492,7 +497,9 @@ func (s *Station) Version(ctx context.Context) (graywolf.Version, error) {
 	if err := s.unavailable(); err != nil {
 		return graywolf.Version{}, err
 	}
-	return graywolf.Version{Version: "0.14.14", Platform: "linux"}, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return graywolf.Version{Version: "0.14.14", Commit: s.setup.Commit, Platform: "linux"}, nil
 }
 
 // StationConfig implements graywolf.Client.StationConfig.
