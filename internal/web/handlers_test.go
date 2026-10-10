@@ -478,3 +478,25 @@ func TestConcurrentRetriesLogOnce(t *testing.T) {
 	resp := e.do("POST", "/api/entries", e.volunt, map[string]string{"bib": "56", "request_id": "same"})
 	expect(t, resp, http.StatusUnprocessableEntity)
 }
+
+// A checkpoint whose HQ callsign is its own station callsign would never
+// hear HQ (graywolf drops messages from its own call): saving warns.
+func TestHQCallSameAsOwnCallWarns(t *testing.T) {
+	e := newEnv(t, checkpointSettings("setup"))
+	v := decode[settingsView](t, e.do("GET", "/api/admin/settings", e.admin, nil))
+	race := v.raceSettingsBody
+	race.HQCall = "n0call-1" // graywolf's own call in the test env, any case
+	got := decode[settingsView](t, e.do("PUT", "/api/admin/settings/race", e.admin, race))
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "this station's own callsign") {
+		t.Fatalf("warnings = %v, want the own-callsign warning", got.Warnings)
+	}
+	race.HQCall = "N0CALL-10"
+	if got := decode[settingsView](t, e.do("PUT", "/api/admin/settings/race", e.admin, race)); len(got.Warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", got.Warnings)
+	}
+	// Changing this station's callsign to HQ's warns too.
+	cs := decode[map[string]any](t, e.do("PUT", "/api/admin/callsign", e.admin, map[string]any{"callsign": "N0CALL-10", "confirm": true}))
+	if w, _ := cs["warnings"].([]any); len(w) != 1 {
+		t.Fatalf("callsign response = %v, want the own-callsign warning", cs)
+	}
+}

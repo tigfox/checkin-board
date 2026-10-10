@@ -1,9 +1,11 @@
 // Deployment link check (spec 4.8).
 import { get, post } from "./api.js";
-import { h } from "./dom.js";
+import { h, show } from "./dom.js";
 import * as L from "./logic.js";
 
 const POLL_MS = 2000;
+// OTHER is the "Other callsign…" choice (not a valid callsign).
+const OTHER = "*other";
 
 function level(v) {
   return typeof v === "number" ? `${v} dBFS${L.levelNote(v)}` : "—";
@@ -42,20 +44,29 @@ export async function renderLinkCheck(sec, ctx) {
 
   const list = await get("/api/admin/linkcheck");
   const count = h("input", { type: "number", id: "lc-count", min: 1, max: list.max_count, value: list.default_count });
-  let target = null;
+  let targetCall = () => "";
   const form = h("div", { class: "card" }, h("h2", {}, "Run a link check"));
   if (isHQ) {
-    const { checkpoints } = await get("/api/admin/checkpoints");
-    target = h("input", { id: "lc-to", list: "lc-calls", placeholder: "Checkpoint callsign", autocapitalize: "characters" });
-    form.append(h("label", { for: "lc-to" }, "Checkpoint to probe"), target,
-      h("datalist", { id: "lc-calls" }, ...checkpoints.filter((c) => c.ExpectedCall)
-        .map((c) => h("option", { value: c.ExpectedCall }, `${c.Code} ${c.Name}`))));
+    const { checkpoints } = await get("/api/admin/status");
+    const other = h("input", { id: "lc-other", placeholder: "Callsign, e.g. KD2DCM-7", autocapitalize: "characters" });
+    const otherRow = h("div", { class: "hidden" }, h("label", { for: "lc-other" }, "Other callsign"), other);
+    const pick = h("select", { id: "lc-to" },
+      h("option", { value: "", disabled: true, selected: true }, "Choose a checkpoint"),
+      ...L.linkTargets(checkpoints, Date.now()).map((t) => h("option", { value: t.value, disabled: t.disabled }, t.label)),
+      h("option", { value: OTHER }, "Other callsign…"));
+    pick.addEventListener("change", () => show(otherRow, pick.value === OTHER));
+    targetCall = () => (pick.value === OTHER ? other.value : pick.value);
+    form.append(h("label", { for: "lc-to" }, "Checkpoint to probe"), pick, otherRow);
   } else {
     form.append(h("p", {}, "Probes HQ (", h("span", { class: "mono" }, s.hq_call || "HQ callsign not set"), ")."));
   }
   form.append(h("label", { for: "lc-count" }, `Probes (up to ${list.max_count}; use more on a doubtful link for a steadier verdict)`), count,
     h("p", {}, h("button", { type: "button", class: "primary", onclick: async () => {
-      const body = { to: target ? target.value : "", count: Number(count.value) };
+      const body = { to: targetCall(), count: Number(count.value) };
+      if (isHQ && !body.to) {
+        ctx.notify("Choose a checkpoint to probe, or enter another callsign.", "bad");
+        return;
+      }
       if (s.race_state === "active") {
         if (!confirm("The race is running. A link check uses airtime the race needs. Run it anyway?")) return;
         body.confirm = true;

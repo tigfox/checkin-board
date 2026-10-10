@@ -186,7 +186,7 @@ func TestE2EAdminTabsCheckpoint(t *testing.T) {
 	b.waitText("#tab-race", "Checkpoint open")
 	b.waitText("#tabs", "Outbox")
 	for _, tab := range []struct{ name, sel, want string }{
-		{"Station", "#tab-station", "Race settings"},
+		{"Station", "#tab-station", "Station guide"},
 		{"Outbox", "#tab-outbox", "Export for HQ"},
 		{"Passwords", "#tab-passwords", "Volunteer password"},
 		{"Race", "#tab-race", "Reset this node"},
@@ -199,6 +199,13 @@ func TestE2EAdminTabsCheckpoint(t *testing.T) {
 	if len(hqTabs) != 0 {
 		t.Fatal("HQ tab shown on a checkpoint")
 	}
+
+	// The guide opens from the Station tab, behind the admin login.
+	b.run(chromedp.Click(`//nav[@id="tabs"]/button[text()="Station"]`, chromedp.BySearch),
+		chromedp.Click("#guide-link", chromedp.ByQuery))
+	b.waitText("main.guide", "2 m band plan")
+	b.run(chromedp.Navigate(e.srv.URL + "/admin.html"))
+	b.waitText("#tab-race", "Checkpoint open")
 
 	// Save each settings form; neither may undo the other.
 	b.run(chromedp.Click(`//nav[@id="tabs"]/button[text()="Station"]`, chromedp.BySearch),
@@ -258,8 +265,11 @@ func TestE2ELinkCheckTab(t *testing.T) {
 	b.login(e.admin)
 	b.run(chromedp.Navigate(e.srv.URL+"/admin.html"),
 		chromedp.Click(`//nav[@id="tabs"]/button[text()="Link check"]`, chromedp.BySearch),
-		chromedp.WaitVisible("#lc-to", chromedp.ByQuery),
-		chromedp.SendKeys("#lc-to", "N0CALL-1", chromedp.ByQuery),
+		chromedp.WaitVisible("#lc-to", chromedp.ByQuery))
+	// HQ's checkpoints are listed by callsign, plus "Other callsign…".
+	b.waitText("#lc-to", "AS5 Ridge (N0CALL-1)")
+	b.waitText("#lc-to", "Other callsign")
+	b.run(chromedp.SetValue("#lc-to", "N0CALL-1", chromedp.ByQuery),
 		chromedp.Click(`//section[@id="tab-link"]//button[text()="Run link check"]`, chromedp.BySearch))
 	b.waitText("#banner", "Link check started")
 	// No service ticks in this test server, so the run waits to start.

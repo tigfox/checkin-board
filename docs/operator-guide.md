@@ -99,8 +99,14 @@ file). If the node also has an uplink you don't want it on, set
 3. **Admin → Passwords:** set the **volunteer** password (6+ characters).
    This is the one password everyone on the keypad shares.
 4. **Admin → Station:**
-   - **Callsign (graywolf):** this changes graywolf's station callsign
-     for all of graywolf, not just the race. It asks you to confirm.
+   - **Station guide** (link at the top): what each setting does, radio
+     and graywolf setup, Pi Zero notes and the 2 m band plan, served by
+     the node itself for use without internet.
+   - **Callsign (graywolf):** the Amateur Operator's callsign, used for
+     all messaging at this station (it is graywolf's station callsign).
+     It asks you to confirm. Every node needs its own callsign-SSID: a
+     checkpoint whose HQ callsign is its own callsign never hears HQ, and
+     the Station page warns about it.
    - **Race settings:**
      - **Role:** Checkpoint or HQ. The role can only be changed before
        the race starts. The form shows only the fields for that role.
@@ -150,7 +156,10 @@ three minutes you get a verdict:
 The audio levels shown are the sound-card input level, not signal
 strength. "Too hot" or "very low" means adjust the radio's volume or the
 input gain. Runs are at least 2 minutes apart. HQ can also check any
-checkpoint from its own Link check tab, and its health panel shows each
+checkpoint from its own Link check tab: pick it from **Checkpoint to
+probe** (HQ's checkpoints by callsign, ones heard recently marked; a
+checkpoint without a callsign is greyed out until one is added on the
+HQ tab), or choose **Other callsign…**. Its health panel shows each
 checkpoint's latest result. **Start race** warns about any link without
 a PASS in the last 2 hours. The warning doesn't block the start.
 

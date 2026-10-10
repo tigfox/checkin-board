@@ -227,6 +227,16 @@ func validTactical(s string) bool {
 		utf8.RuneCountInString(s) <= MaxTacticalLen && validName(s, len(s))
 }
 
+// SameStation reports whether two callsigns name the same station as
+// graywolf sees it: case-insensitive, with SSID 0 the same as no SSID
+// (graywolf drops messages from its own call). Empty never matches.
+func SameStation(a, b string) bool {
+	norm := func(s string) string {
+		return strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(s)), "-0")
+	}
+	return norm(a) != "" && norm(a) == norm(b)
+}
+
 // ValidStationCall reports whether s is an uppercase station callsign
 // with an optional SSID 0-15.
 func ValidStationCall(s string) bool { return stationCallRe.MatchString(s) }

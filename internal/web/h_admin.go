@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -51,6 +52,33 @@ type settingsView struct {
 	RaceState     string     `json:"race_state"`
 	RaceStartedAt *time.Time `json:"race_started_at,omitempty"`
 	UpdatedAt     time.Time  `json:"updated_at"`
+	// Warnings are problems the save allowed but the operator should fix.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// ownCallTimeout bounds the graywolf lookup behind the own-callsign
+// warning, so a slow graywolf doesn't hold up a settings save.
+const ownCallTimeout = 3 * time.Second
+
+// ownCallWarning: a checkpoint whose HQ callsign is this station's own
+// never hears HQ, because graywolf drops messages from its own call.
+func ownCallWarning(role, hqCall, ownCall string) []string {
+	if role != store.RoleCheckpoint || !store.SameStation(hqCall, ownCall) {
+		return nil
+	}
+	return []string{fmt.Sprintf("The HQ callsign %s is this station's own callsign: graywolf ignores messages from its own call, so this checkpoint would never hear HQ. Give each station its own callsign-SSID.", strings.ToUpper(hqCall))}
+}
+
+// stationCall is graywolf's station callsign, or "" if graywolf can't
+// say in time (the warning is best effort).
+func (s *server) stationCall(ctx context.Context) string {
+	ctx, cancel := context.WithTimeout(ctx, ownCallTimeout)
+	defer cancel()
+	st, err := s.Graywolf.StationConfig(ctx)
+	if err != nil {
+		return ""
+	}
+	return st.Callsign
 }
 
 func toSettingsView(c store.Settings) settingsView {
@@ -146,7 +174,14 @@ func (s *server) editSettings(w http.ResponseWriter, r *http.Request, body any, 
 		writeError(w, r, s.log, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toSettingsView(saved))
+	view := toSettingsView(saved)
+	// Only a role or HQ-call change needs graywolf's callsign, so other
+	// saves don't wait on graywolf; the Station page warns either way.
+	if saved.Role == store.RoleCheckpoint && saved.HQCall != "" &&
+		(saved.Role != cur.Role || !strings.EqualFold(saved.HQCall, cur.HQCall)) {
+		view.Warnings = ownCallWarning(saved.Role, saved.HQCall, s.stationCall(r.Context()))
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 type callsignBody struct {
@@ -164,7 +199,7 @@ func (s *server) putCallsign(w http.ResponseWriter, r *http.Request) {
 	}
 	if !b.Confirm {
 		writeError(w, r, s.log, &httpError{http.StatusBadRequest, "confirm_required",
-			"this changes graywolf's station callsign for all of graywolf; confirm to continue"})
+			"this changes the Amateur Operator's callsign, used for all messaging at this station; confirm to continue"})
 		return
 	}
 	cfg, err := s.Graywolf.SetStationCallsign(r.Context(), b.Callsign)
@@ -173,7 +208,13 @@ func (s *server) putCallsign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("web: graywolf station callsign changed", "callsign", cfg.Callsign)
-	writeJSON(w, http.StatusOK, map[string]string{"callsign": cfg.Callsign})
+	out := map[string]any{"callsign": cfg.Callsign}
+	if set, err := s.Store.GetSettings(r.Context()); err != nil {
+		s.log.Warn("web: own-callsign check skipped", "err", err)
+	} else if warn := ownCallWarning(set.Role, set.HQCall, cfg.Callsign); warn != nil {
+		out["warnings"] = warn
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 type graywolfView struct {

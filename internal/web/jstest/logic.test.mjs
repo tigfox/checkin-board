@@ -163,3 +163,36 @@ test("healthFlags shows a closed checkpoint as closed, not quiet", () => {
   assert.ok(!flags.some((f) => f.includes("quiet")), flags.join("; "));
   assert.ok(L.healthFlags({ LastHeardAt: "2026-10-10T10:00:00Z" }, now).some((f) => f.includes("quiet")));
 });
+
+test("sameStation matches graywolf's own-call rule", () => {
+  assert.equal(L.sameStation("N0CALL", "n0call"), true);
+  assert.equal(L.sameStation("N0CALL-0", "N0CALL"), true);
+  assert.equal(L.sameStation(" n0call-4 ", "N0CALL-4"), true);
+  assert.equal(L.sameStation("N0CALL-3", "N0CALL-4"), false);
+  assert.equal(L.sameStation("", ""), false);
+  assert.equal(L.sameStation(undefined, "N0CALL"), false);
+});
+
+test("linkTargets lists HQ's checkpoints for the link check", () => {
+  const now = Date.parse("2026-10-10T13:00:00Z");
+  const health = [
+    { CPCode: "AS1", Name: "Ridge", Defined: true, ExpectedCall: "KD2DCM-4", LastHeardAt: "2026-10-10T12:55:00Z" },
+    { CPCode: "AS2", Name: "Creek", Defined: true, ExpectedCall: "KD2DCM-5" },
+    { CPCode: "AS3", Name: "Summit", Defined: true, ExpectedCall: "" },
+    { CPCode: "ZZ9", Defined: false, LastSourceCall: "W1AW-7", LastHeardAt: "2026-10-10T12:59:30Z" },
+    { CPCode: "QQ1", Defined: false, LastSourceCall: "" },
+  ];
+  assert.deepEqual(L.linkTargets(health, now), [
+    { value: "KD2DCM-4", label: "AS1 Ridge (KD2DCM-4) · heard 5 min ago", disabled: false },
+    { value: "KD2DCM-5", label: "AS2 Creek (KD2DCM-5)", disabled: false },
+    { value: "", label: "AS3 Summit: no callsign (add one on the HQ tab)", disabled: true },
+    { value: "W1AW-7", label: "ZZ9 (heard from W1AW-7, not on the list) · heard 30 s ago", disabled: false },
+  ]);
+  // Last heard from another call: say so, so HQ probes the right one.
+  assert.deepEqual(L.linkTargets([{ CPCode: "AS4", Name: "Gap", Defined: true, ExpectedCall: "KD2DCM-6",
+    SenderMismatch: true, LastSourceCall: "KD2DCM-9" }], now), [
+    { value: "KD2DCM-6", label: "AS4 Gap (KD2DCM-6) · last heard from KD2DCM-9", disabled: false },
+  ]);
+  assert.deepEqual(L.linkTargets([], now), []);
+  assert.deepEqual(L.linkTargets(undefined, now), []);
+});

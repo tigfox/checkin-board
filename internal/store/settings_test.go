@@ -232,3 +232,17 @@ func TestUpdateSettingsLeavesLifecycleAlone(t *testing.T) {
 		t.Fatalf("invalid edit applied: %+v", after)
 	}
 }
+
+// graywolf drops messages from its own callsign, and treats -0 as no SSID.
+func TestSameStation(t *testing.T) {
+	for _, c := range [][2]string{{"N0CALL", "n0call"}, {"N0CALL", "N0CALL-0"}, {" N0CALL-4 ", "n0call-4"}} {
+		if !SameStation(c[0], c[1]) {
+			t.Errorf("SameStation(%q, %q) = false", c[0], c[1])
+		}
+	}
+	for _, c := range [][2]string{{"N0CALL", "N0CALL-4"}, {"N0CALL-3", "N0CALL-4"}, {"", ""}, {"N0CALL", ""}} {
+		if SameStation(c[0], c[1]) {
+			t.Errorf("SameStation(%q, %q) = true", c[0], c[1])
+		}
+	}
+}

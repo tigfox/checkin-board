@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<title>Station guide · checkin-board</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<header class="bar">
+  <span class="title">Station guide</span>
+  <span class="spacer"></span>
+  <a href="/admin.html">Admin</a>
+</header>
+<main class="guide">
+  <p class="muted">This guide is served by this node, for use in the field without internet.</p>
+  <nav class="card">
+    <a href="#settings">Station settings</a> ·
+    <a href="#radio">Radio and graywolf</a> ·
+    <a href="#pizero">Pi Zero nodes</a> ·
+    <a href="#testing">Testing a link</a> ·
+    <a href="#bandplan">2 m band plan</a>
+  </nav>
+
+  <section id="settings">
+    <h2>Station settings (Admin → Station)</h2>
+    <h3>Callsign (graywolf)</h3>
+    <p>The Amateur Operator's callsign, used for all messaging at this station. It is graywolf's
+      station callsign, so changing it changes graywolf for everything, not just the race.</p>
+    <h3>Race settings</h3>
+    <dl>
+      <dt>Role</dt><dd>Checkpoint or HQ. It can only change before the race starts (or after a reset).</dd>
+      <dt>Race name</dt><dd>Shown in headers and exports.</dd>
+      <dt>Station name</dt><dd>What people call this station on the voice net, e.g. "Ridge Aid #3".
+        Up to 25 characters. Shown on the keypad and panel; never sent on air.</dd>
+      <dt>Checkpoint code (checkpoint)</dt><dd>Sent in every radio report, e.g. AS5. A–Z and 0–9, up to 6.
+        It must match an entry in HQ's checkpoint list. Don't change it during a race.</dd>
+      <dt>HQ callsign (checkpoint)</dt><dd>HQ's station callsign (optional -SSID). Reports go there, and only
+        HQ can ask this station to resend. It must not be this station's own callsign.</dd>
+      <dt>Local codes (HQ)</dt><dd>Codes HQ logs on its own keypad, e.g. START,FIN. Not sent on air.</dd>
+    </dl>
+    <h3>Messaging settings</h3>
+    <p>Radio tunables. The defaults suit most races; change them only after a link check shows a reason to.</p>
+    <dl>
+      <dt>Digipeater path</dt><dd>Blank = direct (the default). See <a href="#radio">paths</a> below.</dd>
+      <dt>graywolf channel</dt><dd>0 = graywolf's default transmit channel.</dd>
+      <dt>Heartbeat every (s)</dt><dd>How often an idle checkpoint tells HQ it is alive. Default 300, range 60–3600.</dd>
+      <dt>Batch after (s)</dt><dd>How long to collect bibs before sending a report. Default 20, range 5–300.</dd>
+      <dt>Batches in flight</dt><dd>Reports sent before waiting for HQ's acknowledgements. Default 4, range 1–8.</dd>
+      <dt>Max message length</dt><dd>Characters per radio message. Default 67, range 67–200; over 67 needs graywolf long messages.</dd>
+      <dt>Gap grace (s, HQ)</dt><dd>How long HQ waits on a missing report before asking for it again. Default 90, range 30–900.</dd>
+    </dl>
+  </section>
+
+  <section id="radio">
+    <h2>Radio and graywolf</h2>
+    <ul>
+      <li><strong>Every node needs its own callsign-SSID</strong>, e.g. HQ KD2DCM-3 and a checkpoint
+        KD2DCM-4. graywolf ignores messages from its own callsign (and -0 counts as no SSID), so two
+        nodes sharing one never hear each other. Different SSIDs of one callsign are separate stations.</li>
+      <li><strong>Frequency:</strong> APRS in the US is 144.390 MHz. Heavy race traffic there competes with
+        the national APRS network; many events use a coordinated packet simplex frequency instead
+        (e.g. 145.010–145.090). Agree on it with HQ and your frequency coordinator.</li>
+      <li><strong>Digipeater path:</strong> use the shortest path that reaches HQ. Direct (blank) when HQ is
+        in range; otherwise one named digipeater, or WIDE1-1. Each hop adds a transmission and delay.</li>
+      <li><strong>Retries:</strong> during a race, checkin-board turns off graywolf's own message retries for
+        race contacts and retries itself. Messages typed in graywolf's Messages page to those stations
+        then go out once, with no retry. They are restored after the race.</li>
+    </ul>
+  </section>
+
+  <section id="pizero">
+    <h2>Pi Zero nodes</h2>
+    <p>A Raspberry Pi Zero W (single core) needs two changes, or receive and transmit fail:</p>
+    <ol>
+      <li><strong>A fixed graywolf build:</strong> graywolf with cpal 0.18 (a silent carrier on transmit
+        otherwise) and the ARMv6 audio-buffer patch, built with checkin-board's
+        <span class="mono">deploy/graywolf-armv6/build.sh</span>. Install checkin-board with
+        <span class="mono">install.sh --no-graywolf</span> so a release never replaces it.</li>
+      <li><strong>24 kHz audio in graywolf</strong> for the AIOC (input and output). At 48 kHz the Zero
+        can't keep up and receives nothing.</li>
+    </ol>
+    <h3>Setting graywolf's audio to 24 kHz</h3>
+    <p>graywolf's web UI can't do this: Audio Devices → Edit only offers 8000, 16000, 44100 and 48000 Hz.
+      graywolf's API accepts 24000, so set it from a shell on the node (SSH), with the graywolf web login:</p>
+    <pre class="mono">GW=http://127.0.0.1:8080
+read -p &#x27;graywolf user: &#x27; U; read -s -p &#x27;graywolf password: &#x27; P; echo
+J=$(mktemp)
+printf &#x27;{&quot;username&quot;:&quot;%s&quot;,&quot;password&quot;:&quot;%s&quot;}&#x27; &quot;$U&quot; &quot;$P&quot; |
+  curl -s -c &quot;$J&quot; -H &#x27;Content-Type: application/json&#x27; --data-binary @- \
+       -o /dev/null -w &#x27;login: %{http_code}\n&#x27; &quot;$GW/api/auth/login&quot;
+# Every AIOC device (input and output) -&gt; 24000 Hz; other fields unchanged.
+for id in $(curl -s -b &quot;$J&quot; &quot;$GW/api/audio-devices&quot; | python3 -c &#x27;
+import sys, json
+for d in json.load(sys.stdin):
+    if &quot;AllInOneCable&quot; in d[&quot;device_path&quot;]: print(d[&quot;id&quot;])&#x27;); do
+  curl -s -b &quot;$J&quot; &quot;$GW/api/audio-devices/$id&quot; | python3 -c &#x27;
+import sys, json
+d = json.load(sys.stdin)
+keep = (&quot;name&quot;, &quot;direction&quot;, &quot;source_type&quot;, &quot;device_path&quot;, &quot;channels&quot;, &quot;format&quot;, &quot;gain_db&quot;)
+out = {k: d[k] for k in keep}
+out[&quot;sample_rate&quot;] = 24000
+print(json.dumps(out))&#x27; |
+  curl -s -b &quot;$J&quot; -X PUT -H &#x27;Content-Type: application/json&#x27; --data-binary @- \
+       -o /dev/null -w &quot;device $id: %{http_code}\n&quot; &quot;$GW/api/audio-devices/$id&quot;
+done
+rm -f &quot;$J&quot;</pre>
+    <p>Expect <span class="mono">login: 200</span> and <span class="mono">device N: 200</span> for the input
+      and the output. graywolf applies the change at once; no restart is needed. Check:</p>
+    <ul>
+      <li>graywolf → Audio Devices shows "Sample Rate 24000 Hz" for both AIOC devices;</li>
+      <li><span class="mono">sudo journalctl -u graywolf -n 50 | grep "buffer 2048"</span> shows
+        "input buffer 2048 frames/period";</li>
+      <li><span class="mono">grep -E 'rate|period_size' /proc/asound/card0/pcm0c/sub0/hw_params</span> shows
+        <span class="mono">rate: 24000</span> and <span class="mono">period_size: 2048</span>.</li>
+    </ul>
+    <p class="banner warn">Don't open Edit on these devices in graywolf's UI afterwards: 24000 isn't in its
+      list, so saving the dialog can reset the rate. If the devices are edited or recreated, run the
+      script again. On a faster Pi, change 24000 to 48000 and run it again to go back.</p>
+  </section>
+
+  <section id="testing">
+    <h2>Testing a link</h2>
+    <ul>
+      <li><strong>Link check</strong> (Admin → Link check): run it at every station's location before the
+        race. A few short test messages confirm the link to HQ (or, at HQ, to a checkpoint).</li>
+      <li><strong>Listen with a third radio</strong> tuned to the frequency, squelch open, while a node
+        transmits. One clean burst of packet tones is good. An open carrier with no tones means no
+        audio reaches the radio (graywolf build or audio setup); choppy or cut-off tones mean audio
+        problems on that node; silence means the radio isn't keying (PTT).</li>
+      <li><strong>Check acknowledgements:</strong> a message is only delivered once the other station
+        acknowledges it. In graywolf's Messages page an acknowledged message shows as acked.</li>
+    </ul>
+  </section>
+
+  <section id="bandplan">
+    <h2>2 m band plan (ARRL, US)</h2>
+    <p class="muted">Summary of the ARRL 2 m band plan, in MHz. Your regional frequency coordinator's plan
+      takes precedence; event frequencies are agreed with HQ. FCC rules: 144.000–144.100 is CW only.</p>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Frequency (MHz)</th><th>Use</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">144.000–144.050</td><td>EME (moonbounce), CW</td></tr>
+        <tr><td class="mono">144.050–144.100</td><td>General CW and weak signals</td></tr>
+        <tr><td class="mono">144.100–144.200</td><td>EME and weak-signal SSB</td></tr>
+        <tr><td class="mono">144.200</td><td>National SSB calling frequency</td></tr>
+        <tr><td class="mono">144.200–144.275</td><td>General SSB</td></tr>
+        <tr><td class="mono">144.275–144.300</td><td>Propagation beacons</td></tr>
+        <tr><td class="mono">144.300–144.500</td><td>Satellites (OSCAR)</td></tr>
+        <tr><td class="mono">144.390</td><td>APRS (US national frequency)</td></tr>
+        <tr><td class="mono">144.500–144.600</td><td>Linear translator inputs</td></tr>
+        <tr><td class="mono">144.600–144.900</td><td>FM repeater inputs</td></tr>
+        <tr><td class="mono">144.900–145.100</td><td>Weak signal and FM simplex; 145.010, .030, .050, .070, .090 used for packet in many areas</td></tr>
+        <tr><td class="mono">145.100–145.200</td><td>Linear translator outputs</td></tr>
+        <tr><td class="mono">145.200–145.500</td><td>FM repeater outputs</td></tr>
+        <tr><td class="mono">145.500–145.800</td><td>Miscellaneous and experimental modes</td></tr>
+        <tr><td class="mono">145.800–146.000</td><td>Satellites (OSCAR)</td></tr>
+        <tr><td class="mono">146.010–146.370</td><td>Repeater inputs</td></tr>
+        <tr><td class="mono">146.400–146.580</td><td>Simplex; 146.520 is the national simplex calling frequency</td></tr>
+        <tr><td class="mono">146.610–146.970</td><td>Repeater outputs</td></tr>
+        <tr><td class="mono">147.000–147.390</td><td>Repeater outputs</td></tr>
+        <tr><td class="mono">147.420–147.570</td><td>Simplex</td></tr>
+        <tr><td class="mono">147.600–147.990</td><td>Repeater inputs</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+</main>
+</body>
+</html>

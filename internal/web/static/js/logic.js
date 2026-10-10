@@ -203,3 +203,34 @@ export function linkProgress(c) {
   if (c.probes_sent < c.count) return `Probe ${c.probes_sent} of ${c.count} sent…`;
   return c.reply_received ? "Reply received; collecting ACKs…" : "All probes sent; waiting for the reply…";
 }
+
+// sameStation mirrors graywolf's own-call rule (store.SameStation):
+// case-insensitive, SSID 0 the same as no SSID, empty never matches.
+export function sameStation(a, b) {
+  const norm = (s) => String(s ?? "").trim().toUpperCase().replace(/-0$/, "");
+  return norm(a) !== "" && norm(a) === norm(b);
+}
+
+// linkTargets turns HQ's checkpoint health (/api/admin/status) into the
+// link check's "Checkpoint to probe" options, in course order: listed
+// checkpoints by their expected callsign (greyed out without one), then
+// codes HQ heard that aren't on its list, by the call they came from.
+export function linkTargets(health, nowMs) {
+  const heard = (c) => {
+    const ago = c.LastHeardAt ? formatAgo(nowMs - Date.parse(c.LastHeardAt)) : "";
+    return ago ? ` · heard ${ago}` : "";
+  };
+  const out = [];
+  for (const c of health || []) {
+    const name = [c.CPCode, c.Name].filter(Boolean).join(" ");
+    if (c.Defined && c.ExpectedCall) {
+      const from = c.SenderMismatch && c.LastSourceCall ? ` · last heard from ${c.LastSourceCall}` : heard(c);
+      out.push({ value: c.ExpectedCall, label: `${name} (${c.ExpectedCall})${from}`, disabled: false });
+    } else if (c.Defined) {
+      out.push({ value: "", label: `${name}: no callsign (add one on the HQ tab)`, disabled: true });
+    } else if (c.LastSourceCall) {
+      out.push({ value: c.LastSourceCall, label: `${c.CPCode} (heard from ${c.LastSourceCall}, not on the list)${heard(c)}`, disabled: false });
+    }
+  }
+  return out;
+}

@@ -3,6 +3,7 @@
 import { get, post, put } from "./api.js";
 import { field, h, show } from "./dom.js";
 import { messagingSettingsForm } from "./admin-messaging.js";
+import * as L from "./logic.js";
 
 // MAX_STATION_NAME matches store.MaxTacticalLen.
 const MAX_STATION_NAME = 25;
@@ -11,17 +12,24 @@ export async function renderStation(sec, ctx) {
   const s = ctx.settings;
   const gw = await get("/api/admin/gw");
   sec.append(h("h1", {}, "Station"));
+  sec.append(h("p", {}, h("a", { href: "/guide", id: "guide-link" }, "Station guide"),
+    ": what each setting does, radio and graywolf setup, Pi Zero notes, and the 2 m band plan."));
+  if (s.role === "checkpoint" && L.sameStation(gw.callsign, s.hq_call)) {
+    sec.append(h("p", { class: "banner warn" },
+      `The HQ callsign ${s.hq_call.toUpperCase()} is this station's own callsign: graywolf ignores messages from its own call, so this checkpoint would never hear HQ. Give each station its own callsign-SSID.`));
+  }
 
   // graywolf callsign: changes graywolf for everything, so it confirms.
   const call = h("input", { id: "callsign", value: gw.callsign || "", autocapitalize: "characters" });
   sec.append(h("div", { class: "card" },
     h("h2", {}, "Callsign (graywolf)"),
-    h("p", { class: "muted" }, "This is graywolf's station callsign: changing it changes it for all of graywolf, not just the race."),
+    h("p", { class: "muted" }, "This is the Amateur Operator's callsign. This is used for all messaging at this station."),
     h("div", { class: "row" }, call, h("button", {
       type: "button",
       onclick: async () => {
-        if (!confirm(`Change graywolf's station callsign to ${call.value.toUpperCase()}?`)) return;
-        await ctx.run(() => put("/api/admin/callsign", { callsign: call.value, confirm: true }), "Callsign changed in graywolf.");
+        if (!confirm(`Change the Amateur Operator's callsign to ${call.value.toUpperCase()}? It is used for all messaging at this station.`)) return;
+        const r = await ctx.run(() => put("/api/admin/callsign", { callsign: call.value, confirm: true }), "Callsign changed in graywolf.");
+        if (r) await afterSave(ctx, r, "Callsign changed in graywolf.");
       },
     }, "Change")),
   ));
@@ -57,6 +65,14 @@ export async function renderStation(sec, ctx) {
       await ctx.run(() => post("/api/admin/inbox/reread", { since: new Date(since.value).toISOString() }), "Re-reading graywolf messages.");
     } }, "Re-read")),
   ));
+}
+
+// afterSave re-reads the settings (without re-rendering, so unsaved
+// edits in other cards survive) and adds any warnings the save returned
+// (e.g. HQ callsign = this station's own) to the saved message.
+async function afterSave(ctx, r, saved) {
+  await ctx.reload();
+  if (r.warnings?.length) ctx.notify(`${saved} ${r.warnings.join(" ")}`, "warn");
 }
 
 // raceSettingsForm is who this node is in the race. Fields for the
@@ -95,7 +111,8 @@ function raceSettingsForm(s, ctx) {
       checkpoint_code: v("checkpoint_code"), hq_call: v("hq_call"),
       hq_local_codes: v("hq_local_codes").split(",").map((c) => c.trim()).filter(Boolean),
     };
-    if (await ctx.run(() => put("/api/admin/settings/race", body), "Race settings saved.")) await ctx.reload();
+    const r = await ctx.run(() => put("/api/admin/settings/race", body), "Race settings saved.");
+    if (r) await afterSave(ctx, r, "Race settings saved.");
   });
   return form;
 }

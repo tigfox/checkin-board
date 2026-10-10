@@ -126,6 +126,9 @@ type route struct {
 	access          access
 	h               http.HandlerFunc
 	upload          bool // accepts multipart/form-data
+	// page is an HTML page, not an API: a browser without a session is
+	// sent to the login page instead of getting a JSON 401.
+	page bool
 }
 
 type access int
@@ -164,6 +167,9 @@ func (s *server) guard(rt route) http.Handler {
 		if rt.access != public {
 			role, err := s.Auth.Authenticate(r.Context(), sessionToken(r))
 			switch {
+			case errors.Is(err, auth.ErrNoSession) && rt.page:
+				http.Redirect(w, r, "/login.html", http.StatusSeeOther)
+				return
 			case errors.Is(err, auth.ErrNoSession):
 				writeError(w, r, s.log, &httpError{http.StatusUnauthorized, "login_required", "log in first"})
 				return

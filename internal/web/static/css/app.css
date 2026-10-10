@@ -99,3 +99,9 @@ th { font-size: 0.9rem; color: var(--muted); }
 @media (min-width: 700px) {
   .keypad-wrap { max-width: 420px; margin: 0 auto; }
 }
+
+/* Local configuration guide (/guide). */
+main.guide { max-width: 52rem; }
+.guide pre { overflow-x: auto; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; font-size: 0.85rem; }
+.guide dt { font-weight: 600; margin-top: 8px; }
+.guide dd { margin: 2px 0 0 0; }

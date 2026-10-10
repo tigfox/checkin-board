@@ -41,6 +41,13 @@ func TestRouteAccessMatrix(t *testing.T) {
 			{"admin", e.admin, true},
 		} {
 			name := rt.method + " " + path + " as " + who.name
+			// A page sends a browser without a session to the login page.
+			if rt.page && who.token == "" {
+				if code, loc := e.firstResponse(rt.method, path); code != http.StatusSeeOther || loc != "/login.html" {
+					t.Errorf("%s = %d to %q, want 303 to /login.html", name, code, loc)
+				}
+				continue
+			}
 			resp := e.request(rt, path, who.token)
 			code := resp.StatusCode
 			if who.allowed {
@@ -165,4 +172,21 @@ func TestSecFetchSiteCrossSiteRefused(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	expect(t, resp, http.StatusForbidden)
+}
+
+// firstResponse sends an unauthenticated request without following
+// redirects and returns its status and Location.
+func (e *env) firstResponse(method, path string) (int, string) {
+	e.t.Helper()
+	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, err := http.NewRequest(method, e.srv.URL+path, nil)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, resp.Header.Get("Location")
 }
