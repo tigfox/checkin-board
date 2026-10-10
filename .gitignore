@@ -4,3 +4,4 @@ coverage.*
 .env
 .DS_Store
 /dist/
+deploy/installtest/bundle.tar.gz

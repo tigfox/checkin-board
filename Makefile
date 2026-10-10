@@ -1,4 +1,4 @@
-.PHONY: build pi dist run test jstest e2e soak fuzz cover contract vet fmt
+.PHONY: build pi dist run test jstest e2e installtest soak fuzz cover contract vet fmt
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
@@ -34,6 +34,13 @@ jstest:
 
 e2e:
 	CB_E2E=1 go test -count=1 -run '^TestE2E' ./internal/web/
+
+# install.sh's graywolf package handling on a real dpkg/apt, in an
+# armhf Debian container (needs docker; slow under emulation).
+installtest: dist
+	cp $(DIST)-linux.tar.gz deploy/installtest/bundle.tar.gz
+	docker run --rm --platform linux/arm/v7 -v "$(CURDIR)/deploy/installtest:/t" debian:trixie-slim /t/run.sh; \
+	  rc=$$?; rm -f deploy/installtest/bundle.tar.gz; exit $$rc
 
 soak:
 	CB_SOAK=1 go test -count=1 -run '^TestSoak$$' -v -timeout 60m ./internal/sim/

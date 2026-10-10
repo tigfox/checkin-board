@@ -150,6 +150,7 @@ make build    # bin/checkin-board
 make pi       # bin/checkin-board-armv6 for Pi Zero W
 make jstest   # UI logic tests (needs Node 20+; test-only)
 make e2e      # drives the real pages in headless Chrome (needs Chrome; test-only)
+make installtest  # install.sh's graywolf package handling on real dpkg/apt in an armhf container (needs docker)
 make soak     # 12-hour, 500-runner, 8-checkpoint race simulation (~1-2 min)
 make fuzz     # long fuzz runs, FUZZTIME=30m per target
 go test -short ./...                                   # skip the long simulations
