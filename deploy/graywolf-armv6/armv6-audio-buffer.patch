@@ -1,0 +1,237 @@
+diff --git a/graywolf-modem/build.rs b/graywolf-modem/build.rs
+--- a/graywolf-modem/build.rs
++++ b/graywolf-modem/build.rs
+@@ -42,6 +42,17 @@
+         .filter(|s| !s.is_empty())
+         .unwrap_or_else(|| derive_commit(repo_root));
+     println!("cargo:rustc-env=GRAYWOLF_GIT_COMMIT={}", commit);
++
++    // `gw_armv6`: set only for the ARMv6 hard-float target (Pi 1, Pi Zero /
++    // Zero W). Stable rustc exposes no ARM CPU-feature cfgs, so armv6 and
++    // armv7 both report just target_arch="arm"; the triple is the only
++    // compile-time way to tell them apart. Gates the larger audio buffer in
++    // `audio::STREAM_PERIOD_FRAMES`.
++    println!("cargo::rustc-check-cfg=cfg(gw_armv6)");
++    println!("cargo:rerun-if-env-changed=TARGET");
++    if std::env::var("TARGET").as_deref() == Ok("arm-unknown-linux-gnueabihf") {
++        println!("cargo::rustc-cfg=gw_armv6");
++    }
+ }
+ 
+ fn derive_commit(repo_root: &Path) -> String {
+diff --git a/graywolf-modem/src/audio/mod.rs b/graywolf-modem/src/audio/mod.rs
+--- a/graywolf-modem/src/audio/mod.rs
++++ b/graywolf-modem/src/audio/mod.rs
+@@ -36,6 +36,65 @@
+ /// 48 kHz is native for most USB audio; 44.1 kHz is the CD-standard fallback.
+ pub const PREFERRED_SCAN_RATES: &[u32] = &[48000, 44100];
+ 
++/// Frames per cpal period for the runtime capture and playback streams, or
++/// `None` to let the driver choose (`BufferSize::Default`).
++///
++/// ARMv6 builds (`gw_armv6`: Pi 1, Pi Zero / Zero W) request 2048 frames.
++/// There the driver-chosen period is ~5 ms (241 frames at 48 kHz on an
++/// AIOC) and cpal 0.18 rings only two periods, so the stream has 10 ms of
++/// slack on a single slow core: capture overruns ~80 times a minute and
++/// received frames fail FCS. 2048 frames is ~43 ms a period, ~85 ms ring at
++/// 48 kHz. Every other target keeps the driver default.
++#[cfg(gw_armv6)]
++pub const STREAM_PERIOD_FRAMES: Option<u32> = Some(2048);
++#[cfg(not(gw_armv6))]
++pub const STREAM_PERIOD_FRAMES: Option<u32> = None;
++
++/// cpal rings two periods per stream (`DEFAULT_PERIODS` in its ALSA host).
++const RING_PERIODS: u32 = 2;
++
++/// The buffer size to open a runtime stream with: [`STREAM_PERIOD_FRAMES`]
++/// clamped into the device's advertised period range. Falls back to
++/// `Default` when no fixed size is configured or the device advertises no
++/// range, so a device that can't take the fixed size still opens.
++pub fn stream_buffer_size(supported: &[cpal::SupportedBufferSize]) -> cpal::BufferSize {
++    buffer_size_for(STREAM_PERIOD_FRAMES, supported)
++}
++
++fn buffer_size_for(period: Option<u32>, supported: &[cpal::SupportedBufferSize]) -> cpal::BufferSize {
++    let Some(want) = period else {
++        return cpal::BufferSize::Default;
++    };
++    let range = supported.iter().fold(None, |acc: Option<(u32, u32)>, b| match b {
++        cpal::SupportedBufferSize::Range { min, max } if min <= max => Some(match acc {
++            Some((lo, hi)) => (lo.min(*min), hi.max(*max)),
++            None => (*min, *max),
++        }),
++        _ => acc,
++    });
++    match range {
++        Some((lo, hi)) => cpal::BufferSize::Fixed(want.clamp(lo, hi)),
++        None => cpal::BufferSize::Default,
++    }
++}
++
++/// How long audio handed to the output callback can still be queued in the
++/// playback ring: PTT must stay keyed this much longer or the end of the
++/// frame is cut. Zero when the driver chooses (its ring is a few ms and
++/// already covered by the TX tail).
++pub fn playback_ring_latency(sample_rate: u32) -> std::time::Duration {
++    ring_latency_for(STREAM_PERIOD_FRAMES, sample_rate)
++}
++
++fn ring_latency_for(period: Option<u32>, sample_rate: u32) -> std::time::Duration {
++    match period {
++        Some(frames) if sample_rate > 0 => std::time::Duration::from_nanos(
++            u64::from(frames * RING_PERIODS) * 1_000_000_000 / u64::from(sample_rate),
++        ),
++        _ => std::time::Duration::ZERO,
++    }
++}
++
+ use std::sync::mpsc::SyncSender;
+ use std::thread::JoinHandle;
+ 
+@@ -95,5 +154,66 @@
+         for &r in PREFERRED_SCAN_RATES {
+             assert!(r <= MODEM_MAX_SAMPLE_RATE, "scan rate {r} exceeds ceiling");
+         }
++    }
++}
++
++#[cfg(test)]
++mod buffer_size_tests {
++    use super::*;
++    use cpal::{BufferSize, SupportedBufferSize};
++    use std::time::Duration;
++
++    #[test]
++    fn default_when_no_fixed_period() {
++        let r = [SupportedBufferSize::Range { min: 32, max: 8192 }];
++        assert_eq!(buffer_size_for(None, &r), BufferSize::Default);
++    }
++
++    #[test]
++    fn fixed_period_within_range() {
++        let r = [SupportedBufferSize::Range { min: 32, max: 8192 }];
++        assert_eq!(buffer_size_for(Some(2048), &r), BufferSize::Fixed(2048));
++    }
++
++    #[test]
++    fn fixed_period_clamped_to_device_range() {
++        let small = [SupportedBufferSize::Range { min: 32, max: 1024 }];
++        assert_eq!(buffer_size_for(Some(2048), &small), BufferSize::Fixed(1024));
++        let big = [SupportedBufferSize::Range { min: 4096, max: 16384 }];
++        assert_eq!(buffer_size_for(Some(2048), &big), BufferSize::Fixed(4096));
++    }
++
++    #[test]
++    fn union_of_ranges() {
++        let r = [
++            SupportedBufferSize::Range { min: 64, max: 512 },
++            SupportedBufferSize::Unknown,
++            SupportedBufferSize::Range { min: 256, max: 4096 },
++        ];
++        assert_eq!(buffer_size_for(Some(2048), &r), BufferSize::Fixed(2048));
++    }
++
++    #[test]
++    fn default_when_device_advertises_no_range() {
++        assert_eq!(buffer_size_for(Some(2048), &[SupportedBufferSize::Unknown]), BufferSize::Default);
++        assert_eq!(buffer_size_for(Some(2048), &[]), BufferSize::Default);
++    }
++
++    // Proves build.rs set gw_armv6 for the ARMv6 triple (run under qemu
++    // with --target arm-unknown-linux-gnueabihf) and only there.
++    #[test]
++    fn period_matches_build_target() {
++        #[cfg(gw_armv6)]
++        assert_eq!(STREAM_PERIOD_FRAMES, Some(2048));
++        #[cfg(not(gw_armv6))]
++        assert_eq!(STREAM_PERIOD_FRAMES, None);
++    }
++
++    #[test]
++    fn ring_latency() {
++        assert_eq!(ring_latency_for(None, 48_000), Duration::ZERO);
++        assert_eq!(ring_latency_for(Some(2048), 0), Duration::ZERO);
++        // 2 periods x 2048 frames at 48 kHz = 85.33 ms.
++        assert_eq!(ring_latency_for(Some(2048), 48_000), Duration::from_nanos(85_333_333));
+     }
+ }
+diff --git a/graywolf-modem/src/audio/soundcard.rs b/graywolf-modem/src/audio/soundcard.rs
+--- a/graywolf-modem/src/audio/soundcard.rs
++++ b/graywolf-modem/src/audio/soundcard.rs
+@@ -243,11 +243,18 @@
+         |d| d.supported_input_configs(),
+     )?;
+ 
++    let buffer_sizes: Vec<cpal::SupportedBufferSize> = device
++        .supported_input_configs()
++        .map(|it| it.map(|c| *c.buffer_size()).collect())
++        .unwrap_or_default();
+     let stream_config = StreamConfig {
+         channels,
+         sample_rate: stream_rate,
+-        buffer_size: cpal::BufferSize::Default,
++        buffer_size: super::stream_buffer_size(&buffer_sizes),
+     };
++    if let cpal::BufferSize::Fixed(n) = stream_config.buffer_size {
++        eprintln!("graywolf-modem: input buffer {} frames/period", n);
++    }
+ 
+     let want_ch = cfg.audio_channel as usize;
+     let stop = Arc::new(AtomicBool::new(false));
+@@ -1235,11 +1242,18 @@
+         ));
+     }
+ 
++    let buffer_sizes: Vec<cpal::SupportedBufferSize> = device
++        .supported_output_configs()
++        .map(|it| it.map(|c| *c.buffer_size()).collect())
++        .unwrap_or_default();
+     let stream_config = StreamConfig {
+         channels,
+         sample_rate: cfg.sample_rate,
+-        buffer_size: cpal::BufferSize::Default,
++        buffer_size: super::stream_buffer_size(&buffer_sizes),
+     };
++    if let cpal::BufferSize::Fixed(n) = stream_config.buffer_size {
++        eprintln!("graywolf-modem: output buffer {} frames/period", n);
++    }
+ 
+     let (submit_tx, submit_rx) = channel::<Vec<i16>>();
+     let shared_rx = Arc::new(Mutex::new(submit_rx));
+diff --git a/graywolf-modem/src/modem/tx_worker.rs b/graywolf-modem/src/modem/tx_worker.rs
+--- a/graywolf-modem/src/modem/tx_worker.rs
++++ b/graywolf-modem/src/modem/tx_worker.rs
+@@ -416,9 +416,12 @@
+     // truncate to zero in the time-elapsed gate below. sample_rate is
+     // u32 from the audio config and is always > 0 in production, but
+     // guard anyway so a bad config doesn't divide-by-zero.
++    // Plus the playback ring: samples the callback has taken are still
++    // queued in the device buffer for up to this long (zero unless the
++    // stream runs a fixed, larger period -- see audio::STREAM_PERIOD_FRAMES).
+     let expected = Duration::from_nanos(
+         (n_samples as u64).saturating_mul(1_000_000_000) / sample_rate.max(1) as u64,
+-    );
++    ) + crate::audio::playback_ring_latency(sample_rate);
+ 
+     if let Err(e) = driver.key() {
+         // Key failed: line was never asserted, nothing to release.
+@@ -598,8 +601,18 @@
+         }
+         let elapsed = start.elapsed();
+ 
++        // The only allowed wait is the playback ring (zero unless the
++        // stream runs a fixed period, i.e. ARMv6 builds); a txdelay or
++        // txtail sleep still blows the budget.
++        let ring = crate::audio::playback_ring_latency(48000);
+         assert!(
+-            elapsed < Duration::from_millis(20),
++            elapsed >= ring,
++            "cycle took {:?}; PTT released before the {:?} playback ring played out",
++            elapsed,
++            ring
++        );
++        assert!(
++            elapsed < Duration::from_millis(20) + ring,
+             "cycle took {:?}; suspect an unwanted sleep was added",
+             elapsed
+         );
