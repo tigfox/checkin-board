@@ -1,6 +1,11 @@
 # Phase 12a proposal: race config file, event page, graywolf config
 
-Status: **proposal, awaiting approval** (2026-10-10). It answers the open
+Status: **approved 2026-10-10**, with one change from the user: **every
+setting stays changeable on the device, and the operator has the final
+say.** A loaded race config sets values; it never locks them. After
+loading, any race, messaging, checkpoint-list or graywolf setting can
+still be edited on the node as today (the role still changes only before
+the race starts, as it does now). It answers the open
 questions for feedback items 2, 4 and 5
 ([`docs/feedback-2026-10-09.md`](../feedback-2026-10-09.md)) with a
 recommendation each, so phase 12a can start once they are confirmed or
@@ -24,7 +29,7 @@ Nothing in it is secret, so it can be emailed or put on a USB stick.
 | 2.4 | Roster and branding? | **No** (keep their own imports) | Roster can hold personal data; branding is HQ-only and has its own checks |
 | 2.5 | Set the graywolf callsign? | **Yes, per station, in the graywolf section** (2.11) with its own confirm | Unique callsign-SSIDs per node were the first field-test mistake; the file is the natural place to assign them |
 | 2.6 | Format | **JSON** (strict: unknown keys refused), with an **export** button that writes HQ's current setup as a file | No new dependency (Go reads JSON natively); export means nobody writes it from scratch |
-| 2.7 | When can it apply? | **Only before the race starts** (setup), like the role | A mid-race change of codes or calls would strand data; tunables can still be edited by hand |
+| 2.7 | When can it apply? | **Only before the race starts** (setup), like the role | A mid-race change of codes or calls would strand data. Everything it sets stays editable on the device afterwards (user, 2026-10-10) |
 | 2.8 | Secrets | **Never in the file**; loading refuses any field named like a password or token | Safe to share |
 | 2.9 | Where pre-downloaded files come from | A folder on the node, **`/var/lib/checkin-board/race-configs/`**, filled by copying files in (scp, USB) or by `install.sh --race-config FILE` | No internet in the field; the installer is already the setup step |
 | 2.10 | Are uploads kept? | **Yes**, saved into that folder; the Race page lists and can delete them | The next node or a reset can reuse it |
