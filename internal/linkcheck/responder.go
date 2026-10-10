@@ -112,14 +112,15 @@ func (s *Service) reply(ctx context.Context, cfg store.Settings, r store.LinkRes
 		case err == nil:
 			_, err = s.store.MarkLinkReplySent(ctx, r.ID, *r.ReplyGWID, now, next)
 			return err
-		case graywolf.IsConflict(err): // still going out: count it as a try
-			_, err = s.store.RescheduleLinkReply(ctx, r.ID, now.Add(5*time.Second), true)
-			return err
+		case graywolf.IsConflict(err):
+			// graywolf resends only a failed row, and with its retries
+			// off a row never fails (contract test, 2026-10-10): send the
+			// reply again as a new message.
 		case !graywolf.IsNotFound(err):
 			s.log.Warn("linkcheck: resend reply", "peer", r.PeerCall, "err", err)
 			_, err = s.store.RescheduleLinkReply(ctx, r.ID, next, true)
 			return err
-		} // the row is gone: send it as new
+		} // refused, or the row is gone: send it as new
 	}
 	lvl := wire.LevelUnknown
 	if r.Level != nil {

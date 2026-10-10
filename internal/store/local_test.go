@@ -3,6 +3,7 @@ package store
 import (
 	"checkin-board/internal/wire"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -488,12 +489,9 @@ func TestBindMessage(t *testing.T) {
 	if err := s.BindMessage(ctx, b.ID, 50, "17"); err != nil {
 		t.Fatal(err)
 	}
-	// graywolf lost row 50; the batch went out again as row 51.
+	// graywolf refused a resend of row 50; the batch went out again as row 51.
 	if err := s.BindMessage(ctx, b.ID, 51, "18"); err != nil {
 		t.Fatal(err)
-	}
-	if got, _ := s.AckBatchByMessage(ctx, 50, t0); got != nil {
-		t.Fatal("ACK for the replaced row confirmed the batch")
 	}
 	got, err := s.AckBatchByMessage(ctx, 51, t0)
 	if err != nil || got == nil || got.GWMsgID != "18" {
@@ -508,6 +506,103 @@ func TestBindMessage(t *testing.T) {
 	b2, _ := s.CreateBatch(ctx, "3", wire.DefaultMaxTextLen, t0)
 	if err := s.BindMessage(ctx, b2.ID, 51, "18"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("shared row err = %v, want ErrConflict", err)
+	}
+}
+
+// Each retransmit is a new graywolf row (graywolf won't resend while
+// retries are off), so HQ may ACK any copy: an ACK for an earlier copy
+// confirms the batch, but only the current copy's REJ parks it.
+func TestAckByEarlierCopy(t *testing.T) {
+	s := newTestStore(t)
+	mustLog(t, s, "3", 1, t0)
+	b, _ := s.CreateBatch(ctx, "3", wire.DefaultMaxTextLen, t0)
+	for _, id := range []uint64{50, 51} {
+		if err := s.BindMessage(ctx, b.ID, id, strconv.FormatUint(id, 10)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := s.RejectBatchByMessage(ctx, 50); got != nil {
+		t.Fatal("REJ for an earlier copy parked the batch")
+	}
+	keep, err := s.UnconfirmedRows(ctx)
+	if err != nil || !keep[50] || !keep[51] {
+		t.Fatalf("UnconfirmedRows = %v, %v; want both copies kept from cleanup", keep, err)
+	}
+	got, err := s.AckBatchByMessage(ctx, 50, t0)
+	if err != nil || got == nil || got.ID != b.ID || got.State != BatchAcked {
+		t.Fatalf("ACK via earlier copy = %+v, %v; want the batch confirmed", got, err)
+	}
+	if again, _ := s.AckBatchByMessage(ctx, 51, t0); again != nil {
+		t.Fatal("second copy's ACK confirmed an already acked batch")
+	}
+	if keep, _ := s.UnconfirmedRows(ctx); keep[50] || keep[51] {
+		t.Fatalf("UnconfirmedRows = %v; confirmed batch's copies should be free to clean up", keep)
+	}
+}
+
+// HQ ACKed an earlier copy, but the newest was refused and parked the
+// batch: HQ has it, so the ACK still confirms it.
+func TestAckByEarlierCopyConfirmsParkedBatch(t *testing.T) {
+	s := newTestStore(t)
+	mustLog(t, s, "3", 1, t0)
+	b, _ := s.CreateBatch(ctx, "3", wire.DefaultMaxTextLen, t0)
+	_ = s.BindMessage(ctx, b.ID, 70, "70")
+	_ = s.BindMessage(ctx, b.ID, 71, "71")
+	if got, _ := s.RejectBatchByMessage(ctx, 71); got == nil {
+		t.Fatal("REJ of the newest copy didn't park the batch")
+	}
+	got, err := s.AckBatchByMessage(ctx, 70, t0)
+	if err != nil || got == nil || got.State != BatchAcked {
+		t.Fatalf("ACK via earlier copy of a parked batch = %+v, %v; want confirmed", got, err)
+	}
+}
+
+func TestReleaseBindingAndCopies(t *testing.T) {
+	s := newTestStore(t)
+	mustLog(t, s, "3", 1, t0)
+	b, _ := s.CreateBatch(ctx, "3", wire.DefaultMaxTextLen, t0)
+	for _, id := range []uint64{80, 81, 82, 83} {
+		_ = s.BindMessage(ctx, b.ID, id, strconv.FormatUint(id, 10))
+	}
+	ids, err := s.EarlierCopies(ctx, b.ID, 2)
+	if err != nil || len(ids) != 2 || ids[0] != 82 || ids[1] != 81 {
+		t.Fatalf("EarlierCopies = %v, %v; want [82 81] (newest first, current excluded)", ids, err)
+	}
+	if err := s.ReleaseBinding(ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := s.ListPendingBatches(ctx)
+	if pending[0].GWMessageID != nil || pending[0].GWMsgID != "" {
+		t.Fatalf("batch = %+v, want unbound", pending[0])
+	}
+	if got, _ := s.AckBatchByMessage(ctx, 83, t0); got == nil {
+		t.Fatal("released copy's ACK didn't confirm the batch: it is still a linked copy")
+	}
+	if err := s.ReleaseBinding(ctx, 999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing batch err = %v", err)
+	}
+}
+
+// A gap request says HQ never got the batch: its earlier copies are
+// forgotten, so a replayed ACK for one of them can't confirm it.
+func TestRequeueForgetsEarlierCopies(t *testing.T) {
+	s := newTestStore(t)
+	mustLog(t, s, "3", 1, t0)
+	b, _ := sendBatch(t, s, "3", t0)
+	if err := s.BindMessage(ctx, b.ID, 61, "61"); err != nil { // a retransmit
+		t.Fatal(err)
+	}
+	if n, err := s.RequeueSeqs(ctx, "3", []uint32{b.Seq}, at(time.Hour)); err != nil || n != 1 {
+		t.Fatalf("RequeueSeqs = %d, %v", n, err)
+	}
+	if err := s.BindMessage(ctx, b.ID, 62, "62"); err != nil { // sent again after the gap request
+		t.Fatal(err)
+	}
+	if got, _ := s.AckBatchByMessage(ctx, 61, at(time.Hour)); got != nil {
+		t.Fatal("ACK for a copy sent before the gap request confirmed the batch")
+	}
+	if got, _ := s.AckBatchByMessage(ctx, 62, at(time.Hour)); got == nil {
+		t.Fatal("ACK for the copy sent after the gap request didn't confirm the batch")
 	}
 }
 

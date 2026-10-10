@@ -332,10 +332,10 @@ func (s *Store) MarkTransmitted(ctx context.Context, id uint, at, next time.Time
 }
 
 // BindMessage records the graywolf message row batch id was sent as
-// (spec 3.1): later retransmits resend that row, and graywolf's ACK
-// status for it confirms the batch. Rebinding replaces the row, for
-// when graywolf lost the original (resend 404) and the batch went out
-// as a new message. The row is also recorded for post-race cleanup.
+// (spec 3.1). Each retransmit that goes out as a new message rebinds
+// the batch to the new row; earlier copies stay linked in gw_rows, so
+// HQ's ACK for any copy confirms the batch (AckBatchByMessage). Every
+// row is also recorded for post-race cleanup.
 func (s *Store) BindMessage(ctx context.Context, id uint, gwID uint64, msgID string) error {
 	if gwID == 0 {
 		return fmt.Errorf("%w: graywolf message id must be non-zero", ErrInvalidInput)
@@ -346,19 +346,53 @@ func (s *Store) BindMessage(ctx context.Context, id uint, gwID uint64, msgID str
 		if err := rowsOrNotFound(res); err != nil {
 			return err
 		}
-		return recordGWRow(tx, gwID, GWRowBatch, s.now())
+		if err := recordGWRow(tx, gwID, GWRowBatch, s.now()); err != nil {
+			return err
+		}
+		return tx.Model(&GWRow{}).Where("gw_message_id = ?", gwID).Update("batch_id", id).Error
 	})
 }
 
-// AckBatchByMessage marks the pending batch bound to graywolf row gwID
-// acked and its entries confirmed. A stale or duplicate ACK, a row that
-// isn't one of our batches, or an ACK for a row the batch has since been
-// rebound away from, returns nil, nil: not an error (the current row's
-// ACK still confirms it).
+// ReleaseBinding unbinds pending batch id from its graywolf row before
+// a retransmit goes out as a new message. The row stays a linked copy
+// (its ACK still confirms the batch), and if the new copy's bind then
+// fails, the batch is unbound with attempts made, so crash recovery
+// (UnboundAttempted) finds and binds the new row.
+func (s *Store) ReleaseBinding(ctx context.Context, id uint) error {
+	res := s.db.WithContext(ctx).Model(&Batch{}).Where("id = ? AND state = ?", id, BatchPending).
+		Updates(map[string]any{"gw_message_id": nil, "gw_msg_id": ""})
+	return rowsOrNotFound(res)
+}
+
+// EarlierCopies returns up to limit graywolf row ids of batch id's
+// linked copies other than the one it is bound to, newest first: the
+// status poll reads them for an ACK the inbox feed skipped.
+func (s *Store) EarlierCopies(ctx context.Context, id uint, limit int) ([]uint64, error) {
+	var ids []uint64
+	err := s.db.WithContext(ctx).Model(&GWRow{}).
+		Where("batch_id = ? AND gw_message_id NOT IN (?)", id,
+			s.db.Model(&Batch{}).Select("COALESCE(gw_message_id, 0)").Where("id = ?", id)).
+		Order("gw_message_id DESC").Limit(limit).Pluck("gw_message_id", &ids).Error
+	return ids, err
+}
+
+// forgetCopies unlinks every graywolf copy of batches ids, so an ACK for
+// one of them no longer confirms the batch. Used when HQ asks for a
+// batch again: it never got those copies. A still-pending batch's
+// current copy is unlinked too but keeps confirming through its
+// binding (gw_message_id) until the next retransmit replaces it.
+func forgetCopies(tx *gorm.DB, ids []uint) error {
+	return tx.Model(&GWRow{}).Where("batch_id IN ?", ids).Update("batch_id", nil).Error
+}
+
+// AckBatchByMessage marks the unconfirmed (pending or parked) batch
+// that graywolf row gwID is a copy of acked and its entries confirmed:
+// HQ got that copy, whichever one it was. A stale or duplicate ACK, a row that isn't one of our
+// batches, or a copy forgotten by a gap request returns nil, nil.
 func (s *Store) AckBatchByMessage(ctx context.Context, gwID uint64, at time.Time) (*Batch, error) {
 	var acked *Batch
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		b, err := findPendingByMessage(tx, gwID)
+		b, err := findUnconfirmedByCopy(tx, gwID)
 		if err != nil || b == nil {
 			return err
 		}
@@ -424,6 +458,28 @@ func (s *Store) RejectBatch(ctx context.Context, id uint) (*Batch, error) {
 		return nil
 	})
 	return rejected, err
+}
+
+// findUnconfirmedByCopy finds the batch gwID is the current or an
+// earlier (still linked) copy of, if HQ hasn't confirmed it yet: pending,
+// or parked after its newest copy was refused (HQ may have ACKed an
+// earlier one).
+func findUnconfirmedByCopy(tx *gorm.DB, gwID uint64) (*Batch, error) {
+	var b Batch
+	copyOf := tx.Model(&GWRow{}).Select("batch_id").Where("gw_message_id = ? AND batch_id IS NOT NULL", gwID)
+	// A parked batch is confirmed only through an earlier copy: its
+	// current row is the one HQ refused.
+	err := tx.Where("(state = ? AND (gw_message_id = ? OR id IN (?))) OR "+
+		"(state = ? AND id IN (?) AND (gw_message_id IS NULL OR gw_message_id <> ?))",
+		BatchPending, gwID, copyOf, BatchRejected, copyOf, gwID).
+		First(&b).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
 }
 
 func findPendingByMessage(tx *gorm.DB, gwID uint64) (*Batch, error) {
@@ -515,6 +571,10 @@ func (s *Store) RequeueSeqs(ctx context.Context, cp string, seqs []uint32, now t
 			Updates(map[string]any{"gw_message_id": nil, "gw_msg_id": ""}).Error; err != nil {
 			return err
 		}
+		// HQ says it never got these: earlier copies can't confirm them.
+		if err := forgetCopies(tx, ids); err != nil {
+			return err
+		}
 		if err := tx.Model(&Batch{}).Where("id IN ?", ids).Updates(map[string]any{
 			"state":      BatchPending,
 			"acked_at":   nil,
@@ -555,6 +615,15 @@ func (s *Store) ExpediteUnacked(ctx context.Context, sentBefore, now time.Time) 
 func (s *Store) ExpediteAll(ctx context.Context, now time.Time) (int, error) {
 	var n int
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var rejected []uint
+		if err := tx.Model(&Batch{}).Where("state = ?", BatchRejected).Pluck("id", &rejected).Error; err != nil {
+			return err
+		}
+		if len(rejected) > 0 {
+			if err := forgetCopies(tx, rejected); err != nil {
+				return err
+			}
+		}
 		if err := tx.Model(&Batch{}).Where("state = ?", BatchRejected).
 			Updates(map[string]any{"gw_message_id": nil, "gw_msg_id": "", "state": BatchPending}).Error; err != nil {
 			return err
@@ -609,16 +678,25 @@ func normBatch(b *Batch) {
 	b.AckedAt = normTimePtr(b.AckedAt)
 }
 
-// UnconfirmedRows returns the graywolf row ids bound to batches HQ has
-// not confirmed (pending or parked). Post-race cleanup must not delete
-// them: deleting a row cancels the resend that would deliver it.
+// UnconfirmedRows returns the graywolf row ids of batches HQ has not
+// confirmed (pending or parked), every linked copy included. Post-race
+// cleanup must not delete them: HQ's ACK for any of them still confirms
+// the batch.
 func (s *Store) UnconfirmedRows(ctx context.Context) (map[uint64]bool, error) {
-	var ids []uint64
-	if err := s.db.WithContext(ctx).Model(&Batch{}).
+	var ids, copies []uint64
+	db := s.db.WithContext(ctx)
+	if err := db.Model(&Batch{}).
 		Where("state <> ? AND gw_message_id IS NOT NULL", BatchAcked).
 		Pluck("gw_message_id", &ids).Error; err != nil {
 		return nil, err
 	}
+	// Earlier copies too: HQ's ACK for one of them may still be coming.
+	if err := db.Model(&GWRow{}).
+		Where("batch_id IN (?)", db.Model(&Batch{}).Select("id").Where("state <> ?", BatchAcked)).
+		Pluck("gw_message_id", &copies).Error; err != nil {
+		return nil, err
+	}
+	ids = append(ids, copies...)
 	out := make(map[uint64]bool, len(ids))
 	for _, id := range ids {
 		out[id] = true

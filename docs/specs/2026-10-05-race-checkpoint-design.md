@@ -33,7 +33,7 @@ the feature **inside** graywolf as `pkg/race`. This one rebuilds it as a
 | RF transport | Raw APRS frames through `txgovernor` | graywolf **Messages API** (`POST /api/messages`) |
 | Inbound | `rxfanout` classifier ahead of the messages router | Read graywolf's inbox (`GET /api/messages/events` SSE + cursor catch-up) |
 | ACKs | Own msgids (`R`+seq, `H`+n); HQ ACKs after the store write | graywolf assigns numeric msgids and ACKs automatically; we read `status` per row |
-| Retries | Own outbox ladder, never gives up | Own outbox ladder driving `POST /api/messages/{id}/resend`; graywolf's ladder turned off for race peers (section 3.3) |
+| Retries | Own outbox ladder, never gives up | Own outbox ladder; each retransmit goes out as a new message, since graywolf won't resend while its ladder is off (3.1); graywolf's ladder turned off for race peers (section 3.3) |
 | Undecodable report | HQ sends REJ | Not possible (graywolf ACKs first); HQ logs it and shows it in health |
 | Addressee | Configurable race addressee | HQ's station callsign (DM). Tactical labels can't be used: graywolf doesn't ACK or retry them |
 | Storage | graywolf DB, migration 30 | Own SQLite file (`checkin-board.db`), own migrations |
@@ -150,7 +150,7 @@ All calls use the session cookie from `POST /api/auth/login` (section 7.2).
 | Station callsign (read / set from admin) | `GET` / `PUT /api/station/config` (`callsign`) |
 | Send a batch / heartbeat / gap request | `POST /api/messages` `{to, text, path, channel, client_id}` |
 | Delivery state of a sent row | `GET /api/messages/{id}` (`status`, `attempts`, `acked_at`, `msg_id`) and SSE `acked` / `rejected` changes |
-| Retransmit with the **same** msgid | `POST /api/messages/{id}/resend` (409 = already in flight: retry next tick) |
+| Retransmit | `POST /api/messages/{id}/resend` is tried first, but graywolf refuses it (409) while the ladder is off, so the batch is sent again with `POST /api/messages` (3.1) |
 | Inbound reports / heartbeats / gap requests | `GET /api/messages/events` (SSE) and `GET /api/messages?folder=inbox&since=&cursor=` for catch-up |
 | Turn off graywolf's retry ladder for race peers | `PUT /api/messages/conversations/dm/{CALL}/prefs` `{wait_for_ack:false}` (section 3.3) |
 | Max text length | `GET /api/messages/preferences` (`max_message_text_override`) |
@@ -283,24 +283,36 @@ digipeater's callsign. Decoding is text-canonical like every other type.
 ### 3.1 Msgids
 
 The original derived msgids from seq (`R`+base36). Through the Messages API
-**graywolf assigns the msgid**. We can't choose it, but `resend` reuses it
-(to be confirmed in phase 1). Consequences:
+**graywolf assigns the msgid**, and we can't choose it.
 
-- One batch = one graywolf message row. The CP stores
-  `graywolf_message_id` (row id) and `msg_id` with the batch. Every
-  retransmit is a `resend` of that row, so HQ's graywolf sees the same
-  (from, msgid, text) and can ACK the copy without storing it again.
-- If the row is gone (`resend` returns 404), the outbox sends a **new**
-  message with the same text.
-- graywolf's `resend` resets attempts but **not** the row's acked or
-  rejected state. A gap request for a batch that was already ACKed (or
-  REJected) therefore releases its old row and sends it as a new message.
-  Resending the old row would read as confirmed straight away, without HQ
-  getting it. `RequeueSeqs` does this. The slow contract test records the
-  actual behaviour as a FINDING. HQ's own `(cp, seq, text)` dedup (section 5)
-  makes that idempotent, so a new msgid is harmless.
-- HQ never relies on graywolf's dedup. Any duplicate inbox row is dropped
-  by the app's batch-level dedup.
+**Confirmed by the phase 1 contract test (2026-10-10):** graywolf resends a
+DM only once it has failed: rejected, or attempts made with no retry
+pending. Acked rows are refused too. With `wait_for_ack=false` (3.3) a row
+stays at attempts 0, so **every resend is refused with 409** and a
+retransmit can't reuse the msgid. Consequences:
+
+- Each transmission of a batch is its own graywolf row with its own
+  msgid. The CP binds the batch to its newest row (`graywolf_message_id`,
+  `msg_id`), and every copy stays linked to the batch (`gw_rows.batch_id`,
+  migration 0007).
+- The outbox still tries `resend` first. On 409 it reads the row: already
+  acked or rejected (and addressed to the current HQ), it applies that
+  status; otherwise it sends the batch again as a **new** message with
+  the same text. A 404 (row gone) does the same. Before the new copy goes
+  out the batch is unbound from the old row, so if binding the new row
+  fails, crash recovery (4.1.7) finds and binds it.
+- HQ's graywolf stores each copy as a new inbound row (new msgid) and
+  ACKs it. HQ never relies on graywolf's dedup: its own `(cp, seq, text)`
+  dedup (section 5) drops the duplicate copies.
+- **An ACK for any copy confirms the batch:** HQ got that copy, whichever
+  it was, even if the batch was parked after its newest copy was
+  refused. A REJ parks the batch only if it is for the newest copy. The
+  10 s status poll (4.1) reads the newest copy and up to two earlier
+  ones, for ACKs the inbox feed skipped.
+- A gap request (or a final check-in of a rejected batch) means HQ never
+  got the earlier copies, so they are forgotten (unlinked): a late or
+  replayed ACK for one of them can't confirm the batch.
+- Post-race cleanup keeps every copy of an unconfirmed batch.
 
 ### 3.2 Text length
 
@@ -321,8 +333,9 @@ retry forever with its own backoff and in-flight cap.
 `wait_for_ack=false` on the DM conversation with each race peer (HQ's call
 at a checkpoint; each checkpoint's call at HQ). In graywolf that means
 "send once, don't enrol in the retry ladder". Phase 1 must confirm that an
-ACK arriving later still flips the row to `acked`. The app's outbox then
-drives every retransmit through `/resend` on its own schedule, which keeps
+ACK arriving later still flips the row to `acked` (confirmed 2026-10-10).
+The app's outbox then drives every retransmit on its own schedule (as new
+messages, 3.1), which keeps
 the measured behaviour: 30/60/120 s then every 300 s, `max_in_flight` = 4,
 fast retransmit on a confirming ACK. **Complete race** (4.7) restores each
 peer's previous prefs.
@@ -350,8 +363,9 @@ frames), so the app warns about it in status.
    - First transmit: `POST /api/messages {to: hq_call, text, path,
      channel, client_id: "<cp>-<seq>"}` and store the returned `id` and
      `msg_id`. Crash safety is covered in step 7.
-   - Retransmit: `POST /api/messages/{id}/resend`. Backoff is 30 s, 60 s,
-     120 s, then every 300 s forever. A batch is never dropped.
+   - Retransmit: a new message with the same text (3.1: graywolf refuses
+     `resend` while its ladder is off). Backoff is 30 s, 60 s, 120 s, then
+     every 300 s forever. A batch is never dropped.
    - **Fast retransmit** (unchanged): an ACK that confirms one of our
      batches proves the link works, so batches sent 20 s or more ago
      without an ACK are resent immediately, restarting at the 60 s rung.
@@ -707,8 +721,8 @@ and details it left open:
     ACK of each DM is outside the app's control.
   - It replies at once when it hears the last probe, otherwise 30 s
     after the last probe it heard. It tries at most three times
-    (a first send and two resends), 30 s apart; a 409 in-flight
-    conflict counts as a try.
+    (a first send and two retries), 30 s apart. A retry graywolf
+    refuses to resend (409, 3.1) goes out as a new message.
   - It re-checks its role and HQ call before each send.
   - A probe from the same station and run number more than 30 min
     after the last one starts a fresh run. Responses are kept 7 days.
@@ -787,8 +801,9 @@ off, so every timestamp comes from the store's injectable clock.
 
 ACK handling differs from `pkg/race`. A batch is matched to graywolf's
 ACK by the graywolf **message row id** it is bound to (`BindMessage`;
-partial unique index), not by a seq-derived msgid. Rebinding after a
-resend 404 replaces the row. `UnboundAttempted` lists batches whose POST
+partial unique index), not by a seq-derived msgid. Each retransmit
+rebinds the batch to its new row; earlier copies stay linked in
+`gw_rows.batch_id`, and an ACK for any of them confirms the batch (3.1). `UnboundAttempted` lists batches whose POST
 may have succeeded before a crash (4.1.7). HQ records the inbox row in
 `gw_rows` in the same transaction as the batch ingest.
 
@@ -1205,10 +1220,10 @@ refresh is due, so changes made in the UI apply without a restart.
 
 **Status at a glance (2026-10-10).**
 
-- **Done:** phases 2–11 and 13–15. Phase 1's code is done; only its
-  contract test against a real graywolf remains (now possible).
-- **Next, in order:** 1 (contract test), **11a**, **11b**, 12 (rest of
-  (g) and (h)), **12a**, 16. Phases 11a, 11b and 12a come from the
+- **Done:** phases 1–11 and 13–15. Phase 1's contract test ran on air
+  on 2026-10-10 and found a retransmit defect, now fixed (3.1).
+- **Next, in order:** **11a**, **11b**, 12 (rest of (g) and (h)),
+  **12a**, 16. Phases 11a, 11b and 12a come from the
   two-node field test of 2026-10-09
   ([`docs/feedback-2026-10-09.md`](../feedback-2026-10-09.md)); they are
   lettered so existing phase references stay valid.
@@ -1240,7 +1255,7 @@ refresh is due, so changes made in the UI apply without a restart.
 | # | Phase | Output | Status |
 |---|---|---|---|
 | 0 | Sign-off | This spec approved | Answers received 2026-10-05; awaiting final approval |
-| 1 | graywolf client + API spike | `internal/graywolf`: login/re-login, health, version, station get/put, send, get, resend, delete, list+cursor, SSE, conv prefs, preferences. `httptest` fakes for unit tests, plus an **opt-in contract test** (`GW_CONTRACT=1`) against a real graywolf 0.14.14 that proves: msgid is stable across resend; `wait_for_ack=false` stops the ladder and late ACKs still flip status; `client_id` round-trips (or not); the inbox cursor doesn't skip rows; single-row delete leaves the thread intact | **In progress** 2026-10-05. Client done, 96.3% coverage, reviewed (fixes: watchdog pauses during handler and covers connect; stalled-cursor detection; 30 s fail-fast after bad credentials; no credentials in URLs, errors or `%v`). Contract test written (`make contract`), **not yet run**: live transmit deferred until the radio hardware is ready (user, 2026-10-06), so it runs in phase 12. Test host found on the LAN (0.14.14, commit `b589e686`) |
+| 1 | graywolf client + API spike | `internal/graywolf`: login/re-login, health, version, station get/put, send, get, resend, delete, list+cursor, SSE, conv prefs, preferences. `httptest` fakes for unit tests, plus an **opt-in contract test** (`GW_CONTRACT=1`) against a real graywolf 0.14.14 that proves: graywolf refuses `resend` while the ladder is off (originally: msgid is stable across resend; disproved, see 3.1); `wait_for_ack=false` stops the ladder and late ACKs still flip status; `client_id` round-trips (or not); the inbox cursor doesn't skip rows; single-row delete leaves the thread intact | **Done** 2026-10-10 (code 2026-10-05). Client done, 96.3% coverage, reviewed (fixes: watchdog pauses during handler and covers connect; stalled-cursor detection; 30 s fail-fast after bad credentials; no credentials in URLs, errors or `%v`). Contract test written (`make contract`), **not yet run**: live transmit deferred until the radio hardware is ready (user, 2026-10-06), so it runs in phase 12. Test host found on the LAN (0.14.14, commit `b589e686`)<br>**Contract test run 2026-10-10 00:05** on 10.0.0.65 (KD2DCM-3, graywolf `0.14.14+4978244d.armv6buf`), peer KD2DCM-4 on air, fast + slow: **6 pass, 1 fail.**<br>- Pass: version/station; cursor paging and single-row delete; SSE reports our own send; `wait_for_ack=false` stops the ladder (after 75 s: `sent_rf`, attempts 0, no next retry); a peer ACK flips the row to `acked` with the ladder off; resending an acked row leaves it `acked`.<br>- Finding: `client_id` is not persisted (send and GET return ""), so the designed fallback (match on exact text) is the one in use.<br>- **Fail: `TestContractMsgIDStableAcrossResend`.** graywolf answers every resend with 409 for 30 s. graywolf's API only resends a DM that was rejected, or that has attempts > 0 and no retry pending; acked rows are refused too. With `wait_for_ack=false` a row stays at attempts 0, so **graywolf never accepts a resend while checkin-board has its retries off.**<br>- **Defect this exposes:** the checkpoint engine (`internal/checkpoint/engine.go`, `send`) and the link-check responder treat a 409 on resend as "graywolf is sending it now" and count the attempt as transmitted. On real graywolf, no retransmission goes on air: a lost first transmission is never recovered, gap requests included. The fake graywolf accepts resends, so the simulations passed.<br>**Fixed 2026-10-10 (user decision: send as a new message):** a refused retransmit goes out as a new message and every copy stays linked to its batch, so HQ's ACK for any copy confirms it (3.1; migration 0007). The fake graywolf now refuses resends like the real one; with that alone, nine whole-race simulations failed as the field would have, and pass with the fix. Link-check replies likewise. Reviewed: a failed bind after a new copy is recovered by unbinding first; the status poll also reads two earlier copies; a row for a previous HQ call never settles a batch; an earlier copy's ACK confirms a parked batch. Coverage: checkpoint 86.5%, store 89.7%, linkcheck 86.6%.<br>**Contract test rerun 2026-10-10 00:48, on air: 7/7 pass,** including `TestContractResendRefusedWithRetriesOff` (409 "message is still pending; cannot resend until it fails or is acked"). **Phase 1 done.** |
 | 2 | Wire codec + race clock | Port `types/encode/decode/clock` from `pkg/race` into `internal/wire`, `internal/raceclock`; add `RC1 P/Q` link-check messages (4.8); table tests + `FuzzDecode` | **Done** 2026-10-05. wire 95.6%, raceclock 100% coverage; FuzzDecode 68M execs clean (now covering P/Q); gap-list parser shared with P/Q (behaviour unchanged, reviewed). Worst-case `RC1 Q` is exactly 67 chars, pinned by an exhaustive test. Clock types renamed `raceclock.Source`/`Status`; the OS-clock check (section 6) is injected later |
 | 3 | Storage | SQLite (modernc), embedded migrations, repositories, roster CSV + `FuzzParseRosterCSV` | **Done** 2026-10-06. 90.8% coverage; FuzzParseRosterCSV 60 s clean; builds for ARMv6 with `CGO_ENABLED=0`; `govulncheck` clean (bumped modernc sqlite to v1.60.1 / SQLite 3.53.4 and x/text). Review fixes: gap requests release acked/rejected rows (above, 3.1); bad reports recorded in `gw_rows` and counted only against known checkpoints; UTF-8-safe truncation; `hq_call` SSID limited to 0-15. Also fixed a ported test that checked the old `race_runners` table name and so passed vacuously |
 | 4 | Inbox reader | SSE + catch-up, cursor persistence, idempotent dispatch, reconnect/backoff | **Done** 2026-10-06. 95.1% coverage, stable over 30 `-race` runs. Review: no lost-row paths; fixed one bad row blocking the feed (skip after 10 failures or on `Permanent`), backlog drain, a truthful Connected flag (new `StreamEventsWithOpen` client hook), separate stream/catch-up errors, mark-read retry, cursor save on shutdown, and backoff reset only after a healthy stream |

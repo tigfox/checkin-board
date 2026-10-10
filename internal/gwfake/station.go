@@ -32,6 +32,10 @@ type Transmission struct {
 }
 
 // Station fakes one graywolf's Messages API.
+// ladderFirstRetry is when graywolf's retry ladder would first resend
+// an unacked DM (spec 3.3: 30/60/120/300 s).
+const ladderFirstRetry = 30 * time.Second
+
 type Station struct {
 	Call string
 	// EchoClientID makes rows remember the client_id they were sent with.
@@ -154,6 +158,15 @@ func (s *Station) SendMessage(ctx context.Context, req graywolf.SendRequest) (gr
 		Direction: "out", ThreadKind: graywolf.ThreadKindDM, FromCall: s.Call, ToCall: to, PeerCall: to,
 		Text: req.Text, Path: req.Path, Status: graywolf.StatusSentRF, Attempts: 1,
 	}
+	// Like graywolf: with the retry ladder off (wait_for_ack=false) a
+	// row stays at attempts 0; with it on, a retry is pending until the
+	// peer ACKs. Either way the row can't be resent yet (ResendMessage).
+	if p, ok := s.prefs[graywolf.ThreadKindDM+"/"+to]; ok && !p.WaitForAck {
+		m.Attempts = 0
+	} else {
+		next := s.Now().UTC().Add(ladderFirstRetry)
+		m.NextRetryAt = &next
+	}
 	if s.EchoClientID {
 		m.ClientID = req.ClientID
 	}
@@ -186,6 +199,16 @@ func (s *Station) ResendMessage(ctx context.Context, id uint64) (graywolf.Messag
 	}
 	if s.inFlight[id] {
 		return graywolf.Message{}, apiErr(http.StatusConflict, "resend already in flight")
+	}
+	// graywolf 0.14.14 resends a DM only once it has failed: rejected, or
+	// attempts made with no retry pending. Acked rows and rows still
+	// pending (a retry scheduled, or attempts 0 with the ladder off) are
+	// refused with 409.
+	switch {
+	case m.Status == graywolf.StatusAcked:
+		return graywolf.Message{}, apiErr(http.StatusConflict, `message is already in terminal state "acked"`)
+	case m.Status != graywolf.StatusRejected && (m.NextRetryAt != nil || m.Attempts == 0):
+		return graywolf.Message{}, apiErr(http.StatusConflict, "message is still pending; cannot resend until it fails or is acked")
 	}
 	m.Attempts++ // status deliberately unchanged
 	s.tx = append(s.tx, Transmission{ID: id, To: m.ToCall, Text: m.Text, Resend: true})
@@ -333,7 +356,7 @@ func (s *Station) setStatus(id uint64, status string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if m, ok := s.rows[id]; ok {
-		m.Status = status
+		m.Status, m.NextRetryAt = status, nil
 		if !s.NoAckedAt {
 			now := s.Now().UTC()
 			m.AckedAt = &now

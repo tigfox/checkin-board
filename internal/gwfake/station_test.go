@@ -20,10 +20,10 @@ func TestSendResendAndStatus(t *testing.T) {
 	if got, _ := s.GetMessage(ctx, m.ID); got.ClientID != "" {
 		t.Error("client_id persisted without EchoClientID")
 	}
-	s.Ack(m.ID)
+	s.Reject(m.ID)
 	r, err := s.ResendMessage(ctx, m.ID)
-	if err != nil || r.Status != graywolf.StatusAcked || r.Attempts != 2 || r.MsgID != m.MsgID {
-		t.Fatalf("resend = %+v, %v; want acked status and msgid kept", r, err)
+	if err != nil || r.Status != graywolf.StatusRejected || r.Attempts != 2 || r.MsgID != m.MsgID {
+		t.Fatalf("resend = %+v, %v; want rejected status and msgid kept", r, err)
 	}
 	if tx := s.Transmissions(); len(tx) != 2 || !tx[1].Resend {
 		t.Fatalf("transmissions = %+v", tx)
@@ -213,5 +213,43 @@ func TestAPIDownFailsCallsButRadioWorks(t *testing.T) {
 	s.SetAPIDown(false)
 	if rows := s.Rows(); len(rows) != 1 {
 		t.Fatalf("rows = %d", len(rows))
+	}
+}
+
+// graywolf 0.14.14 resends a DM only once it has failed: rejected, or
+// with attempts made and no retry pending. With wait_for_ack=false a row
+// stays at attempts 0, so every resend is refused (contract test,
+// 2026-10-10); acked rows are refused too.
+func TestResendFollowsGraywolfRule(t *testing.T) {
+	s := New("N0CALL-1")
+	if _, err := s.SetConversationPrefs(ctx, graywolf.ThreadKindDM, "N0CALL-10", graywolf.ConversationPrefs{WaitForAck: false}); err != nil {
+		t.Fatal(err)
+	}
+	noLadder, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-10", Text: "x"})
+	if noLadder.Attempts != 0 || noLadder.NextRetryAt != nil {
+		t.Fatalf("wait_for_ack=false row = %+v, want attempts 0 and no retry", noLadder)
+	}
+	if _, err := s.ResendMessage(ctx, noLadder.ID); !graywolf.IsConflict(err) {
+		t.Errorf("resend with retries off: err = %v, want 409", err)
+	}
+
+	ladder, _ := s.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-11", Text: "y"})
+	if ladder.Attempts != 1 || ladder.NextRetryAt == nil {
+		t.Fatalf("default row = %+v, want attempts 1 and a retry pending", ladder)
+	}
+	if _, err := s.ResendMessage(ctx, ladder.ID); !graywolf.IsConflict(err) {
+		t.Errorf("resend while retrying: err = %v, want 409", err)
+	}
+	s.Ack(ladder.ID)
+	if got, _ := s.GetMessage(ctx, ladder.ID); got.NextRetryAt != nil {
+		t.Errorf("acked row still has a retry pending: %+v", got)
+	}
+	if _, err := s.ResendMessage(ctx, ladder.ID); !graywolf.IsConflict(err) {
+		t.Errorf("resend of an acked row: err = %v, want 409", err)
+	}
+
+	s.Reject(noLadder.ID)
+	if _, err := s.ResendMessage(ctx, noLadder.ID); err != nil {
+		t.Errorf("resend of a rejected row: %v", err)
 	}
 }

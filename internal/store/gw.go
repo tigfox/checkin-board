@@ -45,6 +45,9 @@ type GWRow struct {
 	Kind        string     `gorm:"column:kind"`
 	CreatedAt   time.Time  `gorm:"column:created_at;autoCreateTime:false"`
 	DeletedAt   *time.Time `gorm:"column:deleted_at"`
+	// BatchID is the checkpoint batch a batch row is a copy of; cleared
+	// when a gap request makes earlier copies void.
+	BatchID *uint `gorm:"column:batch_id"`
 }
 
 func (GWRow) TableName() string { return "gw_rows" }

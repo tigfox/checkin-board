@@ -44,7 +44,11 @@ func TestRadioDeliversDMsAndACKs(t *testing.T) {
 		t.Fatalf("A row = %+v, want acked", got)
 	}
 	// A resend inside the dedup window is ACKed again but not stored again.
-	_, _ = a.ResendMessage(ctx, m.ID)
+	// (graywolf only resends a failed row, so the row is rejected first.)
+	a.Reject(m.ID)
+	if _, err := a.ResendMessage(ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
 	r.Deliver()
 	if n := len(b.Rows()); n != 1 {
 		t.Fatalf("B stored a duplicate: %d rows", n)
@@ -59,7 +63,10 @@ func TestRadioDeliversDMsAndACKs(t *testing.T) {
 	// After the dedup window the same frame is stored again.
 	r.SetDown(false)
 	now = now.Add(dedupWindow + time.Second)
-	_, _ = a.ResendMessage(ctx, m.ID)
+	a.Reject(m.ID)
+	if _, err := a.ResendMessage(ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
 	r.Deliver()
 	if n := len(b.Rows()); n != 2 {
 		t.Fatalf("B rows = %d, want a new row after the dedup window", n)

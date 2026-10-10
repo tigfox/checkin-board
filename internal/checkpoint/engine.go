@@ -32,6 +32,10 @@ const (
 	// pollEvery is how often in-flight batches' graywolf status is read
 	// directly, covering status changes the inbox feed can skip (4.6).
 	pollEvery = 10 * time.Second
+	// pollEarlierCopies is how many earlier copies of each in-flight batch
+	// the poll also reads (each retransmit is a new graywolf row, 3.1),
+	// bounded so a long dead link doesn't multiply graywolf API calls.
+	pollEarlierCopies = 2
 	// tickTimeout bounds one tick so a hung graywolf can't freeze the loop.
 	tickTimeout = 10 * time.Second
 	// writeTimeout bounds the store writes that follow a send. They run
@@ -497,13 +501,28 @@ func (e *Engine) send(ctx context.Context, cfg store.Settings, b store.Batch, se
 	if b.GWMessageID != nil {
 		_, err := e.gw.ResendMessage(ctx, *b.GWMessageID)
 		switch {
-		case err == nil, graywolf.IsConflict(err):
-			return nil // 409: graywolf is sending it right now
+		case err == nil:
+			return nil
+		case graywolf.IsConflict(err):
+			// graywolf resends only a failed row; with its retries off a
+			// row never fails, so this is the usual case (contract test,
+			// 2026-10-10). If HQ already ACKed the row, take that;
+			// otherwise send the batch again as a new message.
+			if done, err := e.settledRow(ctx, cfg.HQCall, *b.GWMessageID); done || err != nil {
+				return err
+			}
+			if err := e.releaseForNewCopy(ctx, b); err != nil {
+				return ignoreSettled(err)
+			}
 		case !graywolf.IsNotFound(err):
 			e.afterFailure(ctx, b, sentAt, err)
 			return err
+		default:
+			e.log.Info("checkpoint: graywolf row gone; sending batch as new", "cp", b.CPCode, "seq", b.Seq)
+			if err := e.releaseForNewCopy(ctx, b); err != nil {
+				return ignoreSettled(err)
+			}
 		}
-		e.log.Info("checkpoint: graywolf row gone; sending batch as new", "cp", b.CPCode, "seq", b.Seq)
 	}
 	msg, err := e.gw.SendMessage(ctx, e.request(cfg, cfg.HQCall, b.Text, b.ClientID))
 	if err != nil {
@@ -521,6 +540,50 @@ func (e *Engine) send(ctx context.Context, cfg store.Settings, b store.Batch, se
 		// On air but unbound: recoverUnbound rebinds it next tick, and
 		// HQ's (cp, seq, text) dedup absorbs any duplicate.
 		return fmt.Errorf("bind to graywolf row %d: %w", msg.ID, err)
+	}
+	return nil
+}
+
+// errBatchSettled: the batch was acked or parked while a retransmit was
+// being prepared, so there is nothing to send.
+var errBatchSettled = errors.New("checkpoint: batch settled meanwhile")
+
+func ignoreSettled(err error) error {
+	if errors.Is(err, errBatchSettled) {
+		return nil
+	}
+	return err
+}
+
+// settledRow reports whether graywolf row id, addressed to the current
+// HQ, is already acked or rejected, applying that status to its batch,
+// so a refused resend doesn't put a confirmed batch on air again. A row
+// for a previous HQ call never settles the batch: it goes to the new HQ.
+func (e *Engine) settledRow(ctx context.Context, hq string, id uint64) (bool, error) {
+	m, err := e.gw.GetMessage(ctx, id)
+	if err != nil {
+		if graywolf.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !strings.EqualFold(m.ToCall, hq) || (m.Status != graywolf.StatusAcked && m.Status != graywolf.StatusRejected) {
+		return false, nil
+	}
+	return true, e.applyStatus(ctx, hq, m)
+}
+
+// releaseForNewCopy unbinds b from its old row before it goes out as a
+// new message, so a failed bind afterwards leaves it unbound and crash
+// recovery binds the new row (store.ReleaseBinding). The old row stays
+// a linked copy.
+func (e *Engine) releaseForNewCopy(ctx context.Context, b store.Batch) error {
+	if err := e.store.ReleaseBinding(ctx, b.ID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return errBatchSettled
+		}
+		// Nothing went on air; the kept attempt retries at the next rung.
+		return err
 	}
 	return nil
 }
@@ -569,17 +632,27 @@ func (e *Engine) poll(ctx context.Context, cfg store.Settings, now time.Time) er
 	}
 	var errs []error
 	for _, b := range window(pending, cfg.MaxInFlight) {
-		if b.GWMessageID == nil {
-			continue
-		}
-		m, err := e.gw.GetMessage(ctx, *b.GWMessageID)
+		ids, err := e.store.EarlierCopies(ctx, b.ID, pollEarlierCopies)
 		if err != nil {
-			if !graywolf.IsNotFound(err) { // gone: the next resend sends it as new
-				errs = append(errs, err)
-			}
+			errs = append(errs, err)
 			continue
 		}
-		errs = append(errs, e.applyStatus(ctx, cfg.HQCall, m))
+		if b.GWMessageID != nil {
+			ids = append([]uint64{*b.GWMessageID}, ids...)
+		}
+		for _, id := range ids {
+			m, err := e.gw.GetMessage(ctx, id)
+			if err != nil {
+				if !graywolf.IsNotFound(err) { // gone: the next retransmit sends it as new
+					errs = append(errs, err)
+				}
+				continue
+			}
+			errs = append(errs, e.applyStatus(ctx, cfg.HQCall, m))
+			if m.Status == graywolf.StatusAcked {
+				break // confirmed: no need to read older copies
+			}
+		}
 	}
 	return errors.Join(errs...)
 }

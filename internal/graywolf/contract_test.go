@@ -132,32 +132,33 @@ func TestContractVersionAndStation(t *testing.T) {
 	t.Logf("station callsign %s", st.Callsign)
 }
 
-func TestContractMsgIDStableAcrossResend(t *testing.T) {
+// graywolf resends a DM only once it has failed (rejected, or attempts
+// made and no retry pending). With wait_for_ack=false a row stays at
+// attempts 0, so a resend is always refused with 409: the checkpoint
+// engine and the link-check responder rely on that and send a
+// retransmit as a new message (spec 3.1; contract run 2026-10-10).
+func TestContractResendRefusedWithRetriesOff(t *testing.T) {
 	e := contractSetup(t)
 	e.withoutRetries(t)
 	ctx := context.Background()
 
+	// Resend at once, before the peer's ACK can come back over the air
+	// (several seconds), so the refusal is the retries-off one.
 	m := e.send(t, "resend")
-	waitFor(t, 30*time.Second, "msg_id assigned", func() (bool, error) {
-		cur, err := e.c.GetMessage(ctx, m.ID)
-		m = cur
-		return cur.MsgID != "", err
-	})
-	var resent Message
-	waitFor(t, 30*time.Second, "resend accepted", func() (bool, error) {
-		r, err := e.c.ResendMessage(ctx, m.ID)
-		if IsConflict(err) {
-			return false, nil
-		}
-		resent = r
-		return err == nil, err
-	})
-	after, err := e.c.GetMessage(ctx, m.ID)
+	_, err := e.c.ResendMessage(ctx, m.ID)
+	if !IsConflict(err) {
+		t.Fatalf("resend with retries off: err = %v, want 409", err)
+	}
+	t.Logf("resend refused as expected: %v", err)
+	got, err := e.c.GetMessage(ctx, m.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.MsgID != m.MsgID || (resent.MsgID != "" && resent.MsgID != m.MsgID) {
-		t.Fatalf("msg_id changed across resend: before %q, resend response %q, after %q", m.MsgID, resent.MsgID, after.MsgID)
+	if got.Status == StatusAcked {
+		t.Skipf("peer ACKed before the check; 409 covers acked rows too")
+	}
+	if got.Attempts != 0 || got.NextRetryAt != nil {
+		t.Errorf("row = %s attempts %d next_retry_at %v; want attempts 0 and no retry pending", got.Status, got.Attempts, got.NextRetryAt)
 	}
 }
 

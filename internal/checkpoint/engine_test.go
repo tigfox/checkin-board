@@ -89,6 +89,16 @@ func (h *harness) log(bib store.Bib) {
 func (h *harness) reports() []gwfake.Transmission { return h.gw.TransmissionsWithPrefix("RC1 R ") }
 
 // distinctRows is the set of graywolf rows (batches) among txs.
+// distinctBatches counts batches by report text: retries of one batch
+// are new graywolf rows with the same text.
+func distinctBatches(txs []gwfake.Transmission) map[string]bool {
+	out := map[string]bool{}
+	for _, t := range txs {
+		out[t.Text] = true
+	}
+	return out
+}
+
 func distinctRows(txs []gwfake.Transmission) map[uint64]bool {
 	out := map[uint64]bool{}
 	for _, t := range txs {
@@ -160,13 +170,16 @@ func TestFlushesImmediatelyWhenAFrameIsFull(t *testing.T) {
 	}
 }
 
-func TestRetryBackoffResendsSameRow(t *testing.T) {
+// graywolf won't resend a row while its retries are off (contract test,
+// 2026-10-10), so every retry is a new copy of the batch on the same
+// ladder, and HQ's ACK for any copy confirms it.
+func TestRetryBackoffSendsNewCopies(t *testing.T) {
 	h := newHarness(t)
 	h.log(101)
 	h.ft.Advance(20 * time.Second)
 	h.tick()
-	first := h.reports()[0].ID
-	// Resends at +30, +60, +120, then every 300 s, always of the same row.
+	first := h.reports()[0]
+	// Retries at +30, +60, +120, then every 300 s.
 	for _, wait := range []time.Duration{30, 60, 120, 300, 300} {
 		h.ft.Advance(wait*time.Second - time.Second)
 		h.tick()
@@ -177,9 +190,82 @@ func TestRetryBackoffResendsSameRow(t *testing.T) {
 		if len(got) != before+1 {
 			t.Fatalf("after %ds: %d reports, want %d", wait, len(got), before+1)
 		}
-		if last := got[len(got)-1]; !last.Resend || last.ID != first {
-			t.Fatalf("retry was %+v, want a resend of row %d", last, first)
+		last := got[len(got)-1]
+		if last.Resend || last.Text != first.Text || last.ID == got[len(got)-2].ID {
+			t.Fatalf("retry was %+v, want a new copy of %q", last, first.Text)
 		}
+		pending, _ := h.s.ListPendingBatches(ctx)
+		if len(pending) != 1 || pending[0].GWMessageID == nil || *pending[0].GWMessageID != last.ID {
+			t.Fatalf("batch = %+v, want bound to the newest copy %d", pending, last.ID)
+		}
+	}
+	// A late ACK for the first copy still confirms the batch.
+	h.ack(first.ID)
+	if st := h.outbox(); st.PendingBatches != 0 || st.Unconfirmed != 0 {
+		t.Fatalf("outbox after ACK of the first copy = %+v, want confirmed", st)
+	}
+}
+
+// A retransmit whose send outcome is unknown (or whose bind fails) is
+// recovered like a first send: the batch is unbound before the new copy
+// goes out, so recovery finds and binds it.
+func TestRetransmitRecoveredWhenSendOutcomeUnknown(t *testing.T) {
+	h := newHarness(t)
+	h.log(101)
+	h.ft.Advance(20 * time.Second)
+	h.tick()
+	first := h.reports()[0]
+	h.ft.Advance(30 * time.Second)
+	h.gw.FailNextSend(errors.New("context deadline exceeded"))
+	_ = h.e.Tick(ctx, h.cfg) // resend refused, new copy's POST outcome unknown
+	copy2, _ := h.gw.SendMessage(ctx, graywolf.SendRequest{To: "N0CALL-10", Text: first.Text})
+	h.ft.Advance(time.Second)
+	h.tick()
+	pending, _ := h.s.ListPendingBatches(ctx)
+	if len(pending) != 1 || pending[0].GWMessageID == nil || *pending[0].GWMessageID != copy2.ID {
+		t.Fatalf("batch = %+v, want recovered onto copy %d", pending, copy2.ID)
+	}
+	h.ack(first.ID) // the first copy is still linked
+	if st := h.outbox(); st.PendingBatches != 0 {
+		t.Fatalf("outbox = %+v, want confirmed via the first copy", st)
+	}
+}
+
+// The status poll also reads earlier copies, for an ACK the inbox feed
+// skipped.
+func TestPollFindsAckOnEarlierCopy(t *testing.T) {
+	h := newHarness(t)
+	h.log(101)
+	h.ft.Advance(20 * time.Second)
+	h.tick()
+	first := h.reports()[0].ID
+	h.ft.Advance(30 * time.Second)
+	h.tick() // second copy
+	if n := len(h.reports()); n != 2 {
+		t.Fatalf("reports = %d, want a second copy", n)
+	}
+	h.gw.Ack(first) // HQ ACKed the first copy; the feed never told us
+	h.ft.Advance(pollEvery)
+	h.tick()
+	if st := h.outbox(); st.PendingBatches != 0 {
+		t.Fatalf("outbox = %+v, want confirmed by polling the earlier copy", st)
+	}
+}
+
+// A refused resend of a row addressed to a previous HQ call doesn't count
+// as settled: the batch goes to the current HQ.
+func TestRefusedResendAfterHQCallChangeSendsNew(t *testing.T) {
+	h := newHarness(t)
+	h.log(101)
+	h.ft.Advance(20 * time.Second)
+	h.tick()
+	h.gw.Ack(h.reports()[0].ID) // acked by the old HQ, unseen by the engine
+	h.cfg.HQCall = "N0CALL-11"
+	h.ft.Advance(30 * time.Second)
+	h.tick()
+	got := h.reports()
+	if last := got[len(got)-1]; len(got) != 2 || last.To != "N0CALL-11" {
+		t.Fatalf("reports = %+v, want the batch sent to the new HQ", got)
 	}
 }
 
@@ -190,12 +276,12 @@ func TestInFlightWindow(t *testing.T) {
 		h.ft.Advance(20 * time.Second)
 		h.tick()
 	}
-	if n := len(distinctRows(h.reports())); n != h.cfg.MaxInFlight {
+	if n := len(distinctBatches(h.reports())); n != h.cfg.MaxInFlight {
 		t.Fatalf("sent %d batches with none ACKed, want window %d", n, h.cfg.MaxInFlight)
 	}
 	h.ack(h.reports()[0].ID)
 	h.tick()
-	if n := len(distinctRows(h.reports())); n != h.cfg.MaxInFlight+1 {
+	if n := len(distinctBatches(h.reports())); n != h.cfg.MaxInFlight+1 {
 		t.Fatalf("after one ACK sent %d batches, want %d", n, h.cfg.MaxInFlight+1)
 	}
 }
@@ -387,11 +473,11 @@ func TestUnknownSendOutcomeIsRecoveredNotDuplicated(t *testing.T) {
 	}
 	h.ft.Advance(30 * time.Second)
 	h.tick()
-	// The simulated lost-response send plus one resend, both on that row:
-	// no second message was created.
+	// The lost-response send was recovered, not sent again at once; the
+	// 30 s retry is a new copy of the same batch.
 	got := h.reports()
-	if len(got) != 2 || got[0].ID != sent.ID || got[1].ID != sent.ID || !got[1].Resend {
-		t.Fatalf("reports = %+v, want only row %d (original + resend)", got, sent.ID)
+	if len(got) != 2 || got[0].ID != sent.ID || got[1].ID == sent.ID || got[1].Text != got[0].Text || got[1].Resend {
+		t.Fatalf("reports = %+v, want row %d then one new copy of it", got, sent.ID)
 	}
 }
 
@@ -493,7 +579,7 @@ func TestFastRetransmitOnConfirmingAck(t *testing.T) {
 	h.log(1)
 	h.ft.Advance(20 * time.Second)
 	h.tick() // batch 1 sent at t0+20; its normal retry is due at t0+50
-	first := h.reports()[0].ID
+	first := h.reports()[0]
 	h.ft.Advance(time.Second)
 	h.log(2)
 	h.ft.Advance(20 * time.Second)
@@ -506,8 +592,8 @@ func TestFastRetransmitOnConfirmingAck(t *testing.T) {
 	h.ack(h.reports()[1].ID)
 	h.tick()
 	got := h.reports()[before:]
-	if len(got) != 1 || got[0].ID != first || !got[0].Resend {
-		t.Fatalf("after confirming ACK sent %+v, want batch 1 resent at once", got)
+	if len(got) != 1 || got[0].Text != first.Text || got[0].ID == first.ID {
+		t.Fatalf("after confirming ACK sent %+v, want batch 1 sent again at once", got)
 	}
 
 	// A duplicate ACK doesn't expedite again.

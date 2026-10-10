@@ -68,10 +68,33 @@ func TestReplyResendConflictAndGone(t *testing.T) {
 	if len(rs) != 1 || rs[0].ReplyDueAt != nil {
 		t.Fatalf("response = %+v", rs)
 	}
-	// First send; a 409 (still going out) counts as a try; a 404 is
-	// sent as new; then the three tries are used up.
-	if n := len(hq.gw.TransmissionsWithPrefix("RC1 Q")); n != 2 {
-		t.Fatalf("reply transmissions = %d", n)
+	// First send; a 409 (graywolf won't resend while its retries are off)
+	// and a 404 (row gone) are both sent as new; then the three tries are
+	// used up. Every try puts the reply on air.
+	if n := len(hq.gw.TransmissionsWithPrefix("RC1 Q")); n != 3 {
+		t.Fatalf("reply transmissions = %d, want 3", n)
+	}
+}
+
+// A reply ACKed in graywolf is stopped (the inbox feed reports the ACK)
+// rather than sent again as a new copy once graywolf refuses its resend.
+func TestReplyStopsWhenRefusedRowIsAcked(t *testing.T) {
+	w, cp, hq := pair(t, 12, gwfake.Profile{})
+	req, _ := Request(ctx, cp.st, Req{Count: 1}, w.clock.Now())
+	w.step()
+	w.step() // HQ heard probe 1/1 and replied
+	w.radio.SetDown(true)
+	replies := hq.gw.TransmissionsWithPrefix("RC1 Q")
+	if len(replies) != 1 {
+		t.Fatalf("replies = %d, want 1", len(replies))
+	}
+	hq.gw.Ack(replies[0].ID) // ACKed in graywolf; the app hasn't seen it
+	w.runUntilDone(cp, req.ID, 5*time.Minute)
+	for range 120 {
+		w.step()
+	}
+	if n := len(hq.gw.TransmissionsWithPrefix("RC1 Q")); n != 1 {
+		t.Fatalf("reply transmissions = %d, want 1: the acked reply was sent again", n)
 	}
 }
 

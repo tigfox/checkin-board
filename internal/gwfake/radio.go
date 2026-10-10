@@ -160,7 +160,7 @@ func (s *Station) hear(f Frame) {
 	if f.IsAck {
 		for _, m := range s.rows {
 			if m.Direction == "out" && m.MsgID == f.MsgID && strings.EqualFold(m.PeerCall, f.From) && m.Status != graywolf.StatusAcked {
-				m.Status = graywolf.StatusAcked
+				m.Status, m.NextRetryAt = graywolf.StatusAcked, nil
 				now := s.Now().UTC()
 				m.AckedAt = &now
 				s.touch(m.ID, graywolf.EventAcked)
