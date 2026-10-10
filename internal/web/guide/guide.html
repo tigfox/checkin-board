@@ -40,6 +40,9 @@
         HQ can ask this station to resend. It must not be this station's own callsign.</dd>
       <dt>Local codes (HQ)</dt><dd>Codes HQ logs on its own keypad, e.g. START,FIN. Not sent on air.</dd>
     </dl>
+    <p>All of these can be loaded from a race config file (Race → Race config): HQ exports its setup,
+      each node loads it and picks its station, previews the changes, and loads it before the race. A
+      loaded file only sets values; everything stays editable here.</p>
     <h3>Messaging settings</h3>
     <p>Radio tunables. The defaults suit most races; change them only after a link check shows a reason to.</p>
     <dl>
@@ -138,6 +141,8 @@ rm -f &quot;$J&quot;</pre>
         transmits. One clean burst of packet tones is good. An open carrier with no tones means no
         audio reaches the radio (graywolf build or audio setup); choppy or cut-off tones mean audio
         problems on that node; silence means the radio isn't keying (PTT).</li>
+      <li><strong>Event page:</strong> course notes, frequencies and contacts for volunteers (keypad →
+        Event info), written on Station → Event page or loaded from the race config.</li>
       <li><strong>Check acknowledgements:</strong> a message is only delivered once the other station
         acknowledges it. In graywolf's Messages page an acknowledged message shows as acked.</li>
     </ul>

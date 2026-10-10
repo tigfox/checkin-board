@@ -322,9 +322,25 @@ var lifecycleColumns = []string{"race_state", "race_started_at"}
 func (s *Store) UpdateSettings(ctx context.Context, c Settings) (Settings, error) {
 	var out Settings
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		out, err = s.updateSettingsTx(tx, c, false)
+		return err
+	})
+	return out, err
+}
+
+// updateSettingsTx is UpdateSettings inside tx; with beforeRace it
+// refuses (ErrNotSetup) once the race has started, in the same
+// transaction as the write.
+func (s *Store) updateSettingsTx(tx *gorm.DB, c Settings, beforeRace bool) (Settings, error) {
+	var out Settings
+	err := func() error {
 		cur := DefaultSettings()
 		if err := tx.First(&cur, 1).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
+		}
+		if beforeRace && cur.RaceState != RaceSetup {
+			return ErrNotSetup
 		}
 		row := c
 		row.ID, row.RaceState, row.RaceStartedAt = 1, cur.RaceState, normTimePtr(cur.RaceStartedAt)
@@ -340,6 +356,6 @@ func (s *Store) UpdateSettings(ctx context.Context, c Settings) (Settings, error
 		}
 		out.UpdatedAt, out.RaceStartedAt = normTime(out.UpdatedAt), normTimePtr(out.RaceStartedAt)
 		return nil
-	})
+	}()
 	return out, err
 }

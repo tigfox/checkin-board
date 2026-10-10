@@ -220,3 +220,24 @@ test("radioSummary says what's wrong in one line", () => {
   assert.equal(L.radioIcon("warn"), "⚠");
   assert.equal(L.radioIcon("unknown"), "?");
 });
+
+test("markdownBlocks parses the event page's Markdown subset", () => {
+  const text = "# Ridge 50K\n\n## Frequencies\n- Packet: **145.050** MHz\n* Voice: 146.520\n\nCall HQ\nany time.\n\n" +
+    "| Station | Call |\n|---|---|\n| Ridge | KD2DCM-4 |\n\n<script>alert(1)</script>";
+  assert.deepEqual(L.markdownBlocks(text), [
+    { type: "heading", level: 1, spans: [{ text: "Ridge 50K", bold: false }] },
+    { type: "heading", level: 2, spans: [{ text: "Frequencies", bold: false }] },
+    { type: "list", items: [
+      [{ text: "Packet: ", bold: false }, { text: "145.050", bold: true }, { text: " MHz", bold: false }],
+      [{ text: "Voice: 146.520", bold: false }],
+    ] },
+    { type: "para", spans: [{ text: "Call HQ any time.", bold: false }] },
+    { type: "table", head: [[{ text: "Station", bold: false }], [{ text: "Call", bold: false }]],
+      rows: [[[{ text: "Ridge", bold: false }], [{ text: "KD2DCM-4", bold: false }]]] },
+    // HTML is just text: it's rendered with text nodes, never parsed.
+    { type: "para", spans: [{ text: "<script>alert(1)</script>", bold: false }] },
+  ]);
+  assert.deepEqual(L.markdownBlocks(""), []);
+  assert.deepEqual(L.markdownBlocks("**unclosed"), [{ type: "para", spans: [{ text: "**unclosed", bold: false }] }]);
+  assert.deepEqual(L.markdownBlocks("####### deep"), [{ type: "para", spans: [{ text: "####### deep", bold: false }] }]);
+});

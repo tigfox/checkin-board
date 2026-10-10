@@ -13,6 +13,9 @@ var (
 	ErrInvalidInput = errors.New("store: invalid input")
 	// ErrInvalidSettings: Settings.Validate failed. Maps to HTTP 400.
 	ErrInvalidSettings = errors.New("store: invalid settings")
+	// ErrNotSetup: the change is allowed only before the race starts
+	// (or after a reset). Maps to HTTP 409.
+	ErrNotSetup = errors.New("store: allowed only before the race starts (or after a reset)")
 	// ErrNotFound: the addressed row doesn't exist. Maps to HTTP 404.
 	ErrNotFound = errors.New("store: not found")
 	// ErrConflict: a unique key is already taken. Maps to HTTP 409.

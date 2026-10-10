@@ -44,25 +44,27 @@ type Station struct {
 	NoAckedAt bool
 	Now       func() time.Time
 
-	mu         sync.Mutex
-	nextID     uint64
-	rows       map[uint64]*graywolf.Message
-	order      []uint64
-	tx         []Transmission
-	inFlight   map[uint64]bool
-	sendErrs   []error
-	resendErrs []error
-	prefs      map[string]graywolf.ConversationPrefs
-	prefsErr   error
-	updSeq     uint64
-	updated    map[uint64]uint64 // row id -> update sequence
-	subs       map[chan graywolf.Event]struct{}
-	maxText    int
-	radio      *Radio
-	heard      map[string]time.Time // (from, msgid, text) -> last heard, for dedup
-	packets    []graywolf.Packet    // packet log of frames heard (RX)
-	rxLevel    map[string]float64   // sender -> receive level; absent = no level (TNC)
-	apiDown    bool                 // the API is unreachable (graywolf restarting)
+	mu          sync.Mutex
+	nextID      uint64
+	rows        map[uint64]*graywolf.Message
+	order       []uint64
+	tx          []Transmission
+	inFlight    map[uint64]bool
+	sendErrs    []error
+	resendErrs  []error
+	prefs       map[string]graywolf.ConversationPrefs
+	prefsErr    error
+	updSeq      uint64
+	updated     map[uint64]uint64 // row id -> update sequence
+	subs        map[chan graywolf.Event]struct{}
+	maxText     int
+	radio       *Radio
+	heard       map[string]time.Time // (from, msgid, text) -> last heard, for dedup
+	packets     []graywolf.Packet    // packet log of frames heard (RX)
+	rxLevel     map[string]float64   // sender -> receive level; absent = no level (TNC)
+	apiDown     bool                 // the API is unreachable (graywolf restarting)
+	msgPrefs    *graywolf.MessagePreferences
+	txTimingErr error
 	// setup is the radio setup the read-only setup calls report
 	// (AudioDevices, Channels, ...): a working AIOC channel by default;
 	// tests change it with EditRadio.
@@ -331,7 +333,21 @@ func (s *Station) MessagePreferences(ctx context.Context) (graywolf.MessagePrefe
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.msgPrefs != nil {
+		return *s.msgPrefs, nil
+	}
 	return graywolf.MessagePreferences{MaxMessageTextOverride: s.maxText, RetryMaxAttempts: 4}, nil
+}
+
+// SetMessagePreferences implements graywolf.Client.SetMessagePreferences.
+func (s *Station) SetMessagePreferences(ctx context.Context, p graywolf.MessagePreferences) (graywolf.MessagePreferences, error) {
+	if err := s.unavailable(); err != nil {
+		return graywolf.MessagePreferences{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.msgPrefs, s.maxText = &p, p.MaxMessageTextOverride
+	return p, nil
 }
 
 func matches(m graywolf.Message, p graywolf.ListParams) bool {

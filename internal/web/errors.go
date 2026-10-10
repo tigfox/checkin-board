@@ -12,6 +12,7 @@ import (
 	"checkin-board/internal/hq"
 	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/ops"
+	"checkin-board/internal/raceconfig"
 	"checkin-board/internal/store"
 )
 
@@ -59,6 +60,16 @@ func classify(err error) (int, string, string) {
 		return http.StatusBadRequest, "bad_password", err.Error()
 	case errors.Is(err, store.ErrNotFound):
 		return http.StatusNotFound, "not_found", "not found"
+	case errors.Is(err, raceconfig.ErrStale):
+		return http.StatusConflict, "stale", err.Error()
+	case errors.Is(err, raceconfig.ErrExists):
+		return http.StatusConflict, "exists", err.Error()
+	case errors.Is(err, raceconfig.ErrInvalid):
+		return http.StatusBadRequest, "invalid", err.Error()
+	case errors.Is(err, raceconfig.ErrNotSetup):
+		return http.StatusConflict, "wrong_state", err.Error()
+	case errors.Is(err, raceconfig.ErrNoBackup):
+		return http.StatusConflict, "no_backup", err.Error()
 	case errors.Is(err, store.ErrAlreadyVoided):
 		return http.StatusConflict, "already_voided", "already voided"
 	case errors.Is(err, store.ErrConflict):

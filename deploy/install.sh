@@ -8,6 +8,7 @@
 #   sudo ./install.sh --no-graywolf                 # never install graywolf
 #   sudo ./install.sh --graywolf-deb FILE.deb       # install this graywolf package
 #                                                   # (e.g. the Pi Zero build; replaces one)
+#   sudo ./install.sh --race-config FILE.json       # add a race config file to the node
 #
 # If graywolf isn't installed, its latest release is installed first
 # (spec 2.3), and your graywolf admin login is set up: interactively, or
@@ -34,6 +35,7 @@ GW_VERSION=latest
 GW_VERSION_SET=no
 GW_INSTALL=yes
 GW_DEB=
+RACE_CONFIG=
 BIN_ARG=
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -55,12 +57,21 @@ while [ $# -gt 0 ]; do
 		GW_DEB=${1#*=}
 		shift
 		;;
+	--race-config)
+		[ $# -ge 2 ] || { printf 'install: --race-config needs a .json file\n' >&2; exit 2; }
+		RACE_CONFIG=$2
+		shift 2
+		;;
+	--race-config=*)
+		RACE_CONFIG=${1#*=}
+		shift
+		;;
 	--no-graywolf)
 		GW_INSTALL=no
 		shift
 		;;
 	-h | --help)
-		sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+		sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
 		exit 0
 		;;
 	--)
@@ -102,6 +113,22 @@ if [ -n "$GW_DEB" ]; then
 		fi
 	fi
 	GW_DEB=$(cd "$(dirname "$GW_DEB")" && pwd)/$(basename "$GW_DEB") # apt needs a path
+fi
+# --race-config is checked before anything else happens too. The app
+# checks the file's contents (Admin → Race lists any problem).
+if [ -n "$RACE_CONFIG" ]; then
+	case "$RACE_CONFIG" in
+	*.json) ;;
+	*)
+		printf 'install: --race-config %s isn'"'"'t a .json file\n' "$RACE_CONFIG" >&2
+		exit 2
+		;;
+	esac
+	[ -f "$RACE_CONFIG" ] || { printf 'install: --race-config %s: not found\n' "$RACE_CONFIG" >&2; exit 2; }
+	if ! basename "$RACE_CONFIG" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}[.]json$'; then
+		printf 'install: --race-config %s: name it with letters, digits, ".", "-" or "_" (no spaces), ending in .json\n' "$RACE_CONFIG" >&2
+		exit 2
+	fi
 fi
 BIN_SRC=${BIN_ARG:-$(default_binary)}
 [ -f "$BIN_SRC" ] || [ -n "$BIN_ARG" ] || BIN_SRC=$HERE/checkin-board
@@ -500,6 +527,22 @@ run_as() {
 		return 127
 	fi
 }
+
+if [ -n "$RACE_CONFIG" ]; then
+	# systemd creates the state dir on first start; make it now (root,
+	# under root-owned /var/lib). Inside it, the service user owns
+	# everything, so the copy runs as that user: a symlink it might plant
+	# gains it nothing. Root's shell opens the source (it may be root-only).
+	[ -L "$STATE" ] && die "$STATE is a symlink; refusing to write through it"
+	install -d -m 0750 -o "$USER_NAME" -g "$USER_NAME" "$STATE"
+	rc_name=$(basename "$RACE_CONFIG")
+	if run_as "$USER_NAME" sh -c 'umask 027 && mkdir -p "$1" && cat > "$1/.$2.tmp" && mv -f "$1/.$2.tmp" "$1/$2"' \
+		_ "$STATE/race-configs" "$rc_name" <"$RACE_CONFIG"; then
+		say "Race config $rc_name added: load it on Admin → Race."
+	else
+		say "Race config $rc_name couldn't be added; upload it on Admin → Race instead."
+	fi
+fi
 
 if [ "$GW_FRESH" = yes ]; then
 	graywolf_admin

@@ -140,6 +140,37 @@ file). If the node also has an uplink you don't want it on, set
      shows the same summary before **Start race**, and Start lists any
      failures in its confirmation.
 
+### Race config file (optional, all nodes)
+
+Instead of typing each node's settings, load them from one file per race
+on **Admin → Race → Race config**:
+
+1. **HQ** sets itself up (Station page, HQ tab), then uses **Export this
+   race's setup** on the Race page. The file has the race name, HQ's
+   callsign, station name and local codes, the checkpoint list (codes,
+   names, callsigns), the messaging settings and the event page. Add each
+   checkpoint's `"station_name"`, and an optional `"graywolf"` section
+   (TX delay/tail, message retention, digipeater on/off), by hand.
+2. Get the file onto each node: **Upload** it on the Race page, copy it
+   into `/var/lib/checkin-board/race-configs/`, or install with
+   `sudo ./install.sh --race-config FILE.json`.
+3. On each node: **Load…**, pick the station (pre-selected when graywolf's
+   callsign matches one in the file), **Preview changes**, then **Load
+   this race config**. graywolf changes (its callsign included) are listed
+   separately and only applied if you tick the box; graywolf's earlier
+   values are saved for **Restore graywolf settings**. Loading does
+   exactly what the preview showed: if anything changed since (the file,
+   this node or graywolf), it says so and you preview again.
+
+A race config loads only before the race starts. It only sets values:
+every setting stays editable on the Station page afterwards, and you
+have the final say. Files never hold passwords. The audio sample rate
+isn't in the file (Pi Zero nodes: station guide).
+
+The **event page** (course notes, frequencies, contacts) can also be
+written on **Admin → Station → Event page**. Volunteers read it from the
+keypad's **Event info** link.
+
 ### HQ extra setup
 
 Use **Admin → HQ** for these.
@@ -268,7 +299,11 @@ service can't open. This logs every admin out and doesn't touch race data.
      journal.
    - Settings are always kept. At HQ, branding, the checkpoint list and
      the roster are kept unless you tick "Also clear the checkpoint list
-     and roster" or "Also reset the board branding".
+     and roster" (which also clears the event page) or "Also reset the
+     board branding".
+4. **Restore graywolf settings** (Admin → Race → Race config), if a race
+   config changed graywolf: puts its callsign, TX timing, message
+   retention and digipeater back as they were before the first config.
    - A checkpoint with entries HQ hasn't confirmed refuses to reset
      unless you tick "Reset even if HQ hasn't confirmed everything". The
      entries are then only in the backup.

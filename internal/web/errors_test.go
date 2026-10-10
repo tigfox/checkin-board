@@ -107,6 +107,21 @@ func (downGraywolf) Channels(context.Context) ([]graywolf.Channel, error) {
 func (downGraywolf) ChannelStats(context.Context, uint32) (graywolf.ChannelStats, error) {
 	return graywolf.ChannelStats{}, errors.New("down")
 }
+func (downGraywolf) TxTimings(context.Context) ([]graywolf.TxTiming, error) {
+	return nil, errors.New("down")
+}
+func (downGraywolf) SetTxTiming(context.Context, graywolf.TxTiming) (graywolf.TxTiming, error) {
+	return graywolf.TxTiming{}, errors.New("down")
+}
+func (downGraywolf) Digipeater(context.Context) (graywolf.Digipeater, error) {
+	return graywolf.Digipeater{}, errors.New("down")
+}
+func (downGraywolf) SetDigipeater(context.Context, graywolf.Digipeater) (graywolf.Digipeater, error) {
+	return graywolf.Digipeater{}, errors.New("down")
+}
+func (downGraywolf) SetMessagePreferences(context.Context, graywolf.MessagePreferences) (graywolf.MessagePreferences, error) {
+	return graywolf.MessagePreferences{}, errors.New("down")
+}
 func (downGraywolf) StationConfig(context.Context) (graywolf.StationConfig, error) {
 	return graywolf.StationConfig{}, errors.New("down")
 }

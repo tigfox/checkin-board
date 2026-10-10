@@ -56,3 +56,29 @@ func TestGraywolfDebIsValidatedFirst(t *testing.T) {
 		}
 	}
 }
+
+func TestRaceConfigOptionValidatedFirst(t *testing.T) {
+	dir := t.TempDir()
+	txt := filepath.Join(dir, "race.txt")
+	spaced := filepath.Join(dir, "my race.json")
+	for _, f := range []string{txt, spaced} {
+		if err := os.WriteFile(f, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--race-config"}, "needs a .json file"},
+		{[]string{"--race-config", filepath.Join(dir, "missing.json")}, "not found"},
+		{[]string{"--race-config=" + txt}, "isn't a .json"},
+		{[]string{"--race-config", spaced}, "letters, digits"},
+	}
+	for _, c := range cases {
+		code, out := runInstall(t, c.args...)
+		if code != 2 || !strings.Contains(out, c.want) {
+			t.Errorf("install.sh %v = %d %q, want exit 2 with %q", c.args, code, out, c.want)
+		}
+	}
+}

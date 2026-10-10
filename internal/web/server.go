@@ -14,6 +14,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,6 +28,7 @@ import (
 	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/ops"
 	"checkin-board/internal/raceclock"
+	"checkin-board/internal/raceconfig"
 	"checkin-board/internal/radiocheck"
 	"checkin-board/internal/store"
 )
@@ -44,6 +47,7 @@ const (
 // including the read-only radio setup the radio check needs.
 type Graywolf interface {
 	radiocheck.Graywolf
+	raceconfig.GraywolfAPI
 	StationConfig(ctx context.Context) (graywolf.StationConfig, error)
 	SetStationCallsign(ctx context.Context, callsign string) (graywolf.StationConfig, error)
 	MessagePreferences(ctx context.Context) (graywolf.MessagePreferences, error)
@@ -85,6 +89,9 @@ type Deps struct {
 	// Host is the node's own health (CPU, radio modem keeping up), for
 	// the radio check; nil leaves it unknown.
 	Host HostMonitor
+	// RaceConfigDir is the race config files' folder (phase 12a), e.g.
+	// /var/lib/checkin-board/race-configs; "" means a temporary one.
+	RaceConfigDir string
 }
 
 // HostMonitor is the node health sampler (hostmon.Monitor).
@@ -94,11 +101,13 @@ type HostMonitor interface {
 
 type server struct {
 	Deps
-	radio    *radiocheck.Checker
-	log      *slog.Logger
-	now      func() time.Time
-	dedup    *requestDedup
-	panelReq panelRequests
+	radio       *radiocheck.Checker
+	raceConfigs *raceconfig.Service
+	raceFolder  *raceconfig.Folder
+	log         *slog.Logger
+	now         func() time.Time
+	dedup       *requestDedup
+	panelReq    panelRequests
 }
 
 // NewHandler builds the HTTP handler.
@@ -116,6 +125,12 @@ func NewHandler(d Deps) (http.Handler, error) {
 	}
 	s.dedup = newRequestDedup(s.now)
 	s.radio = radiocheck.NewChecker(s.now)
+	s.raceConfigs = raceconfig.NewService(d.Store, d.Graywolf)
+	dir := d.RaceConfigDir
+	if dir == "" {
+		dir = filepath.Join(os.TempDir(), "checkin-board-race-configs")
+	}
+	s.raceFolder = raceconfig.NewFolder(dir)
 	s.panelReq.boot = time.Now().UnixNano()
 	static := d.Static
 	if static == nil {
@@ -139,6 +154,8 @@ type route struct {
 	access          access
 	h               http.HandlerFunc
 	upload          bool // accepts multipart/form-data
+	// maxBody overrides the JSON body limit (0: maxJSONBody).
+	maxBody int64
 	// page is an HTML page, not an API: a browser without a session is
 	// sent to the login page instead of getting a JSON 401.
 	page bool
@@ -159,8 +176,11 @@ type ctxKey struct{}
 func (s *server) guard(rt route) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		limit := int64(maxJSONBody)
-		if rt.upload {
+		switch {
+		case rt.upload:
 			limit = maxUploadBody
+		case rt.maxBody > 0:
+			limit = rt.maxBody
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

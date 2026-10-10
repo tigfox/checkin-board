@@ -38,7 +38,7 @@ Nothing in it is secret, so it can be emailed or put on a USB stick.
 | 4.2 | Images | **Not in this phase** | Size and SD wear; a course map can come later as a separate upload |
 | 4.3 | Where it shows | A link on the **Station page** next to the guide, and on the **keypad** for volunteers | Volunteers need frequencies and contacts too |
 | 4.4 | Size limit | **64 KB** of event-page text; **256 KB** for the whole file | Plenty for notes; a bad file can't fill the card |
-| 5.1 | Which graywolf settings | **TX timing** (TX delay, tail), **message preferences** (retention, max text length), **digipeater on/off**, **beacons off** (by name) | The settings that differ per event; all have API endpoints |
+| 5.1 | Which graywolf settings | **TX timing** (TX delay, tail), **message preferences** (retention), **digipeater on/off**, and the station callsign. **Beacons: deferred** (as built): a beacon is a ~40-field record that graywolf's API only replaces whole, so turning them off from a shared file is too easy to get wrong | The settings that differ per event; all have API endpoints |
 | 5.2 | API only | **Yes**: anything graywolf's API can't set stays out | Project rule |
 | 5.3 | Node hardware (audio device, PTT, sample rate) | **Out of the file** (decided 2026-10-10: the guide covers the Pi Zero's 24 kHz) | It differs per node and per board |
 | 5.4 | Undo | **Save graywolf's current values before applying** and offer **Restore graywolf settings** after the race, like peer retries today | Graywolf is shared with non-race use |
@@ -82,3 +82,26 @@ callsign KD2DCM-3.
    Admin → HQ export; the event page view (Station page and keypad).
 5. `install.sh --race-config FILE`.
 6. Docs: operator guide, station guide, spec.
+
+## As built (2026-10-10)
+
+- **Apply = exactly the preview.** The preview returns a token (a hash of
+  the file, the station and every change shown); Apply refuses with
+  "preview again" if the file, this node or graywolf changed since.
+- **One transaction** writes the node's settings, HQ's checkpoint list
+  and the event page, and checks the race hasn't started in the same
+  transaction.
+- **graywolf backup is per value.** The original of each graywolf value a
+  config changes is saved the first time it changes, across any number
+  of loads; **Restore** writes back only those values (reading each record
+  first), so other edits made in graywolf since are kept. A callsign that
+  was empty before can't be emptied through graywolf's API and is left
+  (Restore says so).
+- **Beacons are not in the file** (deferred, see 5.1).
+- **Export leaves out `gw_channel`**: graywolf channel ids are node
+  hardware. A hand-written file may still set it.
+- HQ without `local_codes` in the file keeps the node's own; with none on
+  either side the preview says to add them on the Station page.
+- Uploads never silently replace a file of the same name; the Race page
+  asks first. The folder holds regular files only (no symlinks or FIFOs).
+- `install.sh --race-config` copies the file as the service user.

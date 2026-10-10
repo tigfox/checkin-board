@@ -28,6 +28,7 @@ internal/web/static/   the UI: plain HTML + ES modules, no build step, no inline
 internal/web/jstest/   `node --test` unit tests for the UI logic
 internal/peers/        graywolf per-peer retry settings (backup / restore)
 internal/linkcheck/    deployment link check: RC1 P probes, RC1 Q replies, verdicts
+internal/raceconfig/   race config files: parse/validate, preview, apply (incl. graywolf, with backup/restore), export, folder
 internal/radiocheck/   radio status check: graywolf build, channel, audio, PTT, rate, level, decodes, modem keep-up
 internal/hostmon/      node health from /proc: CPU 5-min average, graywolf modem keeping up, machine
 internal/panel/        node panel: e-ink status screen and two-button menu (renderer, state machine, hook client)
@@ -112,7 +113,8 @@ a graywolf Action: [docs/linkcheck-action.md](docs/linkcheck-action.md).
 | `/` | any | sends you to the right page for your login |
 | `/login.html` | none | first-run setup (setup code + admin password) and login |
 | `/keypad.html` | volunteer or admin | log bibs, void entries, set the race clock from the phone |
-| `/admin.html` | admin | race lifecycle and reset, station settings and graywolf callsign, radio check, outbox and export (checkpoint), checkpoints, roster, health and recovery imports (HQ), board branding (HQ), passwords |
+| `/admin.html` | admin | race lifecycle and reset, race config files, station settings and graywolf callsign, radio check, event page, outbox and export (checkpoint), checkpoints, roster, health and recovery imports (HQ), board branding (HQ), passwords |
+| `/event.html` | volunteer or admin | the event page: course notes, frequencies, contacts (set on Admin → Station or from a race config) |
 | `/guide` | admin | station guide: settings, radio and graywolf setup, Pi Zero notes, link testing, 2 m band plan (served by the node; no internet needed) |
 | `/board.html` | admin | HQ status board in the configured branding, printable |
 

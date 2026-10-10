@@ -9,7 +9,7 @@ import (
 
 // concretePath fills a route pattern's wildcards with plausible values.
 func concretePath(pattern string) string {
-	r := strings.NewReplacer("{id}", "1", "{cp}", "AS5", "{bib}", "101")
+	r := strings.NewReplacer("{id}", "1", "{cp}", "AS5", "{bib}", "101", "{name}", "x.json")
 	return r.Replace(pattern)
 }
 

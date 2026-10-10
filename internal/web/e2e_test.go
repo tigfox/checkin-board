@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -404,5 +405,41 @@ func TestE2ERadioCheck(t *testing.T) {
 	e.gw.EditRadio(func(r *gwfake.RadioSetup) { r.Channels[0].PTT.Configured = false })
 	b.run(chromedp.Click(`//nav[@id="tabs"]/button[text()="Race"]`, chromedp.BySearch))
 	b.waitText("#radio-summary", "Push-to-talk failed")
+	b.noErrors()
+}
+
+// A fresh node loads its station from a race config file, including
+// graywolf's callsign, and the event page reaches the volunteers.
+func TestE2ERaceConfig(t *testing.T) {
+	dir := t.TempDir()
+	e := newEnvWith(t, store.DefaultSettings(), func(d *Deps) { d.RaceConfigDir = dir })
+	if err := os.WriteFile(filepath.Join(dir, "ridge.json"), []byte(raceFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := newBrowser(t, e.srv.URL)
+	b.login(e.admin)
+	b.run(chromedp.Navigate(e.srv.URL + "/admin.html"))
+	b.waitText("#race-config", "ridge.json")
+	b.run(chromedp.Click(`//div[@id="race-config"]//button[text()="Load…"]`, chromedp.BySearch))
+	// This node's graywolf call (N0CALL-1) is AS1's in the file: pre-selected.
+	b.waitText("#rc-load", "matched by its callsign")
+	b.run(chromedp.Click("#rc-preview", chromedp.ByQuery))
+	b.waitText("#rc-plan", "Ridge Aid #1")
+	b.waitText("#rc-plan", "Digipeater")
+	b.run(chromedp.Click("#rc-graywolf", chromedp.ByQuery), chromedp.Click("#rc-apply", chromedp.ByQuery))
+	b.waitText("#banner", "Race config loaded")
+	cfg, err := e.st.GetSettings(ctx)
+	if err != nil || cfg.CheckpointCode != "AS1" || cfg.StationTactical != "Ridge Aid #1" {
+		t.Fatalf("settings = %+v, %v", cfg, err)
+	}
+	if d, _ := e.gw.Digipeater(ctx); !d.Enabled {
+		t.Fatal("graywolf change not applied")
+	}
+	b.waitText("#race-config", "Restore graywolf settings")
+	// Still editable: the event page is on the Station page, and volunteers read it.
+	b.run(chromedp.Click(`//nav[@id="tabs"]/button[text()="Station"]`, chromedp.BySearch))
+	b.waitText("#event-preview", "145.050")
+	b.run(chromedp.Navigate(e.srv.URL + "/event.html"))
+	b.waitText("#event", "Frequencies")
 	b.noErrors()
 }

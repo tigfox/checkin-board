@@ -256,3 +256,55 @@ export function radioSummary(report) {
   if (warned) parts.push(`${warned} needs a look`);
   return { kind: failed ? "bad" : "warn", text: `Radio: ${parts.join("; ")}. See Station → Radio.` };
 }
+
+// markdownBlocks parses the event page's Markdown subset (phase 12a):
+// "#"-"###" headings, paragraphs, "-"/"*" lists, "|" tables (first row is
+// the header; "|---|" rows are skipped) and **bold**. Everything else is
+// plain text; the page is built from text nodes, so HTML stays text.
+export function markdownBlocks(text) {
+  const spans = (s) => {
+    const out = [];
+    let rest = s;
+    for (;;) {
+      const open = rest.indexOf("**");
+      const close = open < 0 ? -1 : rest.indexOf("**", open + 2);
+      if (open < 0 || close < 0) break;
+      if (open > 0) out.push({ text: rest.slice(0, open), bold: false });
+      out.push({ text: rest.slice(open + 2, close), bold: true });
+      rest = rest.slice(close + 2);
+    }
+    if (rest) out.push({ text: rest, bold: false });
+    return out;
+  };
+  const cells = (line) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => spans(c.trim()));
+  const blocks = [];
+  let para = null;
+  const flush = () => {
+    if (para) blocks.push({ type: "para", spans: spans(para.join(" ")) });
+    para = null;
+  };
+  for (const raw of String(text ?? "").split(/\r?\n/)) {
+    const line = raw.trim();
+    const last = blocks[blocks.length - 1];
+    let m;
+    if (!line) {
+      flush();
+    } else if ((m = /^(#{1,3})\s+(.*)$/.exec(line))) {
+      flush();
+      blocks.push({ type: "heading", level: m[1].length, spans: spans(m[2]) });
+    } else if ((m = /^[-*]\s+(.*)$/.exec(line))) {
+      flush();
+      if (last?.type === "list") last.items.push(spans(m[1]));
+      else blocks.push({ type: "list", items: [spans(m[1])] });
+    } else if (line.startsWith("|")) {
+      flush();
+      if (/^\|[\s:|-]*$/.test(line)) continue; // header separator
+      if (last?.type === "table") last.rows.push(cells(line));
+      else blocks.push({ type: "table", head: cells(line), rows: [] });
+    } else {
+      (para ||= []).push(line);
+    }
+  }
+  flush();
+  return blocks;
+}

@@ -52,4 +52,10 @@ check "...and graywolf restarted" grep -q 'restart graywolf' /tmp/systemctl.log
 
 out=$(./install.sh </dev/null 2>&1)
 check "a plain re-run keeps the fixed build" [ "$(gwver)" = "0.14.14+4978244d.armv6buf install ok installed" ]
+
+printf '{"format":"checkin-board-race/1","race":{"name":"Test"}}\n' > /tmp/test-race.json
+out=$(./install.sh --race-config /tmp/test-race.json </dev/null 2>&1)
+f=/var/lib/checkin-board/race-configs/test-race.json
+check "--race-config adds the file to the node" [ -f "$f" ]
+check "...owned by the service user, mode 640" [ "$(stat -c '%U %a' "$f" 2>/dev/null)" = "checkin-board 640" ]
 exit $fail

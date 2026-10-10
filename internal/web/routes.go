@@ -29,6 +29,18 @@ func (s *server) routes() []route {
 		{method: "PUT", pattern: "/api/admin/callsign", access: admin, h: s.putCallsign},
 		{method: "GET", pattern: "/api/admin/gw", access: admin, h: s.getGraywolf},
 		{method: "GET", pattern: "/api/admin/radio", access: admin, h: s.getRadio},
+		// Race config files (phase 12a).
+		{method: "GET", pattern: "/api/admin/raceconfigs", access: admin, h: s.getRaceConfigs},
+		{method: "POST", pattern: "/api/admin/raceconfigs", access: admin, h: s.postRaceConfig, upload: true},
+		{method: "GET", pattern: "/api/admin/raceconfigs/{name}", access: admin, h: s.getRaceConfig},
+		{method: "DELETE", pattern: "/api/admin/raceconfigs/{name}", access: admin, h: s.deleteRaceConfig},
+		{method: "POST", pattern: "/api/admin/raceconfigs/{name}/preview", access: admin, h: s.postRaceConfigPreview},
+		{method: "POST", pattern: "/api/admin/raceconfigs/{name}/apply", access: admin, h: s.postRaceConfigApply},
+		{method: "GET", pattern: "/api/admin/raceconfig/export", access: admin, h: s.getRaceConfigExport},
+		{method: "POST", pattern: "/api/admin/graywolf/restore", access: admin, h: s.postGraywolfRestore},
+		{method: "GET", pattern: "/api/eventpage", access: volunteer, h: s.getEventPage},
+		// 64 KB of text can need more than that as escaped JSON.
+		{method: "PUT", pattern: "/api/admin/eventpage", access: admin, h: s.putEventPage, maxBody: 512 << 10},
 		// The local configuration guide (an admin page, not an API).
 		{method: "GET", pattern: "/guide", access: admin, page: true, h: s.getGuide},
 		{method: "GET", pattern: "/api/admin/peers", access: admin, h: s.getPeers},

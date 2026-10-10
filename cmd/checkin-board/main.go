@@ -175,7 +175,7 @@ func run(logger *slog.Logger) error {
 	handler, err := web.NewHandler(web.Deps{
 		Store: st, Auth: authSvc, Ops: a.Ops, HQ: a.HQ, Checkpoint: a.Checkpoint, Inbox: a.Inbox,
 		Clock: a.Clock, Graywolf: gw, Logger: logger, HookToken: cfg.HookToken, WebPort: listenPort(cfg.Listen),
-		Host: host,
+		Host: host, RaceConfigDir: filepath.Join(filepath.Dir(cfg.DBPath), "race-configs"),
 	})
 	if err != nil {
 		return fmt.Errorf("web handler: %w", err)

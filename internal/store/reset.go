@@ -44,7 +44,7 @@ func (s *Store) Backup(ctx context.Context, path string) error {
 func (s *Store) ResetRaceData(ctx context.Context, opts ResetOptions) error {
 	tables := append([]string{}, raceTables...)
 	if opts.ClearReference {
-		tables = append(tables, "checkpoints", "runners")
+		tables = append(tables, "checkpoints", "runners", "event_page")
 	}
 	if opts.ClearBranding {
 		tables = append(tables, "branding", "branding_logo")

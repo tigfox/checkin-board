@@ -2,6 +2,7 @@
 import { get, post } from "./api.js";
 import { h } from "./dom.js";
 import * as L from "./logic.js";
+import { raceConfigCard } from "./admin-raceconfig.js";
 
 export async function renderRace(sec, ctx) {
   const s = ctx.settings;
@@ -9,7 +10,8 @@ export async function renderRace(sec, ctx) {
   sec.append(h("p", {}, "State: ", h("strong", {}, L.stateLabel(s.race_state, s.role)),
     s.race_started_at ? ` · started ${L.formatTime(s.race_started_at)}` : ""));
   if (!s.role) {
-    sec.append(h("p", { class: "banner warn" }, "Choose this node's role on the Station tab first."));
+    sec.append(h("p", { class: "banner warn" }, "Choose this node's role on the Station tab first, or load a race config below."));
+    sec.append(await raceConfigCard(ctx));
     return;
   }
   if (s.role === "checkpoint") {
@@ -59,6 +61,7 @@ export async function renderRace(sec, ctx) {
     }, label));
   }
   sec.append(row);
+  sec.append(await raceConfigCard(ctx));
   sec.append(resetCard(s, ctx));
 }
 
