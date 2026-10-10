@@ -328,7 +328,35 @@ pi_zero_notes() {
 # below) would be the first and hide that screen, so the operator's admin
 # login is made first; if that fails, the app's login isn't made either.
 GW_ADMIN_OK=no
+# gw_api_up: graywolf's web API answers (any HTTP status, a 401
+# included), which it does only after setting its database up. Exit 2
+# when neither curl nor wget is installed.
+gw_api_up() {
+	if command -v curl >/dev/null 2>&1; then
+		code=$(curl -s -m 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/api/version" 2>/dev/null || true)
+		[ -n "$code" ] && [ "$code" != 000 ]
+	elif command -v wget >/dev/null 2>&1; then
+		# wget exits 8 on an HTTP error status: the server answered.
+		wget -q -T 2 -t 1 -O /dev/null "http://127.0.0.1:8080/api/version" 2>/dev/null
+		rc=$?
+		[ $rc -eq 0 ] || [ $rc -eq 8 ]
+	else
+		return 2
+	fi
+}
+
 graywolf_admin() {
+	# Wait for graywolf to finish its first start before using its CLI on
+	# the same database: running both at once raced on the schema (seen
+	# 2026-10-10: graywolf exited with "table web_users already exists").
+	i=0
+	while [ $i -lt 60 ]; do
+		rc=0
+		gw_api_up || rc=$?
+		[ $rc -eq 0 ] || [ $rc -eq 2 ] && break
+		sleep 1
+		i=$((i + 1))
+	done
 	i=0
 	while [ ! -f "$GW_DB" ] && [ $i -lt 30 ]; do # graywolf creates it on first start
 		sleep 1

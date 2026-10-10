@@ -1247,6 +1247,7 @@ refresh is due, so changes made in the UI apply without a restart.
   |---|---|---|
   | 10.0.0.65 (Checkin-Board) | KD2DCM-3, HQ | graywolf channel 1 |
   | 10.0.1.183 (Checkin-Board2) | KD2DCM-4, checkpoint | graywolf channel 4; built from bare by `install.sh` |
+  | 10.0.1.88 (Checkin-Board-HQ) | HQ (callsign to be set) | **Pi 3 Model B**, 64-bit Raspberry Pi OS 13 (arm64), no e-ink panel, no radio yet. Set up 2026-10-10 by `install.sh`: graywolf 0.14.14 release (64-bit: no cpal fix or 24 kHz needed), checkin-board 4c37b61 |
 
   Both run checkin-board `32d6973` and graywolf
   `0.14.14+4978244d.armv6buf` at 24 kHz, with SPI on and Wi-Fi power
