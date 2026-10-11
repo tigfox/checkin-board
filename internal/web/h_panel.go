@@ -229,6 +229,9 @@ func (s *server) panelView(r *http.Request) (panel.View, error) {
 	if js := s.Ops.JournalStatus(); js.LastError != "" {
 		st.Warnings = append(st.Warnings, "Backup journal failing")
 	}
+	if len(s.missingCards(cfg)) > 0 {
+		st.Warnings = append(st.Warnings, cableWarning)
+	}
 	if checks, err := s.Store.ListLinkChecks(ctx, 5); err == nil {
 		for _, c := range checks {
 			if c.State == store.LinkCheckDone && c.FinishedAt != nil {

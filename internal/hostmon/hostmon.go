@@ -53,6 +53,20 @@ type Snapshot struct {
 	ModemWaitsPerSec float64 `json:"modem_waits_per_sec,omitempty"`
 	// Machine is the kernel's machine name, e.g. "armv6l" (Pi Zero W/Pi 1).
 	Machine string `json:"machine,omitempty"`
+	// SoundCards are the node's sound cards now (/proc/asound/cards), so
+	// a radio cable that dropped off USB shows: graywolf's API still
+	// reports the device it is set to use, and its last level, after the
+	// device is gone (field test 2026-10-11). SoundCardsKnown is false
+	// when the list can't be read.
+	SoundCards      []SoundCard `json:"sound_cards,omitempty"`
+	SoundCardsKnown bool        `json:"sound_cards_known,omitempty"`
+}
+
+// SoundCard is one ALSA card: its index and its id (the name ALSA
+// device strings use, as in "plughw:CARD=AllInOneCable,DEV=0").
+type SoundCard struct {
+	Index int    `json:"index"`
+	ID    string `json:"id"`
 }
 
 // Monitor keeps a short history of samples. Safe for concurrent use.
@@ -64,6 +78,8 @@ type Monitor struct {
 	modemPID int
 	modem    []countSample
 	machine  string
+	cards    []SoundCard
+	cardsOK  bool
 }
 
 type cpuSample struct {
@@ -103,10 +119,12 @@ func (m *Monitor) Sample(now time.Time) {
 	busy, total, cpuOK := m.readCPU()
 	pid, waits, modemOK := m.readModem()
 	machine := m.readMachine()
+	cards, cardsOK := m.readSoundCards()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.machine = machine
+	m.cards, m.cardsOK = cards, cardsOK
 	if cpuOK {
 		m.cpu = append(trimBefore(m.cpu, now.Add(-CPUWindow-time.Minute), func(s cpuSample) time.Time { return s.at }),
 			cpuSample{now, busy, total})
@@ -124,7 +142,10 @@ func (m *Monitor) Sample(now time.Time) {
 func (m *Monitor) Snapshot() Snapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := Snapshot{Machine: m.machine}
+	s := Snapshot{Machine: m.machine, SoundCardsKnown: m.cardsOK}
+	if m.cardsOK {
+		s.SoundCards = append([]SoundCard{}, m.cards...)
+	}
 	if n := len(m.cpu); n >= 2 {
 		last := m.cpu[n-1]
 		first := since(m.cpu, last.at.Add(-CPUWindow), func(c cpuSample) time.Time { return c.at })
@@ -266,4 +287,29 @@ func (m *Monitor) readMachine() string {
 		return "arm" + string(mm[1])
 	}
 	return ""
+}
+
+// cardLineRe matches a card's first line in /proc/asound/cards, e.g.
+// " 0 [AllInOneCable  ]: USB-Audio - All-In-One-Cable".
+var cardLineRe = regexp.MustCompile(`^\s*(\d+)\s+\[([^\]\s]+)\s*\]:`)
+
+// readSoundCards lists the sound cards; ok is false when the list can't
+// be read (no ALSA, or not Linux).
+func (m *Monitor) readSoundCards() (cards []SoundCard, ok bool) {
+	b, err := os.ReadFile(filepath.Join(m.proc, "asound", "cards"))
+	if err != nil {
+		return nil, false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		mm := cardLineRe.FindStringSubmatch(line)
+		if mm == nil {
+			continue
+		}
+		n, err := strconv.Atoi(mm[1])
+		if err != nil {
+			continue
+		}
+		cards = append(cards, SoundCard{Index: n, ID: mm[2]})
+	}
+	return cards, true
 }

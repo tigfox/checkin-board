@@ -89,6 +89,9 @@ type Deps struct {
 	// Host is the node's own health (CPU, radio modem keeping up), for
 	// the radio check; nil leaves it unknown.
 	Host HostMonitor
+	// GraywolfRemote: graywolf runs on another machine, so this node's
+	// sound cards say nothing about its radio cable.
+	GraywolfRemote bool
 	// RaceConfigDir is the race config files' folder (phase 12a), e.g.
 	// /var/lib/checkin-board/race-configs; "" means a temporary one.
 	RaceConfigDir string
@@ -108,6 +111,7 @@ type server struct {
 	now         func() time.Time
 	dedup       *requestDedup
 	panelReq    panelRequests
+	cable       cableWatch
 }
 
 // NewHandler builds the HTTP handler.

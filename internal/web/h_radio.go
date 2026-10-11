@@ -24,10 +24,7 @@ func (s *server) getRadio(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, err)
 		return
 	}
-	var host hostmon.Snapshot
-	if s.Host != nil {
-		host = s.Host.Snapshot()
-	}
+	host := s.hostSnapshot()
 	ctx, cancel := context.WithTimeout(r.Context(), radioCheckTimeout)
 	defer cancel()
 	writeJSON(w, http.StatusOK, radioView{Report: s.radio.Check(ctx, s.Graywolf, cfg, host), Host: host})

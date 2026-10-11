@@ -102,7 +102,7 @@ func (c *Checker) Check(ctx context.Context, gw Graywolf, cfg store.Settings, ho
 	if ch == nil {
 		for _, k := range []struct{ key, label string }{
 			{"audio", "Audio devices"}, {"ptt", "Push-to-talk"}, {"rate", "Audio sample rate"},
-			{"level", "Receive audio level"}, {"heard", "Packets decoded"},
+			{"level", "Receive audio level"}, {"heard", "Packets decoded"}, {"keepup", "Modem keeping up"},
 		} {
 			items = append(items, Item{k.key, k.label, Unknown, "needs a working radio channel first"})
 		}
@@ -110,13 +110,17 @@ func (c *Checker) Check(ctx context.Context, gw Graywolf, cfg store.Settings, ho
 		// A KISS TNC does its own audio: nothing of graywolf's to check.
 		const na = "not used: the channel is a KISS TNC, which handles its own audio"
 		items = append(items, Item{"audio", "Audio devices", OK, na}, checkPTT(*ch),
-			Item{"rate", "Audio sample rate", OK, na}, Item{"level", "Receive audio level", OK, na}, c.checkHeard(ctx, gw, *ch))
+			Item{"rate", "Audio sample rate", OK, na}, Item{"level", "Receive audio level", OK, na}, c.checkHeard(ctx, gw, *ch),
+			checkKeepUp(host))
 	} else {
 		devs, err := gw.AudioDevices(ctx)
-		items = append(items, checkAudio(*ch, devs, err), checkPTT(*ch), checkRate(*ch, devs, err, piZero),
-			checkLevel(ctx, gw, *ch), c.checkHeard(ctx, gw, *ch))
+		var missing []string
+		if err == nil {
+			missing = missingCards(*ch, devs, host)
+		}
+		items = append(items, checkAudio(*ch, devs, err, missing), checkPTT(*ch), checkRate(*ch, devs, err, piZero),
+			checkLevel(ctx, gw, *ch, len(missing) > 0), c.checkHeard(ctx, gw, *ch), checkKeepUp(host))
 	}
-	items = append(items, checkKeepUp(host))
 	return Report{Status: worst(items), Items: items}
 }
 
@@ -138,12 +142,15 @@ func checkBuild(ctx context.Context, gw Graywolf, piZero bool) Item {
 // pickChannel finds the channel the app sends on: Messaging settings'
 // graywolf channel, or (0) the first enabled channel that can transmit.
 func pickChannel(ctx context.Context, gw Graywolf, cfg store.Settings) (*graywolf.Channel, Item) {
-	it := Item{Key: "channel", Label: "Radio channel"}
 	chans, err := gw.Channels(ctx)
 	if err != nil {
-		it.Status, it.Detail = Fail, "can't read graywolf's channels: "+err.Error()
-		return nil, it
+		return nil, Item{Key: "channel", Label: "Radio channel", Status: Fail, Detail: "can't read graywolf's channels: " + err.Error()}
 	}
+	return pickChannelFrom(chans, cfg)
+}
+
+func pickChannelFrom(chans []graywolf.Channel, cfg store.Settings) (*graywolf.Channel, Item) {
+	it := Item{Key: "channel", Label: "Radio channel"}
 	var ch *graywolf.Channel
 	for i := range chans {
 		c := &chans[i]
@@ -182,7 +189,7 @@ func findDevice(devs []graywolf.AudioDevice, id uint32) *graywolf.AudioDevice {
 	return nil
 }
 
-func checkAudio(ch graywolf.Channel, devs []graywolf.AudioDevice, err error) Item {
+func checkAudio(ch graywolf.Channel, devs []graywolf.AudioDevice, err error, missingCards []string) Item {
 	it := Item{Key: "audio", Label: "Audio devices"}
 	if err != nil {
 		it.Status, it.Detail = Unknown, "can't read graywolf's audio devices: "+err.Error()
@@ -198,6 +205,11 @@ func checkAudio(ch graywolf.Channel, devs []graywolf.AudioDevice, err error) Ite
 	}
 	if len(missing) > 0 {
 		it.Status, it.Detail = Fail, "the channel's "+strings.Join(missing, " and ")+" audio device isn't set up in graywolf (Audio Devices)"
+		return it
+	}
+	if len(missingCards) > 0 {
+		it.Status = Fail
+		it.Detail = fmt.Sprintf("the radio cable's sound card (%s) isn't on this node: it's unplugged or dropped off USB. Plug it back in; if it doesn't come back, reboot the node (a Pi Zero's USB can stay stuck).", strings.Join(missingCards, ", "))
 		return it
 	}
 	it.Status, it.Detail = OK, fmt.Sprintf("input %s, output %s", in.DevicePath, out.DevicePath)
@@ -243,8 +255,13 @@ func checkRate(ch graywolf.Channel, devs []graywolf.AudioDevice, err error, piZe
 	return it
 }
 
-func checkLevel(ctx context.Context, gw Graywolf, ch graywolf.Channel) Item {
+func checkLevel(ctx context.Context, gw Graywolf, ch graywolf.Channel, cableMissing bool) Item {
 	it := Item{Key: "level", Label: "Receive audio level"}
+	if cableMissing {
+		// graywolf keeps reporting the last level of a device that's gone.
+		it.Status, it.Detail = Unknown, "the sound card is missing (see Audio devices), so graywolf's level reading is stale"
+		return it
+	}
 	levels, err := gw.AudioLevels(ctx)
 	lv, ok := levels[ch.InputDeviceID]
 	switch {

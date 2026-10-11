@@ -176,3 +176,58 @@ func TestMissingProcIsUnknownNotError(t *testing.T) {
 		t.Fatalf("snapshot from an empty /proc = %+v, want all unknown", s)
 	}
 }
+
+// The two Pi Zero nodes' /proc/asound/cards, 2026-10-11: with the AIOC,
+// and after it dropped off USB.
+const (
+	cardsWithAIOC = ` 0 [AllInOneCable  ]: USB-Audio - All-In-One-Cable
+                      AIOC All-In-One-Cable at usb-20980000.usb-1, full speed
+ 1 [vc4hdmi        ]: vc4-hdmi - vc4-hdmi
+                      vc4-hdmi
+`
+	cardsAIOCGone = ` 1 [vc4hdmi        ]: vc4-hdmi - vc4-hdmi
+                      vc4-hdmi
+`
+)
+
+func TestSoundCards(t *testing.T) {
+	p := newFakeProc(t)
+	m := New(p.root)
+
+	m.Sample(t0)
+	if s := m.Snapshot(); s.SoundCardsKnown || s.SoundCards != nil {
+		t.Fatalf("no /proc/asound: want unknown, got %+v", s)
+	}
+
+	p.write("asound/cards", cardsWithAIOC)
+	m.Sample(t0.Add(SampleEvery))
+	s := m.Snapshot()
+	want := []SoundCard{{0, "AllInOneCable"}, {1, "vc4hdmi"}}
+	if !s.SoundCardsKnown || fmt.Sprint(s.SoundCards) != fmt.Sprint(want) {
+		t.Fatalf("got %v known=%v, want %v", s.SoundCards, s.SoundCardsKnown, want)
+	}
+
+	p.write("asound/cards", cardsAIOCGone)
+	m.Sample(t0.Add(2 * SampleEvery))
+	if s := m.Snapshot(); !s.SoundCardsKnown || fmt.Sprint(s.SoundCards) != "[{1 vc4hdmi}]" {
+		t.Fatalf("AIOC gone: got %v known=%v", s.SoundCards, s.SoundCardsKnown)
+	}
+
+	p.write("asound/cards", "--- no soundcards ---\n")
+	m.Sample(t0.Add(3 * SampleEvery))
+	if s := m.Snapshot(); !s.SoundCardsKnown || len(s.SoundCards) != 0 {
+		t.Fatalf("no cards: got %v known=%v", s.SoundCards, s.SoundCardsKnown)
+	}
+}
+
+func TestSoundCardsSnapshotIsACopy(t *testing.T) {
+	p := newFakeProc(t)
+	p.write("asound/cards", cardsWithAIOC)
+	m := New(p.root)
+	m.Sample(t0)
+	s := m.Snapshot()
+	s.SoundCards[0].ID = "changed"
+	if got := m.Snapshot().SoundCards[0].ID; got != "AllInOneCable" {
+		t.Fatalf("snapshot shares the monitor's slice: %q", got)
+	}
+}

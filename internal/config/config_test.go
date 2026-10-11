@@ -205,3 +205,21 @@ func TestPanelConfig(t *testing.T) {
 		t.Fatal("bad listen address accepted")
 	}
 }
+
+func TestGraywolfLocal(t *testing.T) {
+	for url, want := range map[string]bool{
+		"http://localhost:8080":      true,
+		"http://127.0.0.1:8080":      true,
+		"http://127.0.1.1:8080/":     true,
+		"http://[::1]:8080":          true,
+		"http://LOCALHOST:8080":      true,
+		"http://10.0.0.65:8080":      false,
+		"http://graywolf.local:8080": false,
+		"http://localhost.evil:8080": false,
+		"::not a url":                false,
+	} {
+		if got := (Config{GraywolfURL: url}).GraywolfLocal(); got != want {
+			t.Errorf("%q: got %v, want %v", url, got, want)
+		}
+	}
+}

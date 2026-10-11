@@ -231,3 +231,18 @@ func PanelFrom(env Env) (Panel, error) {
 	}
 	return Panel{AppURL: "http://" + net.JoinHostPort(host, port), Token: tok}, nil
 }
+
+// GraywolfLocal reports whether graywolf runs on this machine (a loopback
+// URL), so the node's own hardware (its sound cards) is graywolf's.
+func (c Config) GraywolfLocal() bool {
+	u, err := url.Parse(c.GraywolfURL)
+	if err != nil {
+		return false
+	}
+	h := u.Hostname()
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}

@@ -263,6 +263,11 @@ func (s *server) getGraywolf(w http.ResponseWriter, r *http.Request) {
 	} else {
 		v.Warnings = append(v.Warnings, "message preferences: "+safeErr(err))
 	}
+	if cfg, err := s.Store.GetSettings(r.Context()); err == nil {
+		if m := s.missingCards(cfg); len(m) > 0 {
+			v.Warnings = append(v.Warnings, "radio cable missing: sound card "+strings.Join(m, ", ")+" isn't on this node (unplugged or dropped off USB; replug, or reboot if it doesn't come back)")
+		}
+	}
 	writeJSON(w, http.StatusOK, v)
 }
 

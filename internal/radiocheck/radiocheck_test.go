@@ -3,6 +3,7 @@ package radiocheck
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -221,5 +222,107 @@ func TestRateUnknownWithoutDevices(t *testing.T) {
 	f.devs = nil
 	if it := item(t, Check(ctx, f, cfg(), piZero(ptr(true))), "rate"); it.Status != Unknown {
 		t.Fatalf("rate = %+v, want unknown", it)
+	}
+}
+
+func withCards(h hostmon.Snapshot, ids ...string) hostmon.Snapshot {
+	h.SoundCardsKnown = true
+	h.SoundCards = nil
+	for i, id := range ids {
+		h.SoundCards = append(h.SoundCards, hostmon.SoundCard{Index: i, ID: id})
+	}
+	return h
+}
+
+func TestCablePresentPasses(t *testing.T) {
+	r := Check(ctx, healthy(), cfg(), withCards(piZero(ptr(true)), "AllInOneCable", "vc4hdmi"))
+	if r.Status != OK {
+		t.Fatalf("want ok, got %+v", r)
+	}
+}
+
+// Field test 2026-10-11: the AIOC dropped off USB after a transmit, and
+// graywolf's API still listed the device and its last level.
+func TestCableGoneFails(t *testing.T) {
+	r := Check(ctx, healthy(), cfg(), withCards(piZero(ptr(true)), "vc4hdmi"))
+	if r.Status != Fail {
+		t.Fatalf("want fail, got %s", r.Status)
+	}
+	a := item(t, r, "audio")
+	if a.Status != Fail || !strings.Contains(a.Detail, "AllInOneCable") || !strings.Contains(a.Detail, "reboot") {
+		t.Fatalf("audio: %+v", a)
+	}
+	if lv := item(t, r, "level"); lv.Status != Unknown || !strings.Contains(lv.Detail, "stale") {
+		t.Fatalf("level should be unknown (stale), got %+v", lv)
+	}
+}
+
+func TestCardsUnknownSkipsPresenceCheck(t *testing.T) {
+	h := piZero(ptr(true)) // SoundCardsKnown false: e.g. graywolf on another host
+	if r := Check(ctx, healthy(), cfg(), h); item(t, r, "audio").Status != OK {
+		t.Fatalf("unknown cards must not fail: %+v", item(t, r, "audio"))
+	}
+}
+
+func TestMissingCards(t *testing.T) {
+	gw := healthy()
+	check := func(name string, host hostmon.Snapshot, want []string, wantOK bool) {
+		t.Helper()
+		got, ok := MissingCards(ctx, gw, cfg(), host)
+		if ok != wantOK || fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("%s: got (%v, %v), want (%v, %v)", name, got, ok, want, wantOK)
+		}
+	}
+	check("present", withCards(piZero(nil), "AllInOneCable"), nil, true)
+	check("gone", withCards(piZero(nil), "vc4hdmi"), []string{"AllInOneCable"}, true)
+	check("cards unknown", piZero(nil), nil, false)
+	gw.chansErr = errors.New("down")
+	check("graywolf down", withCards(piZero(nil), "vc4hdmi"), nil, false)
+	gw.chansErr, gw.chans = nil, nil
+	check("no channel", withCards(piZero(nil)), nil, true)
+}
+
+func TestCardPresent(t *testing.T) {
+	cards := []hostmon.SoundCard{{Index: 0, ID: "AllInOneCable"}, {Index: 2, ID: "vc4hdmi"}}
+	for _, tc := range []struct {
+		path           string
+		present, known bool
+		name           string
+	}{
+		{"plughw:CARD=AllInOneCable,DEV=0", true, true, "AllInOneCable"},
+		{"hw:CARD=AllInOneCable", true, true, "AllInOneCable"},
+		{"sysdefault:CARD=Gone", false, true, "Gone"},
+		{"front:CARD=allinonecable,DEV=0", true, true, "allinonecable"},
+		{"hw:0,0", true, true, "card 0"},
+		{"plughw:1", false, true, "card 1"},
+		{"hw:CARD=2,DEV=0", true, true, "card 2"},
+		{"hw:CARD=AllInOneCable,DEV=0,SUBDEV=1", true, true, "AllInOneCable"},
+		{"surround51:CARD=Gone,DEV=0", false, true, "Gone"},
+		{"default", false, false, ""},
+		{"pulse", false, false, ""},
+		{"", false, false, ""},
+		// Not cards: a false "missing" would fail a working node.
+		{"plug:default", false, false, ""},
+		{"plug:dmix", false, false, ""},
+		{"plug:'hw:1,0'", false, false, ""},
+		{"plughw:'hw:1,0'", false, false, ""},
+		{"/dev/snd/pcmC1D0c", false, false, ""},
+		{"hw:DEV=0", false, false, ""},
+	} {
+		name, present, known := cardPresent(tc.path, cards)
+		if present != tc.present || known != tc.known || name != tc.name {
+			t.Errorf("%q: got (%q, %v, %v), want (%q, %v, %v)", tc.path, name, present, known, tc.name, tc.present, tc.known)
+		}
+	}
+}
+
+// HQ node 10.0.1.88 (2026-10-11): graywolf's modem runs with no channel,
+// so "keeping up" says nothing about a radio.
+func TestNoChannelLeavesKeepUpUnchecked(t *testing.T) {
+	gw := healthy()
+	gw.chans = nil
+	r := Check(ctx, gw, cfg(), piZero(ptr(true)))
+	if k := item(t, r, "keepup"); k.Status != Unknown {
+		t.Fatalf("keepup = %+v, want unknown", k)
 	}
 }
