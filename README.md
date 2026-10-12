@@ -47,6 +47,7 @@ deploy/                systemd unit, env template, install script (+ option test
 deploy/graywolf-armv6/ ARMv6 (Pi Zero) graywolf build kit: audio-buffer patch, build.sh
 docs/specs/            design spec
 docs/operator-guide.md install, race day, recovery, reset (for station operators)
+docs/race-day-runbook.md printable race-day checklist, quick fixes, station card
 ```
 
 ## Install on a node
