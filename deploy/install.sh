@@ -636,6 +636,40 @@ elif command -v iw >/dev/null 2>&1 && iw dev 2>/dev/null | grep -q Interface; th
 	say "Note: no NetworkManager here. Turn Wi-Fi power saving off in your network setup (iw dev wlan0 set power_save off at boot)."
 fi
 
+# Logs stay in RAM: the SD card gets only race data. Raspberry Pi OS
+# keeps the journal in RAM already, at 10% of /run (about 8 MB on a Pi
+# Zero W): a graywolf error flood once pushed out every older log in
+# 3 minutes (feedback 2026-10-09, item 9). Give it about a third of /run,
+# at most 64 MB, and cap graywolf's log rate.
+JOURNAL_CONF=/etc/systemd/journald.conf.d/60-checkin-board.conf
+GW_LOG_CONF=/etc/systemd/system/graywolf.service.d/60-checkin-board-logs.conf
+# write_conf FILE CONTENT: write FILE if it differs; true if it changed.
+write_conf() {
+	[ -f "$1" ] && [ "$(cat "$1")" = "$2" ] && return 1
+	install -d -m 0755 "$(dirname "$1")"
+	printf '%s\n' "$2" >"$1"
+	chmod 0644 "$1"
+}
+run_kb=$(df -Pk /run 2>/dev/null | awk 'NR == 2 {print $2}')
+case "$run_kb" in
+'' | *[!0-9]*) run_kb=0 ;;
+esac
+journal_mb=$((run_kb / 1024 / 3))
+[ "$journal_mb" -gt 64 ] && journal_mb=64
+if [ "$journal_mb" -lt 16 ]; then
+	say "Note: /run is too small for a larger log; the journal is left as it is."
+elif write_conf "$JOURNAL_CONF" "$(printf '# checkin-board: logs in RAM only (the SD card gets race data only),\n# about a third of /run.\n[Journal]\nStorage=volatile\nRuntimeMaxUse=%sM' "$journal_mb")"; then
+	systemctl restart systemd-journald 2>/dev/null || true
+	say "Logs: kept in RAM, up to $journal_mb MB ($JOURNAL_CONF)"
+fi
+if write_conf "$GW_LOG_CONF" "$(printf '# checkin-board: at most 500 log lines per 30 s from graywolf, so an\n# audio error flood cannot fill the in-memory log.\n[Service]\nLogRateLimitIntervalSec=30s\nLogRateLimitBurst=500')"; then
+	systemctl daemon-reload
+	if systemctl is-active --quiet graywolf 2>/dev/null; then
+		systemctl restart graywolf 2>/dev/null || true
+	fi
+	say "graywolf's log rate capped at 500 lines per 30 s ($GW_LOG_CONF)"
+fi
+
 install -m 0644 "$HERE/checkin-board.service" "$UNIT"
 install -m 0644 "$HERE/checkin-board-panel.service" "$PANEL_UNIT"
 if [ -f "$HERE/operator-guide.md" ]; then

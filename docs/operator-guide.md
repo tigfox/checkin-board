@@ -48,6 +48,11 @@ graywolf isn't installed, the script installs its latest release first
      password instead (see "The app's graywolf login" below);
    - turns Wi-Fi power saving off (with it on, a Pi drops off the
      network for minutes at a time and phones can't reach the keypad);
+   - keeps the system log in RAM, larger (about a third of `/run`: 28 MB
+     on a Pi Zero W), and caps graywolf at 500 log lines per 30 s, so an
+     error flood can't push out older logs. Only race data is written to
+     the SD card. Logs are lost on reboot: save them first with
+     `journalctl -b > somefile` on a USB stick if you need them;
    - starts the `checkin-board` service. If you skip the password (or
      run the script non-interactively), it says "Not started": put the
      password in that file and `sudo systemctl start checkin-board`.

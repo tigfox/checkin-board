@@ -58,4 +58,9 @@ out=$(./install.sh --race-config /tmp/test-race.json </dev/null 2>&1)
 f=/var/lib/checkin-board/race-configs/test-race.json
 check "--race-config adds the file to the node" [ -f "$f" ]
 check "...owned by the service user, mode 640" [ "$(stat -c '%U %a' "$f" 2>/dev/null)" = "checkin-board 640" ]
+
+jc=/etc/systemd/journald.conf.d/60-checkin-board.conf
+check "logs kept in RAM, 16-64 MB" sh -c "grep -qx 'Storage=volatile' $jc && grep -qxE 'RuntimeMaxUse=(1[6-9]|[2-5][0-9]|6[0-4])M' $jc"
+check "graywolf's log rate capped" grep -qx 'LogRateLimitBurst=500' /etc/systemd/system/graywolf.service.d/60-checkin-board-logs.conf
+check "...journald restarted once over all the re-runs" [ "$(grep -c 'restart systemd-journald' /tmp/systemctl.log)" = 1 ]
 exit $fail
