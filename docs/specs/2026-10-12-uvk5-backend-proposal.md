@@ -128,7 +128,13 @@ with its message store, sender and tests is the largest piece. Health,
 config, install and docs make one more. That's similar to phases 5-7
 together.
 
-## Decisions for you
+## Decisions (answered 2026-10-12)
+
+Answered by the user and the firmware maintainer; see the
+[plan](2026-10-12-uvk5-backend-plan.md). In short: checkpoints first,
+firmware requests 0-8, 10 and 11 at queue depth 4 (9 dropped), callsign
+read from the radio and set through request 8 when it exists, USB-C
+only, frequency set on the radio. The questions as first asked:
 
 1. **Which roles use the radio?** Recommendation: **checkpoints only**,
    with HQ on graywolf, until the radio can hold several pending acks
