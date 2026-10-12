@@ -181,3 +181,16 @@ func overloaded() hostmon.Snapshot {
 	cpu, up := 91.0, false
 	return hostmon.Snapshot{CPUPercent: &cpu, ModemKeepingUp: &up}
 }
+
+// A radio node (UV-K5, phase 17) names its radio, not graywolf.
+func TestStatusLinesRadioNode(t *testing.T) {
+	v := cpView()
+	v.Status.Link = "radio"
+	if lines, _ := statusLines(v, nil, hostmon.Snapshot{}); !contains(lines, "radio OK") {
+		t.Errorf("connected: %q", lines)
+	}
+	v.Status.GraywolfOK, v.Status.GraywolfProblem = false, "Radio not connected"
+	if lines, _ := statusLines(v, nil, hostmon.Snapshot{}); !contains(lines, "radio DOWN: Radio not connected") {
+		t.Errorf("down: %q", lines)
+	}
+}

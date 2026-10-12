@@ -50,8 +50,9 @@ func TestRadioNodePages(t *testing.T) {
 	if st := decode[stationView](t, e.do("GET", "/api/station", e.volunt, nil)); st.Graywolf.Problem != radioDownWarning {
 		t.Fatalf("keypad banner = %q", st.Graywolf.Problem)
 	}
-	if v := hookView(t, e); !slices.Contains(v.Status.Warnings, radioDownWarning) {
-		t.Fatalf("panel warnings = %v", v.Status.Warnings)
+	if v := hookView(t, e); v.Status.GraywolfOK || v.Status.GraywolfProblem != radioDownWarning || v.Status.Link != "radio" ||
+		slices.Contains(v.Status.Warnings, radioDownWarning) {
+		t.Fatalf("panel status = %+v", v.Status)
 	}
 	gv = decode[graywolfView](t, e.do("GET", "/api/admin/gw", e.admin, nil))
 	if gv.Reachable || len(gv.Warnings) != 1 || !strings.Contains(gv.Warnings[0], "no radio found") {
@@ -72,4 +73,10 @@ func TestGraywolfNodeBackend(t *testing.T) {
 	if gv := decode[graywolfView](t, e.do("GET", "/api/admin/gw", e.admin, nil)); gv.Backend != "graywolf" {
 		t.Fatalf("connection backend = %q", gv.Backend)
 	}
+}
+
+// graywolf-only actions answer 501 on a radio node.
+func TestRadioNodeRefusesGraywolfOnly(t *testing.T) {
+	e := newEnvWith(t, checkpointSettings(store.RaceSetup), func(d *Deps) { d.Radio = connectedRadio() })
+	expect(t, e.do("POST", "/api/admin/peers/restore", e.admin, nil), 501)
 }

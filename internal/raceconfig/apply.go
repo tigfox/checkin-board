@@ -430,6 +430,18 @@ func (s *Service) RestoreGraywolf(ctx context.Context) ([]string, error) {
 			fails = append(fails, "station callsign: "+err.Error())
 		}
 	}
+	if s.radio {
+		// A radio node only ever changed its callsign; anything else in
+		// the backup came from graywolf (a database moved over) and
+		// can't be restored here.
+		if b.TxTimingID != 0 || b.RetentionDays != nil || b.Digipeater != nil {
+			notes = append(notes, "graywolf settings in the backup were left alone: this is a radio node")
+		}
+		if len(fails) > 0 {
+			return notes, fmt.Errorf("race config: restoring failed: %s", strings.Join(fails, "; "))
+		}
+		return notes, s.st.ClearGraywolfBackup(ctx)
+	}
 	if b.TxTimingID != 0 && (b.TxDelayMS != nil || b.TxTailMS != nil) {
 		if err := s.restoreTxTiming(ctx, b); err != nil {
 			fails = append(fails, "TX timing: "+err.Error())

@@ -19,6 +19,11 @@ func OpenPort(path string) (io.ReadWriteCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("uvk5: open %s: %w", path, err)
 	}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFCHR {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("uvk5: %s is not a serial device", path)
+	}
 	if err := rawMode(fd); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("uvk5: %s: %w", path, err)

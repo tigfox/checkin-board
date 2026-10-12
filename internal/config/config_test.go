@@ -243,9 +243,17 @@ func TestRadioBackend(t *testing.T) {
 		{EnvBackend: "aprsd"},
 		{EnvBackend: "uvk5", EnvUVK5Port: "ttyACM0"},
 		{EnvBackend: "uvk5", EnvUVK5Port: "/dev/../etc/passwd"},
+		{EnvBackend: "uvk5", EnvUVK5Port: "/dev/sda"},
+		{EnvBackend: "uvk5", EnvUVK5Port: "/dev/ttyACM"},
+		{EnvBackend: "uvk5", EnvUVK5Port: "/dev/serial/../mem"},
 	} {
 		if _, err := LoadFrom(env(bad)); err == nil {
 			t.Errorf("%v: want an error", bad)
+		}
+	}
+	for _, good := range []string{"/dev/ttyACM1", "/dev/ttyUSB0", "/dev/serial/by-id/usb-UV-K5-if00", "/dev/uvk5"} {
+		if _, err := LoadFrom(env(map[string]string{EnvBackend: "uvk5", EnvUVK5Port: good})); err != nil {
+			t.Errorf("%s: %v", good, err)
 		}
 	}
 	// The default is graywolf, which still needs its login.

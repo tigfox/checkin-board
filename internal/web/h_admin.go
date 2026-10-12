@@ -321,6 +321,10 @@ func (s *server) getPeers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) postPeersRestore(w http.ResponseWriter, r *http.Request) {
+	if s.Radio != nil {
+		writeError(w, r, s.log, &httpError{http.StatusNotImplemented, "not_graywolf", "a radio node has no graywolf retry settings to restore"})
+		return
+	}
 	if err := s.Ops.RestorePeers(r.Context()); err != nil {
 		writeError(w, r, s.log, err)
 		return

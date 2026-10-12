@@ -123,11 +123,12 @@ export async function raceConfigCard(ctx) {
       : null,
     list.graywolf_backup
       ? h("p", {}, h("button", { type: "button", id: "rc-restore", onclick: async () => {
-        if (!confirm("Put graywolf's settings back as they were before a race config changed them?")) return;
+        const what = ctx.settings.backend === "uvk5" ? "the radio's callsign" : "graywolf's settings";
+        if (!confirm(`Put ${what} back as before a race config changed it?`)) return;
         const r = await ctx.run(() => post("/api/admin/graywolf/restore"),
-          (res) => ["graywolf settings restored.", ...(res.notes || [])].join(" "));
+          (res) => [ctx.settings.backend === "uvk5" ? "Radio callsign restored." : "graywolf settings restored.", ...(res.notes || [])].join(" "));
         if (r) await ctx.refresh();
-      } }, "Restore graywolf settings"))
+      } }, ctx.settings.backend === "uvk5" ? "Restore the radio's callsign" : "Restore graywolf settings"))
       : null,
     loader);
 }

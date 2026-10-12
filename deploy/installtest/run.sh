@@ -63,4 +63,24 @@ jc=/etc/systemd/journald.conf.d/60-checkin-board.conf
 check "logs kept in RAM, 16-64 MB" sh -c "grep -qx 'Storage=volatile' $jc && grep -qxE 'RuntimeMaxUse=(1[6-9]|[2-5][0-9]|6[0-4])M' $jc"
 check "graywolf's log rate capped" grep -qx 'LogRateLimitBurst=500' /etc/systemd/system/graywolf.service.d/60-checkin-board-logs.conf
 check "...journald restarted once over all the re-runs" [ "$(grep -c 'restart systemd-journald' /tmp/systemctl.log)" = 1 ]
+
+# A radio node (phase 17): UV-K5 on USB-C, no graywolf.
+out=$(./install.sh --backend nope </dev/null 2>&1); rc=$?
+check "an unknown backend is refused (exit 2)" [ "$rc" = 2 ]
+out=$(./install.sh --uvk5-port /dev/ttyACM0 </dev/null 2>&1); rc=$?
+check "--uvk5-port without --backend uvk5 is refused" [ "$rc" = 2 ]
+out=$(./install.sh --backend uvk5 --uvk5-port '/dev/tty;rm' </dev/null 2>&1); rc=$?
+check "...as is a port that isn't a plain path" [ "$rc" = 2 ]
+: > /tmp/systemctl.log
+out=$(./install.sh --backend uvk5 --uvk5-port /dev/ttyACM0 </dev/null 2>&1); rc=$?
+env=/etc/checkin-board/checkin-board.env
+dropin=/etc/systemd/system/checkin-board.service.d/50-uvk5.conf
+check "--backend uvk5 installs (exit 0)" [ "$rc" = 0 ]
+check "...sets CB_BACKEND and CB_UVK5_PORT" sh -c "grep -qx 'CB_BACKEND=uvk5' $env && grep -qx 'CB_UVK5_PORT=/dev/ttyACM0' $env"
+check "...lets the service open the radio's port only" sh -c "grep -qx 'DeviceAllow=char-ttyACM rw' $dropin && grep -qx 'SupplementaryGroups=dialout' $dropin"
+check "...and starts it with no graywolf password" grep -q 'start checkin-board' /tmp/systemctl.log
+out=$(./install.sh --backend uvk5 </dev/null 2>&1)
+check "a re-run keeps one CB_BACKEND line" [ "$(grep -c '^CB_BACKEND=' $env)" = 1 ]
+out=$(./install.sh --backend graywolf </dev/null 2>&1)
+check "--backend graywolf switches back and drops the device access" sh -c "grep -qx 'CB_BACKEND=graywolf' $env && [ ! -e $dropin ]"
 exit $fail

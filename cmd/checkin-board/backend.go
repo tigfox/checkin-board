@@ -68,11 +68,15 @@ func startRadio(ctx context.Context, cfg config.Config, st *store.Store, logger 
 		return messaging{}, err
 	}
 	go rb.Run(ctx)
-	hold := func() string {
-		if !rb.State().Connected {
+	return messaging{gw: rb, hold: radioHold(rb.State), radio: rb}, nil
+}
+
+// radioHold holds race reports while the radio isn't connected.
+func radioHold(state func() radiobackend.State) func() string {
+	return func() string {
+		if !state().Connected {
 			return "radio not connected"
 		}
 		return ""
 	}
-	return messaging{gw: rb, hold: hold, radio: rb}, nil
 }

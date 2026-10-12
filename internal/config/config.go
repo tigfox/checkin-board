@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 )
@@ -138,8 +139,8 @@ func LoadFrom(env Env) (Config, error) {
 // loadRadio reads a radio node's configuration: no graywolf settings.
 func loadRadio(env Env) (Config, error) {
 	port := strings.TrimSpace(env.Getenv(EnvUVK5Port))
-	if port != "" && (!strings.HasPrefix(port, "/dev/") || strings.Contains(port, "..")) {
-		return Config{}, fmt.Errorf("%s must be a device path under /dev, got %q", EnvUVK5Port, port)
+	if port != "" && !serialPort(port) {
+		return Config{}, fmt.Errorf("%s must be a serial port (/dev/ttyACM*, /dev/ttyUSB*, /dev/serial/..., /dev/uvk5*), got %q", EnvUVK5Port, port)
 	}
 	hook, err := loadHook(env)
 	if err != nil {
@@ -147,6 +148,22 @@ func loadRadio(env Env) (Config, error) {
 	}
 	return Config{Backend: BackendUVK5, UVK5Port: port, DBPath: DBPathFrom(env.Getenv),
 		Listen: valueOr(strings.TrimSpace(env.Getenv(EnvListen)), DefaultListen), HookToken: hook}, nil
+}
+
+// serialPort accepts only the radio's kinds of serial device path.
+func serialPort(p string) bool {
+	if path.Clean(p) != p {
+		return false
+	}
+	if p == "/dev/uvk5" || strings.HasPrefix(p, "/dev/uvk5") {
+		return true // a udev rule's stable name
+	}
+	for _, prefix := range []string{"/dev/ttyACM", "/dev/ttyUSB", "/dev/serial/"} {
+		if strings.HasPrefix(p, prefix) && len(p) > len(prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func loadHook(env Env) (string, error) {

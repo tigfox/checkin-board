@@ -223,13 +223,19 @@ func (s *server) panelView(r *http.Request) (panel.View, error) {
 		Port: s.WebPort, Now: s.now()}
 	gw := bannerFor(s.Inbox.Status())
 	st.GraywolfOK, st.GraywolfProblem = gw.Problem == "", gw.Problem
+	if s.Radio != nil {
+		st.Link = "radio"
+		if p := s.radioProblem(); p != "" && st.GraywolfOK {
+			st.GraywolfOK, st.GraywolfProblem = false, p // "radio DOWN: Radio not connected"
+		}
+	}
 	if s.Clock.Status().Source == raceclock.SourceUnsynced {
 		st.Warnings = append(st.Warnings, "Race clock not set")
 	}
 	if js := s.Ops.JournalStatus(); js.LastError != "" {
 		st.Warnings = append(st.Warnings, "Backup journal failing")
 	}
-	if p := s.radioProblem(); p != "" {
+	if p := s.radioProblem(); p != "" && s.Radio == nil { // a radio node says it on the status line
 		st.Warnings = append(st.Warnings, p)
 	}
 	if checks, err := s.Store.ListLinkChecks(ctx, 5); err == nil {

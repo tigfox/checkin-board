@@ -37,7 +37,7 @@ export async function renderRace(sec, ctx) {
   }
   const row = h("div", { class: "row" });
   for (const a of actions) {
-    const [label, question] = L.actionLabel(a, s.role);
+    const [label, question] = L.actionLabel(a, s.role, s.backend);
     row.append(h("button", {
       type: "button", class: "primary",
       onclick: async () => {
@@ -53,7 +53,7 @@ export async function renderRace(sec, ctx) {
         }
         if (!confirm(ask)) return;
         await ctx.run(() => post(`/api/admin/race/${a}`), (r) =>
-          a === "cleanup-graywolf" ? `graywolf cleanup: ${r.deleted} deleted, ${r.kept} kept (still needed), ${r.gone} already gone, ${r.failed} failed`
+          a === "cleanup-graywolf" ? `${s.backend === "uvk5" ? "Message cleanup" : "graywolf cleanup"}: ${r.deleted} deleted, ${r.kept} kept (still needed), ${r.gone} already gone, ${r.failed} failed`
             : a === "secure" ? `Secured. ${r.unconfirmed} entries will go out at the final check-in.` : `${label}: done`);
         await ctx.reload();
         await ctx.refresh();

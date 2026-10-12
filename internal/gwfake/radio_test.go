@@ -109,7 +109,7 @@ type recordingListener struct {
 	heard []Frame
 }
 
-func (l *recordingListener) Callsign() string { return l.call }
+func (l *recordingListener) Callsign() string  { return l.call }
 func (l *recordingListener) HearFrame(f Frame) { l.heard = append(l.heard, f) }
 
 // A non-graywolf station hears frames addressed to it and can transmit.

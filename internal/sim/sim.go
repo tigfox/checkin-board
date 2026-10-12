@@ -54,13 +54,13 @@ type Node struct {
 	Store    *store.Store
 	GW       *gwfake.Station // nil on a radio node
 	// UV and RB are a radio node's fake radio and radio backend (phase 17).
-	UV       *uvk5.FakeRadio
-	RB       *radiobackend.Backend
-	CP       *checkpoint.Engine
-	HQ       *hq.Engine
-	Inbox    *inbox.Reader
-	Link     *linkcheck.Service
-	clock    *raceclock.Clock
+	UV    *uvk5.FakeRadio
+	RB    *radiobackend.Backend
+	CP    *checkpoint.Engine
+	HQ    *hq.Engine
+	Inbox *inbox.Reader
+	Link  *linkcheck.Service
+	clock *raceclock.Clock
 }
 
 // Sim is a channel with nodes on it.

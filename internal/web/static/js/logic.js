@@ -88,7 +88,11 @@ const CHECKPOINT_ACTION_LABELS = {
 
 // actionLabel is the button label and confirm question for a lifecycle
 // action in this role.
-export function actionLabel(action, role) {
+export function actionLabel(action, role, backend) {
+  if (action === "cleanup-graywolf" && backend === "uvk5") {
+    // A radio node keeps its own message log: the same cleanup, its wording.
+    return ["Clean up race messages", "Delete this race's messages from this node's message log? Messages still needed are kept."];
+  }
   return (role === "checkpoint" && CHECKPOINT_ACTION_LABELS[action]) || ACTION_LABELS[action] || [action, `${action}?`];
 }
 

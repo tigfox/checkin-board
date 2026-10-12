@@ -68,7 +68,10 @@ type Status struct {
 	Unconfirmed   int        `json:"unconfirmed"`
 	LastHQContact *time.Time `json:"last_hq_contact,omitempty"`
 	// graywolf.
-	GraywolfOK      bool     `json:"graywolf_ok"`
+	GraywolfOK bool `json:"graywolf_ok"`
+	// Link names what carries race traffic: "graywolf" ("" too) or
+	// "radio" on a UV-K5 node (phase 17).
+	Link            string   `json:"link,omitempty"`
 	GraywolfProblem string   `json:"graywolf_problem,omitempty"`
 	LastLink        *Link    `json:"last_link,omitempty"`
 	HQ              *HQ      `json:"hq,omitempty"`

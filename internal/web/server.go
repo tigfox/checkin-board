@@ -93,7 +93,9 @@ type Deps struct {
 	Cable CableStatus
 	// Radio is set on a node that uses a UV-K5/UV-K1 radio instead of
 	// graywolf (phase 17): Check radio, the connection card and the
-	// keypad banner read it, and graywolf-only parts step aside.
+	// keypad banner read it, and graywolf-only parts step aside. Leave it
+	// unset (an untyped nil, not a nil *radiobackend.Backend) on graywolf
+	// nodes: the server checks it against nil.
 	Radio radiocheck.Radio
 	// GraywolfRemote: graywolf runs on another machine, so this node's
 	// sound cards say nothing about its radio cable.

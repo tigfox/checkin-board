@@ -198,8 +198,12 @@ func statusLines(v View, addrs []string, health hostmon.Snapshot) (lines []strin
 			}
 		}
 	}
+	link := "graywolf"
+	if st.Link == "radio" {
+		link = "radio"
+	}
 	if st.GraywolfOK {
-		gw := "graywolf OK"
+		gw := link + " OK"
 		if k := health.ModemKeepingUp; k != nil && *k {
 			gw += ", modem keeping up"
 		} else if k != nil {
@@ -211,7 +215,7 @@ func statusLines(v View, addrs []string, health hostmon.Snapshot) (lines []strin
 		if problem == "" {
 			problem = "not reachable"
 		}
-		lines = append(lines, "graywolf DOWN: "+problem)
+		lines = append(lines, link+" DOWN: "+problem)
 	}
 	// Warnings outrank the link line when space runs short.
 	if cpuHigh(health) {

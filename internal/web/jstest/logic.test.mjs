@@ -241,3 +241,9 @@ test("markdownBlocks parses the event page's Markdown subset", () => {
   assert.deepEqual(L.markdownBlocks("**unclosed"), [{ type: "para", spans: [{ text: "**unclosed", bold: false }] }]);
   assert.deepEqual(L.markdownBlocks("####### deep"), [{ type: "para", spans: [{ text: "####### deep", bold: false }] }]);
 });
+
+test("a radio node names its message cleanup without graywolf", () => {
+  assert.equal(L.actionLabel("cleanup-graywolf", "checkpoint", "uvk5")[0], "Clean up race messages");
+  assert.equal(L.actionLabel("cleanup-graywolf", "checkpoint", "graywolf")[0], "Clean up graywolf messages");
+  assert.equal(L.actionLabel("start", "checkpoint", "uvk5")[0], "Open checkpoint");
+});

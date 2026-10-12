@@ -305,3 +305,33 @@ func TestRadioNodeGraywolfPart(t *testing.T) {
 		t.Fatalf("callsign = %q", sc.Callsign)
 	}
 }
+
+// Restore on a radio node puts back the callsign and leaves graywolf
+// values alone (a backup from a graywolf node, moved over).
+func TestRadioNodeRestore(t *testing.T) {
+	st, err := store.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	gw := gwfake.New("W1RAD-1")
+	svc := NewRadioService(st, gw)
+	f, _ := parse(t, sample)
+	p, err := svc.Preview(ctx, f, "AS1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Apply(ctx, f, "AS1", true, p.Token); err != nil {
+		t.Fatal(err)
+	}
+	notes, err := svc.RestoreGraywolf(ctx)
+	if err != nil || len(notes) != 0 {
+		t.Fatalf("restore: %v %v", notes, err)
+	}
+	if sc, _ := gw.StationConfig(ctx); sc.Callsign != "W1RAD-1" {
+		t.Fatalf("callsign = %q", sc.Callsign)
+	}
+	if _, err := svc.RestoreGraywolf(ctx); !errors.Is(err, ErrNoBackup) {
+		t.Fatalf("second restore: %v", err)
+	}
+}

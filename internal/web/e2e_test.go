@@ -443,3 +443,24 @@ func TestE2ERaceConfig(t *testing.T) {
 	b.waitText("#event", "Frequencies")
 	b.noErrors()
 }
+
+// A radio node's Station page (UV-K5, phase 17): radio wording, the
+// radio's checklist, no graywolf-only cards.
+func TestE2ERadioNodeStation(t *testing.T) {
+	e := newEnvWith(t, checkpointSettings(store.RaceSetup), func(d *Deps) { d.Radio = connectedRadio() })
+	b := newBrowser(t, e.srv.URL)
+	b.login(e.admin)
+	b.run(chromedp.Navigate(e.srv.URL+"/admin.html"),
+		chromedp.Click(`//nav[@id="tabs"]/button[text()="Station"]`, chromedp.BySearch))
+	b.waitText("main", "Callsign (the radio)")
+	b.waitText("main", "Radio connected: firmware f4hwn.aprs.2")
+	var html string
+	b.run(chromedp.OuterHTML("main", &html, chromedp.ByQuery))
+	if strings.Contains(html, "graywolf retries for race contacts") || strings.Contains(html, "Re-read graywolf messages") {
+		t.Fatal("graywolf-only cards on a radio node")
+	}
+	b.run(chromedp.Click("#radio-check", chromedp.ByQuery))
+	b.waitText("#radio-result", "Can transmit")
+	b.waitText("#radio-result", "144.3900 MHz")
+	b.noErrors()
+}
