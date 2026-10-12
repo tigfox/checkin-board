@@ -1,10 +1,15 @@
-.PHONY: build pi dist run test jstest e2e installtest soak fuzz cover contract vet fmt
+.PHONY: build benchrace pi dist run test jstest e2e installtest soak fuzz cover contract vet fmt
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 build:
 	go build -trimpath -ldflags '$(LDFLAGS)' -o bin/checkin-board ./cmd/checkin-board
+
+# Bench tool (phase 12 g): runs on the operator's machine, not on nodes.
+# See docs/bench-race.md.
+benchrace:
+	go build -trimpath -o bin/benchrace ./cmd/benchrace
 
 # Pi Zero W (ARMv6). Pure Go, so no cross toolchain is needed.
 pi:
