@@ -47,6 +47,7 @@ type Radio struct {
 	down      bool
 	queue     []inFlight
 	stations  []*Station
+	listeners []Listener
 	sent      int
 	delivered int
 }
@@ -68,6 +69,23 @@ func (r *Radio) Attach(s *Station) {
 	}
 	s.mu.Unlock()
 }
+
+// Listener is a station on the channel that isn't a graywolf fake (a
+// UV-K5 radio's fake): it hears frames addressed to its callsign.
+type Listener interface {
+	Callsign() string
+	HearFrame(Frame)
+}
+
+// AttachListener puts l on the channel.
+func (r *Radio) AttachListener(l Listener) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.listeners = append(r.listeners, l)
+}
+
+// Transmit puts a frame a listener sends on air.
+func (r *Radio) Transmit(f Frame) { r.transmit(f) }
 
 // SetDown drops every frame while down (a total outage).
 func (r *Radio) SetDown(down bool) {
@@ -132,12 +150,18 @@ func (r *Radio) Deliver() {
 	r.queue = rest
 	r.delivered += len(due)
 	stations := slices.Clone(r.stations)
+	listeners := slices.Clone(r.listeners)
 	r.mu.Unlock()
 	slices.SortStableFunc(due, func(a, b inFlight) int { return a.at.Compare(b.at) })
 	for _, f := range due {
 		for _, s := range stations {
 			if strings.EqualFold(s.Call, f.frame.To) && !strings.EqualFold(s.Call, f.frame.From) {
 				s.hear(f.frame)
+			}
+		}
+		for _, l := range listeners {
+			if call := l.Callsign(); strings.EqualFold(call, f.frame.To) && !strings.EqualFold(call, f.frame.From) {
+				l.HearFrame(f.frame)
 			}
 		}
 	}

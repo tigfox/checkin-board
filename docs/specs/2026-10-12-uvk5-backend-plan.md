@@ -30,16 +30,12 @@ queue depth 4, in this order:
 - Messages are **67 characters**, the same as graywolf nodes, so RC1
   doesn't change.
 
-**Compatibility.** checkin-board supports **both** today's firmware
-(revision 0, read from `0x0712`) and the new one:
-
-- **Revision 0, conservative mode:** strict stop-and-wait, acks matched
-  by timing, no "sent" status. It works with the radios as flashed today.
-- **Exact mode:** acks matched by line number, sends paced by
-  SENT/free slots, failures with reasons.
-
-The mode is chosen from the capability bits at connect time, so nodes
-pick up firmware features as radios are reflashed.
+**One mode: the new firmware only** (user, 2026-10-12: no radio will run
+today's firmware). At connect, checkin-board reads the capabilities
+(`0x0712`) and **refuses a radio without requests 1-4** (line numbers,
+SENT/DROP, several acks, the queue). Check radio says "firmware too old:
+reflash". Features from later requests (status, set callsign, path,
+RSSI, gap) are used when their bits are set.
 
 ## Architecture
 
@@ -80,19 +76,17 @@ review, spec status, commit.
 - **Session:**
   - Handshake with a random non-zero `ts`, and read the firmware
     version.
-  - `0x0712` capabilities; revision 0 when it's absent.
+  - `0x0712` capabilities; a radio without them (or without requests 1-4) is refused.
   - Settings `0x070C`: `APR1`, APRS on, callsign/SSID.
   - Monitor on.
-  - Send `0x0700`, with the reply bytes used only when the capability
-    bits say so.
+  - Send `0x0700` and read the reply's line number, free slots and
+    refusal reason.
   - Reconnect with backoff after an unplug or `ts` refusal.
 - **Fake radio (`internal/uvk5/fake`):**
   - It speaks the serial protocol over an `io.ReadWriter` and behaves
-    like the firmware at revision 0: one slot that a second send
-    replaces, one ack slot, 5 s gap, 60 s busy give-up, silent drops,
-    the fixed path, auto-acks.
-  - It also covers the agreed revision: the 4-deep queue, line numbers,
-    SENT/DROP, 4 acks, status, RSSI.
+    like the agreed firmware: a 4-deep queue that refuses when full,
+    line numbers, SENT/DROP with reasons, 4 pending acks, auto-acks,
+    5 s gap, 60 s busy give-up, status, RSSI, set callsign.
   - It attaches to the simulated RF channel (`gwfake.Radio`).
 - **Exit:** codec coverage ≥ 90%; fuzzing clean.
 
@@ -111,18 +105,12 @@ review, spec status, commit.
   - `MessagePreferences` reports MaxText 67.
   - Peer preferences are no-ops; `StationConfig` reads the callsign from
     the radio.
-- **Sender:**
-  - Conservative mode: one message at a time, 6 s apart, the next sent
-    only after an ack or a time-out (30-60 s, scaled by the path).
-  - Exact mode: up to the free slots; "sent" on SENT; "failed" with a
-    reason on DROP or a refusal.
+- **Sender:** up to the radio's free slots; "sent" on SENT; "failed"
+  with a reason on DROP or a refusal.
   - Acks go to the engines as status changes, exactly as graywolf's do,
     so the checkpoint engine's retry ladder works as it is.
-- **Ack matching:**
-  - Exact mode: by peer and line number.
-  - Conservative mode: an ack (or rej) from the peer while one message
-    is outstanding.
-  - A late ack after a time-out is ignored, and logged.
+- **Ack matching:** by peer and line number. Line numbers wrap at 99,
+  so a match also needs the message to be recent.
 - **Receiver:** messages to our call become inbound rows. Duplicates
   (source, msg id, text, 30 s window) are dropped. The radio has
   already acked them.
@@ -134,15 +122,14 @@ review, spec status, commit.
 - Nodes of either kind on one simulated channel, with the radio's
   constraints.
 - Exactly-once delivery in these scenarios:
-  - a graywolf HQ with radio checkpoints, in both modes;
+  - a graywolf HQ with radio checkpoints;
   - a mass start of 100 runners in 3 minutes;
   - 20% loss;
   - an ack replaced at the radio;
-  - a message replaced in conservative mode;
   - a 60 s busy-channel drop;
   - a radio unplugged mid-race (hold, then resume);
   - an HQ gap request answered by a radio checkpoint.
-- A latency table for radio checkpoints in each mode (spec 9b style).
+- A latency table for radio checkpoints (spec 9b style).
 - **Exit:** all scenarios exactly once. Latency recorded in the spec
   against the proposal's estimate (30-50 bibs a minute steady).
 
@@ -207,15 +194,15 @@ review, spec status, commit.
 - **Bench:** a graywolf HQ, one or two radio checkpoints and a graywolf
   checkpoint on low power. Run `benchrace` (100 runners) and a link check
   between each pair.
-- Measure throughput and latency on the radio checkpoints in each mode.
+- Measure throughput and latency on the radio checkpoints.
 - Results go in a test report.
 
 ## Order and dependencies
 
 | Phase | Needs firmware | Can start |
 |---|---|---|
-| 17a | none (revision 0; new formats from the reply) | now |
-| 17b | none (both modes on the fake radio) | after 17a |
+| 17a | none (formats from the reply) | now |
+| 17b | none (on the fake radio) | after 17a |
 | 17c | none | after 17b |
 | 17d | 7, 8, 11 only for their extra checks | after 17b |
 | 17e | none | with 17d |
@@ -229,10 +216,11 @@ only.
 
 ## Risks
 
-- **Conservative mode can mismatch acks** after a time-out. That's
-  contained: a late ack is ignored rather than applied to the next
-  message, and RC1's gap requests recover a batch HQ never got.
-  Exactness comes with firmware 1-2.
+- **Formats aren't published yet.** The codec follows checkin-board's
+  reply. Byte layouts the reply didn't fix (the capability and status
+  replies, the set-callsign command) are checkin-board's assumptions,
+  kept in one file (`internal/uvk5/proto.go`) and listed in the spec, so
+  the firmware's revision changes only that file.
 - **The firmware's RAM** (~0.9 KB spare): the maintainer budgets about
   0.3 KB at depth 4. The stack gauge after the queue lands is the check.
   If it's short, the scan progress bar and scan-range skip go first

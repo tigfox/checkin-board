@@ -103,3 +103,33 @@ func TestPacketLogRecordsHeardFramesWithLevel(t *testing.T) {
 		t.Fatalf("since filter: %+v", late)
 	}
 }
+
+type recordingListener struct {
+	call  string
+	heard []Frame
+}
+
+func (l *recordingListener) Callsign() string { return l.call }
+func (l *recordingListener) HearFrame(f Frame) { l.heard = append(l.heard, f) }
+
+// A non-graywolf station hears frames addressed to it and can transmit.
+func TestListener(t *testing.T) {
+	now := time.Date(2026, 10, 12, 13, 0, 0, 0, time.UTC)
+	r := NewRadio(1, Profile{}, func() time.Time { return now })
+	gw := New("N0CALL-1")
+	gw.Now = r.Now
+	r.Attach(gw)
+	l := &recordingListener{call: "N0CALL-4"}
+	r.AttachListener(l)
+	r.Transmit(Frame{From: "N0CALL-4", To: "N0CALL-1", Text: "hello", MsgID: "01"})
+	r.Deliver() // graywolf hears it and acks
+	r.Deliver() // the listener hears the ack
+	if len(l.heard) != 1 || !l.heard[0].IsAck || l.heard[0].MsgID != "01" {
+		t.Fatalf("listener heard %+v", l.heard)
+	}
+	r.Transmit(Frame{From: "N0CALL-4", To: "N0CALL-4", Text: "self"})
+	r.Deliver()
+	if len(l.heard) != 1 {
+		t.Fatal("a listener heard its own frame")
+	}
+}
