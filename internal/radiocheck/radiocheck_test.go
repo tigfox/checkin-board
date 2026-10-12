@@ -28,6 +28,7 @@ type fakeGW struct {
 
 func healthy() *fakeGW {
 	ch := graywolf.Channel{ID: 1, Name: "VHF APRS", Enabled: true, InputDeviceID: 1, OutputDeviceID: 2,
+		ModemType: "afsk", Profile: "A", NumSlicers: 1, FixBits: "none", NumDecoders: 1,
 		PTT: graywolf.ChannelPTT{Method: "cm108", Configured: true}}
 	ch.Backing.Health, ch.Backing.Modem.Active, ch.Backing.TX.Capable = "live", true, true
 	return &fakeGW{
@@ -324,5 +325,25 @@ func TestNoChannelLeavesKeepUpUnchecked(t *testing.T) {
 	r := Check(ctx, gw, cfg(), piZero(ptr(true)))
 	if k := item(t, r, "keepup"); k.Status != Unknown {
 		t.Fatalf("keepup = %+v, want unknown", k)
+	}
+}
+
+// 10.0.0.65 (2026-10-11): its channel had blank demodulator settings.
+func TestBlankDemodulatorWarns(t *testing.T) {
+	gw := healthy()
+	gw.chans[0].Profile, gw.chans[0].NumSlicers, gw.chans[0].FixBits, gw.chans[0].NumDecoders = "", 0, "", 0
+	r := Check(ctx, gw, cfg(), piZero(ptr(true)))
+	if d := item(t, r, "demod"); d.Status != Warn || !strings.Contains(d.Detail, "profile") {
+		t.Fatalf("demod = %+v", d)
+	}
+	if r.Status != Warn {
+		t.Fatalf("report = %s, want warn", r.Status)
+	}
+	if d := item(t, Check(ctx, healthy(), cfg(), piZero(ptr(true))), "demod"); d.Status != OK || d.Detail != "profile A, 1 slicer, 1 decoder" {
+		t.Fatalf("set: demod = %+v", d)
+	}
+	gw.chans = nil
+	if d := item(t, Check(ctx, gw, cfg(), piZero(ptr(true))), "demod"); d.Status != Unknown {
+		t.Fatalf("no channel: demod = %+v", d)
 	}
 }

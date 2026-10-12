@@ -52,16 +52,22 @@ type ChannelBacking struct {
 
 // Channel is one entry of GET /api/channels.
 type Channel struct {
-	ID             uint32         `json:"id"`
-	Name           string         `json:"name"`
-	Mode           string         `json:"mode"`
-	Enabled        bool           `json:"enabled"`
-	InputDeviceID  uint32         `json:"input_device_id"`
-	OutputDeviceID uint32         `json:"output_device_id"`
-	ModemType      string         `json:"modem_type"`
-	BitRate        int            `json:"bit_rate"`
-	PTT            ChannelPTT     `json:"ptt"`
-	Backing        ChannelBacking `json:"backing"`
+	ID             uint32 `json:"id"`
+	Name           string `json:"name"`
+	Mode           string `json:"mode"`
+	Enabled        bool   `json:"enabled"`
+	InputDeviceID  uint32 `json:"input_device_id"`
+	OutputDeviceID uint32 `json:"output_device_id"`
+	ModemType      string `json:"modem_type"`
+	BitRate        int    `json:"bit_rate"`
+	// The demodulator: profile ("A" or "B"), slicers, bit fixing and
+	// decoders. Blank (0) on a channel set up through some paths.
+	Profile     string         `json:"profile"`
+	NumSlicers  int            `json:"num_slicers"`
+	FixBits     string         `json:"fix_bits"`
+	NumDecoders int            `json:"num_decoders"`
+	PTT         ChannelPTT     `json:"ptt"`
+	Backing     ChannelBacking `json:"backing"`
 }
 
 // ChannelStats is GET /api/channels/{id}/stats: counts since graywolf

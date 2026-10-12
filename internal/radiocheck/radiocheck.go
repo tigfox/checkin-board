@@ -101,7 +101,7 @@ func (c *Checker) Check(ctx context.Context, gw Graywolf, cfg store.Settings, ho
 	items = append(items, chItem)
 	if ch == nil {
 		for _, k := range []struct{ key, label string }{
-			{"audio", "Audio devices"}, {"ptt", "Push-to-talk"}, {"rate", "Audio sample rate"},
+			{"audio", "Audio devices"}, {"ptt", "Push-to-talk"}, {"rate", "Audio sample rate"}, {"demod", "Demodulator settings"},
 			{"level", "Receive audio level"}, {"heard", "Packets decoded"}, {"keepup", "Modem keeping up"},
 		} {
 			items = append(items, Item{k.key, k.label, Unknown, "needs a working radio channel first"})
@@ -110,7 +110,8 @@ func (c *Checker) Check(ctx context.Context, gw Graywolf, cfg store.Settings, ho
 		// A KISS TNC does its own audio: nothing of graywolf's to check.
 		const na = "not used: the channel is a KISS TNC, which handles its own audio"
 		items = append(items, Item{"audio", "Audio devices", OK, na}, checkPTT(*ch),
-			Item{"rate", "Audio sample rate", OK, na}, Item{"level", "Receive audio level", OK, na}, c.checkHeard(ctx, gw, *ch),
+			Item{"rate", "Audio sample rate", OK, na}, Item{"demod", "Demodulator settings", OK, na},
+			Item{"level", "Receive audio level", OK, na}, c.checkHeard(ctx, gw, *ch),
 			checkKeepUp(host))
 	} else {
 		devs, err := gw.AudioDevices(ctx)
@@ -118,7 +119,7 @@ func (c *Checker) Check(ctx context.Context, gw Graywolf, cfg store.Settings, ho
 		if err == nil {
 			missing = missingCards(*ch, devs, host)
 		}
-		items = append(items, checkAudio(*ch, devs, err, missing), checkPTT(*ch), checkRate(*ch, devs, err, piZero),
+		items = append(items, checkAudio(*ch, devs, err, missing), checkPTT(*ch), checkRate(*ch, devs, err, piZero), checkDemod(*ch),
 			checkLevel(ctx, gw, *ch, len(missing) > 0), c.checkHeard(ctx, gw, *ch), checkKeepUp(host))
 	}
 	return Report{Status: worst(items), Items: items}
@@ -253,6 +254,26 @@ func checkRate(ch graywolf.Channel, devs []graywolf.AudioDevice, err error, piZe
 		it.Status, it.Detail = OK, strings.Join(rates, ", ")
 	}
 	return it
+}
+
+// checkDemod flags blank demodulator settings (profile, slicers,
+// decoders), as found on a test node's channel on 2026-10-11.
+func checkDemod(ch graywolf.Channel) Item {
+	it := Item{Key: "demod", Label: "Demodulator settings"}
+	if ch.Profile == "" || ch.NumSlicers <= 0 || ch.NumDecoders <= 0 {
+		it.Status = Warn
+		it.Detail = fmt.Sprintf("blank in graywolf (profile %q, %d slicers, %d decoders): set them on the channel in graywolf (e.g. profile A, 1 slicer, 1 decoder, fix bits none)", ch.Profile, ch.NumSlicers, ch.NumDecoders)
+		return it
+	}
+	it.Status, it.Detail = OK, fmt.Sprintf("profile %s, %s, %s", ch.Profile, plural(ch.NumSlicers, "slicer"), plural(ch.NumDecoders, "decoder"))
+	return it
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
 }
 
 func checkLevel(ctx context.Context, gw Graywolf, ch graywolf.Channel, cableMissing bool) Item {

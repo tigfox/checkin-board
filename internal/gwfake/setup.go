@@ -23,7 +23,7 @@ type RadioSetup struct {
 // Pi (a Pi Zero also needs 24 kHz and the fixed build).
 func DefaultRadioSetup() RadioSetup {
 	ch := graywolf.Channel{ID: 1, Name: "VHF APRS", Mode: "aprs", Enabled: true, InputDeviceID: 1, OutputDeviceID: 2,
-		ModemType: "afsk", BitRate: 1200, PTT: graywolf.ChannelPTT{Method: "cm108", Configured: true}}
+		ModemType: "afsk", BitRate: 1200, Profile: "A", NumSlicers: 1, FixBits: "none", NumDecoders: 1, PTT: graywolf.ChannelPTT{Method: "cm108", Configured: true}}
 	ch.Backing.Summary, ch.Backing.Health, ch.Backing.Modem.Active, ch.Backing.TX.Capable = "modem", "live", true, true
 	aioc := "plughw:CARD=AllInOneCable,DEV=0"
 	return RadioSetup{
