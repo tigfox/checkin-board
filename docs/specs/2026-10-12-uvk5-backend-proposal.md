@@ -1,6 +1,7 @@
 # Proposal: UV-K5/UV-K1 radios as a second messaging backend
 
-Status: **draft for review**. Written 2026-10-12, then revised the same
+Status: **accepted and built** (see the
+[plan](2026-10-12-uvk5-backend-plan.md), "As built"). Originally a draft for review. Written 2026-10-12, then revised the same
 day for the firmware's 67-character messages. Nothing is built yet. The
 firmware changes it asks for are in
 [`2026-10-12-uvk5-firmware-requests.md`](2026-10-12-uvk5-firmware-requests.md).

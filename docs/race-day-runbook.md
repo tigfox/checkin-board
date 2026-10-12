@@ -25,6 +25,8 @@ without internet.
 ## At each station, before the first runner (station operator)
 
 - [ ] Radio on, on the race frequency, antenna up, AIOC cable seated.
+      Radio node (UV-K5/UV-K1): USB-C cable in, APRS on, FM, Path
+      Direct or WIDE1-1, battery charged.
 - [ ] Node powered; the panel shows the station and its address.
 - [ ] **Admin → Station → Radio → Check radio**: no ✗. "Nothing decoded
       yet" is fine until traffic is heard.
@@ -40,6 +42,8 @@ without internet.
 |---|---|---|
 | Keypad: **"Radio cable missing: entries are kept here…"** | The AIOC is unplugged or dropped off USB | Reseat the cable. If it doesn't come back in a minute, **reboot the node** (`sudo reboot`, or power cycle). Entries are safe and go out when it's back |
 | A radio **stays transmitting** (TX light on, no packets) | A dropping AIOC can leave the radio keyed | **Unplug the AIOC from the radio** or turn the radio off now; then see the row above |
+| Keypad: **"Radio not connected"** (radio node), panel "radio DOWN" | The UV-K5/UV-K1 is unplugged, off, or its port is busy | Reseat the USB-C cable (a data cable), switch the radio on; it reconnects by itself. Entries are safe |
+| Check radio (radio node): **Can transmit: no** | No callsign, APRS off, out of band, not FM, or low battery | Fix it on the radio (the line says which); the checkpoint resends |
 | Keypad: **"graywolf unreachable"** | graywolf isn't running | Wait a minute; if it stays, reboot the node |
 | Keypad: N **unconfirmed** climbing, "HQ heard" getting old | The link to HQ is down | Nothing is lost: entries keep retrying. Check antenna and frequency; run a link check |
 | HQ: checkpoint **quiet** or **missing batches** | Its reports aren't arriving | HQ re-requests automatically; check that station by voice |

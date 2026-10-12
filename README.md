@@ -28,11 +28,13 @@ internal/web/static/   the UI: plain HTML + ES modules, no build step, no inline
 internal/web/jstest/   `node --test` unit tests for the UI logic
 internal/peers/        graywolf per-peer retry settings (backup / restore)
 internal/linkcheck/    deployment link check: RC1 P probes, RC1 Q replies, verdicts
+internal/uvk5/         UV-K5/UV-K1 radio link: serial protocol codec, AX.25, monitor lines, session, fake radio
+internal/radiobackend/ a UV-K5 radio as graywolf's message API: message rows, paced sender, ack matching
 internal/provision/    stationsetup: stations CSV -> race config, pushed to and applied on every node
 internal/nodeapi/      client for a node's web API (stationsetup, benchrace)
 internal/bench/        benchrace: scripted race across nodes, exactly-once and latency report
 internal/cablewatch/   radio cable watcher: holds checkpoint reports while the cable is missing
-internal/testnode/     whole nodes on a fake graywolf over HTTP (tests)
+internal/testnode/     whole nodes (graywolf or radio) on fakes over HTTP (tests)
 cmd/stationsetup/      set up every node from a stations CSV
 cmd/benchrace/         radio bench race tool
 internal/raceconfig/   race config files: parse/validate, preview, apply (incl. graywolf, with backup/restore), export, folder
@@ -70,8 +72,10 @@ install it with `sudo ./install.sh --graywolf-deb FILE.deb`. Then
 
 | Variable           | Default                 | Description |
 |--------------------|-------------------------|-------------|
+| `CB_BACKEND`       | `graywolf`              | how the node sends race traffic: `graywolf`, or `uvk5` for a UV-K5 V3 / UV-K1 radio on USB-C (then the `GW_` variables are unused; see "Radio nodes") |
+| `CB_UVK5_PORT`     | (found)                 | the radio's serial port (`/dev/ttyACM*`, `/dev/ttyUSB*`, `/dev/serial/...`); unset: the first one that answers |
 | `GW_BASE_URL`      | `http://localhost:8080` | graywolf base URL |
-| `GW_USER`          | (required)              | a graywolf login (not a Linux user) for the app; `install.sh` creates `checkin-board` with graywolf's CLI (see the operator guide) |
+| `GW_USER`          | (required with graywolf) | a graywolf login (not a Linux user) for the app; `install.sh` creates `checkin-board` with graywolf's CLI (see the operator guide) |
 | `GW_PASSWORD`      |                         | graywolf password (or use `GW_PASSWORD_FILE`) |
 | `GW_PASSWORD_FILE` |                         | file holding the password; must be `chmod 600`; wins over `GW_PASSWORD` |
 | `GW_TIMEOUT`       | `10s`                   | per-request timeout |
@@ -99,6 +103,34 @@ echo 'a new admin password' | CB_DB_PATH=/path/to/checkin-board.db checkin-board
 
 This logs out every admin session and doesn't touch race data.
 
+## Radio nodes (UV-K5 V3 / UV-K1)
+
+A node can send race traffic through a **UV-K5 V3 or UV-K1 running the
+custom APRS firmware** (protocol revision 1 or later), plugged into the Pi
+by USB-C, instead of graywolf and an AIOC (spec phase 17). The radio does
+the packet work, so even a Pi Zero has CPU to spare. Radio nodes and
+graywolf nodes share one frequency and one race: they speak the same RC1
+messages in ordinary APRS messages. Use radios for **checkpoints**; keep HQ
+on graywolf.
+
+```sh
+sudo ./install.sh --backend uvk5          # or: --uvk5-port /dev/ttyACM0
+```
+
+On the radio: this station's callsign-SSID (or let the Station page or
+`stationsetup` set it), APRS on, the race frequency in FM, and its Path
+set to Direct or WIDE1-1. **Check radio** shows the connection, firmware,
+callsign, whether it can transmit and why not, frequency, battery,
+packets decoded and its queue. A radio sends one packet every 5 s at
+most and holds 4 messages; about 30-50 bibs a minute on a clean link.
+
+How it works: `internal/uvk5` speaks the radio's serial protocol
+(`uv-k1-k5v3-firmware-custom/claude/aprs-messaging-api.md`, revision 2),
+and `internal/radiobackend` presents the radio to the engines as
+graywolf's message API, keeping message rows in the node's database. The
+engines don't change. Plan and status:
+[`docs/specs/2026-10-12-uvk5-backend-plan.md`](docs/specs/2026-10-12-uvk5-backend-plan.md).
+
 ## Setting up every node from a CSV
 
 `stationsetup` sets up all of a race's nodes from your computer, over the
@@ -118,7 +150,8 @@ password**, and be in race setup (race not started).
    | `callsign` | yes | the node's callsign-SSID, different on every node. Checkpoints report to the HQ line's callsign |
    | `course_order` | no | the checkpoint's place along the course (1, 2, ...) |
    | `checkpoint_name` | no | the name on HQ's checkpoint list (default: `station_name`) |
-   | `race_name`, `path`, `heartbeat_sec`, `flush_after_sec`, `max_in_flight`, `max_text_len`, `gap_grace_sec`, `gw_channel`, `tx_delay_ms`, `tx_tail_ms` | no | race-wide: set once (any line) or the same on every line. `path` is the digipeater path, `direct` for none |
+   | `race_name`, `path`, `heartbeat_sec`, `flush_after_sec`, `max_in_flight`, `max_text_len`, `gap_grace_sec`, `gw_channel`, `tx_delay_ms`, `tx_tail_ms` | no | race-wide: set once (any line) or the same on every line. `path` is the digipeater path, `direct` for none. Radio nodes ignore `path`, `gw_channel` and the TX timing (the radio has its own) |
+   | `backend` | no | `graywolf` or `uvk5`: checks the node is that kind; a node that isn't is reported and not touched |
 
    Blank cells leave a node's current value alone. Lines starting with `#`
    are comments. The CSV holds no passwords.
@@ -143,7 +176,7 @@ password**, and be in race setup (race not started).
 What it sets on each node: the role, race name, station name and code,
 the HQ callsign (checkpoints), the local codes and checkpoint list (HQ),
 the messaging settings, and in graywolf the node's station callsign and
-TX delay and tail. `-no-graywolf` leaves graywolf alone. graywolf's
+TX delay and tail (on a radio node: the radio's callsign). `-no-graywolf` leaves graywolf alone. graywolf's
 original values are kept on the node, and **Admin → Race → Race config →
 Restore graywolf settings** puts them back. Every setting stays editable
 on the node afterwards. Under the hood the CSV becomes a race config file

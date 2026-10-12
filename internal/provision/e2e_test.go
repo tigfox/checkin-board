@@ -103,6 +103,14 @@ func TestSetupRadioNode(t *testing.T) {
 	rnode := testnode.Start(t, testnode.Options{Call: "W1RAD-1", Password: adminPW, UVK5: true})
 	csv := fmt.Sprintf("address,role,station_name,code,callsign,course_order,race_name\n"+
 		"%s,hq,Finish,FIN,KD2DCM-1,,Michaux Mud\n%s,checkpoint,Cattle Chute,CTL,KD2DCM-4,1,\n", hq.URL, rnode.URL)
+	// The backend column must match the node.
+	wrong, err := Parse(strings.NewReader(strings.NewReplacer("race_name\n", "race_name,backend\n", "Michaux Mud\n", "Michaux Mud,\n", "CTL,KD2DCM-4,1,\n", "CTL,KD2DCM-4,1,,graywolf\n").Replace(csv)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := PreviewAll(ctx, wrong, Options{Password: adminPW}); n[1].Err == nil || !strings.Contains(n[1].Err.Error(), "uses uvk5") {
+		t.Fatalf("backend mismatch: %v", n[1].Err)
+	}
 	p, err := Parse(strings.NewReader(csv))
 	if err != nil {
 		t.Fatal(err)

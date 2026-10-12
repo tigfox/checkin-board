@@ -67,9 +67,15 @@ latency (HQ received - checkpoint time in): p50 21s, p95 48s, max 1m31s
 - Exit status: 0 if every passage arrived exactly once, 1 if not, 2 for
   setup or usage errors. Nothing is logged after a setup error.
 
+## Radio nodes
+
+Checkpoints that use a UV-K5/UV-K1 radio (README, "Radio nodes") bench the
+same way: list their addresses with `-cp`. Expect longer latency from a
+busy radio checkpoint, since the radio sends one packet every 5 s at most.
+
 ## Without radios
 
-`go test ./internal/bench` runs the same bench against three whole
-nodes: app engines and web API, on fake graywolfs sharing a simulated
+`go test ./internal/bench` runs the same bench against whole nodes,
+including one with a fake UV-K5 radio: app engines and web API, on fake graywolfs sharing a simulated
 channel with 10% loss. It takes from a few seconds to a few minutes,
 depending on how many batches need the retry ladder.

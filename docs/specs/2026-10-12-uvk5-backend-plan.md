@@ -1,6 +1,7 @@
 # Plan: UV-K5/UV-K1 radio backend (phase 17)
 
-Status: **planned** (2026-10-12). It follows
+Status: **17a-17e built** (2026-10-12); 17f (on-air bench) waits for the
+radios. "As built" at the end. It follows
 [`2026-10-12-uvk5-backend-proposal.md`](2026-10-12-uvk5-backend-proposal.md),
 the firmware maintainer's estimate
 (`uv-k1-k5v3-firmware-custom/claude/aprs-firmware-request-estimate.md`)
@@ -230,3 +231,29 @@ only.
 - **Shared frequency:** a radio checkpoint's fixed `WIDE1-1,WIDE2-1` path
   (until firmware 5) costs airtime in a race where graywolf nodes go
   direct.
+
+## As built (2026-10-12)
+
+- The firmware's spec revision 2 replaced every assumed layout: capability
+  reply (12 bytes, Ok first), feature bits in the spec's order, pinned
+  reason codes (`session`, `empty`, `toolong`, `mode`, `invalid`, `store`
+  added), the 20-byte status reply (10 Hz frequency units, 16-bit
+  counters, free places, acks waiting), set-callsign data (13 bytes), and
+  the settings record's path and gap bytes. Golden tests reproduce the
+  spec's worked examples.
+- The fake radio follows section 8's limits: a fifth pending ack is dropped
+  and reported (`DROP:ack ... full`); on a busy channel only the item at
+  the front times out, each with its own minute.
+- The sim runs radio nodes in simulated time through
+  `uvk5.DirectSession` (the fake radio in-process) and the backend's
+  `Attach`/`Step`.
+- Radio nodes ignore the race's digipeater path, the graywolf channel and
+  TX timing (the radio has its own Path and Gap settings); race config
+  sets only the callsign; Restore puts back only the callsign.
+- The keypad and panel say **"Radio not connected"**, and the checkpoint
+  holds its reports, while the radio's session is down.
+- `CB_UVK5_PORT` accepts only serial device paths, and the port must open
+  as a character device.
+- Not done: the radio's RSSI isn't used by the link check yet (it's kept
+  per sender in `State().LastRSSI`); answers to the firmware team's two
+  questions are in the estimate document's reply.

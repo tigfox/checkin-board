@@ -18,6 +18,7 @@
   <nav class="card">
     <a href="#settings">Station settings</a> ·
     <a href="#radio">Radio and graywolf</a> ·
+    <a href="#uvk5">Radio nodes (UV-K5/UV-K1)</a> ·
     <a href="#pizero">Pi Zero nodes</a> ·
     <a href="#testing">Testing a link</a> ·
     <a href="#bandplan">2 m band plan</a>
@@ -25,9 +26,10 @@
 
   <section id="settings">
     <h2>Station settings (Admin → Station)</h2>
-    <h3>Callsign (graywolf)</h3>
+    <h3>Callsign (graywolf, or the radio)</h3>
     <p>The Amateur Operator's callsign, used for all messaging at this station. It is graywolf's
-      station callsign, so changing it changes graywolf for everything, not just the race.</p>
+      station callsign, so changing it changes graywolf for everything, not just the race. On a
+      <a href="#uvk5">radio node</a> it is the radio's own callsign-SSID, set on the radio.</p>
     <h3>Race settings</h3>
     <dl>
       <dt>Role</dt><dd>Checkpoint or HQ. It can only change before the race starts (or after a reset).</dd>
@@ -46,8 +48,9 @@
     <h3>Messaging settings</h3>
     <p>Radio tunables. The defaults suit most races; change them only after a link check shows a reason to.</p>
     <dl>
-      <dt>Digipeater path</dt><dd>Blank = direct (the default). See <a href="#radio">paths</a> below.</dd>
-      <dt>graywolf channel</dt><dd>0 = graywolf's default transmit channel.</dd>
+      <dt>Digipeater path</dt><dd>Blank = direct (the default). See <a href="#radio">paths</a> below. A
+        <a href="#uvk5">radio node</a> uses the radio's own Path setting instead.</dd>
+      <dt>graywolf channel</dt><dd>0 = graywolf's default transmit channel. Not used on a radio node.</dd>
       <dt>Heartbeat every (s)</dt><dd>How often an idle checkpoint tells HQ it is alive. Default 300, range 60–3600.</dd>
       <dt>Batch after (s)</dt><dd>How long to collect bibs before sending a report. Default 20, range 5–300.</dd>
       <dt>Batches in flight</dt><dd>Reports sent before waiting for HQ's acknowledgements. Default 4, range 1–8.</dd>
@@ -70,6 +73,43 @@
       <li><strong>Retries:</strong> during a race, checkin-board turns off graywolf's own message retries for
         race contacts and retries itself. Messages typed in graywolf's Messages page to those stations
         then go out once, with no retry. They are restored after the race.</li>
+    </ul>
+  </section>
+
+  <section id="uvk5">
+    <h2>Radio nodes (UV-K5/UV-K1)</h2>
+    <p>A node can use a <strong>UV-K5 V3 or UV-K1 with the custom APRS firmware</strong>, plugged into the Pi by
+      USB-C, instead of graywolf and an AIOC. The radio does the packet work itself, so any Pi has CPU to spare.
+      Radio nodes and graywolf nodes work together in one race on one frequency. Radio nodes are meant for
+      <strong>checkpoints</strong>; keep HQ on graywolf.</p>
+    <h3>Before the race, on the radio</h3>
+    <ul>
+      <li><strong>Firmware:</strong> the APRS firmware with protocol revision 1 or later (message queue, line
+        numbers, SENT/DROP reports). An older one is refused: Check radio says "firmware too old: reflash".</li>
+      <li><strong>Callsign-SSID:</strong> this station's own, not the placeholder N0CALL. Set it on the Station
+        page (Callsign) or in the radio's menu. A radio with N0CALL transmits nothing.</li>
+      <li><strong>APRS on</strong>, and the <strong>race frequency</strong> set on the radio's main VFO, in FM.
+        checkin-board reads the frequency but doesn't change it.</li>
+      <li><strong>Path</strong> (radio menu): Direct when HQ is in range, otherwise WIDE1-1. The default
+        WIDE1-1,WIDE2-1 doubles the airtime of every message on a local race.</li>
+      <li><strong>Battery charged</strong>: a low battery stops transmitting.</li>
+    </ul>
+    <h3>What to expect</h3>
+    <ul>
+      <li><strong>Check radio</strong> shows: the connection and firmware, callsign, whether the radio would
+        transmit now (and if not, why: no callsign, APRS off, out of band, not FM, battery, busy), frequency,
+        battery voltage, packets decoded and damaged, and the message queue.</li>
+      <li>The radio sends at most one packet every 5 s (acks first) and holds 4 messages. A busy checkpoint's
+        reports queue and go out in turn: about 30-50 bibs a minute on a clean link, fewer when acks are lost.
+        Nothing is lost.</li>
+      <li><strong>"Radio not connected"</strong> (keypad, panel "radio DOWN"): the radio is unplugged, off, or
+        another program has its port. Reports are kept and sent when it's back. Check the USB-C cable (it must
+        carry data, not only charge), switch the radio on, and wait a few seconds.</li>
+      <li>A message the radio gives up on (busy channel for a minute, low battery) is sent again by the
+        checkpoint, as with any message HQ hasn't acknowledged.</li>
+      <li>The <strong>link check</strong> works the same, without signal levels.</li>
+      <li>graywolf-only parts (graywolf retries, TX timing, digipeater, audio) don't apply and are hidden. A race
+        config file sets only the callsign on the radio.</li>
     </ul>
   </section>
 
@@ -134,6 +174,7 @@ rm -f &quot;$J&quot;</pre>
         modem keeps up with its audio. Nothing is transmitted. The Race page shows its summary before Start.
         It also checks that the radio cable's sound card is actually plugged in: graywolf keeps listing a
         cable that has dropped off USB.</li>
+      <li><strong>"Radio not connected"</strong> on a <a href="#uvk5">radio node</a>: see that section.</li>
       <li><strong>"Radio cable missing"</strong> (keypad, panel, graywolf card, Check radio): the AIOC is
         unplugged or dropped off USB, so nothing is sent or received even though graywolf looks fine. A
         checkpoint holds its reports meanwhile (entries are kept and batched, no retries are spent) and sends

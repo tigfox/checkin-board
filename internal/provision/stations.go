@@ -33,7 +33,7 @@ var Columns = []string{
 	"address", "role", "station_name", "code", "callsign", "course_order",
 	"race_name", "checkpoint_name",
 	"path", "heartbeat_sec", "flush_after_sec", "max_in_flight", "max_text_len", "gap_grace_sec", "gw_channel",
-	"tx_delay_ms", "tx_tail_ms",
+	"tx_delay_ms", "tx_tail_ms", "backend",
 }
 
 var required = []string{"address", "role", "station_name", "code", "callsign"}
@@ -49,6 +49,8 @@ type Target struct {
 	Station string // the race config's station id: raceconfig.HQ or a checkpoint code
 	Role    string
 	Label   string
+	// Backend is what the node must be ("graywolf" or "uvk5"; "": either).
+	Backend string
 }
 
 // Plan is a parsed stations CSV: the race config every node loads, and
@@ -88,7 +90,11 @@ func Parse(r io.Reader) (*Plan, error) {
 			return nil, lineErr(row.line, "address %q is the same node as line %d", get("address"), prev)
 		}
 		seenAddr[key] = row.line
-		t := Target{Line: row.line, Address: get("address"), Role: strings.ToLower(get("role")), Label: get("station_name")}
+		t := Target{Line: row.line, Address: get("address"), Role: strings.ToLower(get("role")), Label: get("station_name"),
+			Backend: strings.ToLower(get("backend"))}
+		if t.Backend != "" && t.Backend != "graywolf" && t.Backend != "uvk5" {
+			return nil, lineErr(row.line, "backend %q must be graywolf or uvk5", get("backend"))
+		}
 		switch t.Role {
 		case store.RoleHQ:
 			if f.HQ.Callsign != "" {

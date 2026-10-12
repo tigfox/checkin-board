@@ -63,6 +63,17 @@ func preview(ctx context.Context, n *Node, p *Plan, opt Options) error {
 	if err := n.client.Login(ctx, opt.Password); err != nil {
 		return fmt.Errorf("login: %w", err)
 	}
+	if n.Backend != "" {
+		var set struct {
+			Backend string `json:"backend"`
+		}
+		if err := n.client.Do(ctx, http.MethodGet, "/api/admin/settings", nil, &set); err != nil {
+			return fmt.Errorf("settings: %w", err)
+		}
+		if set.Backend != "" && set.Backend != n.Backend {
+			return fmt.Errorf("the CSV says backend %s, but this node uses %s (is the address right?)", n.Backend, set.Backend)
+		}
+	}
 	// A 409 means the file is already there: the name is its hash.
 	err := n.client.Upload(ctx, "/api/admin/raceconfigs", p.FileName(), p.Config, nil, nil)
 	if err != nil && nodeapi.StatusOf(err) != http.StatusConflict {

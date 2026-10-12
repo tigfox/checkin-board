@@ -91,6 +91,7 @@ func TestCSVErrors(t *testing.T) {
 		"credentials in address": {header + "http://u:pw@10.0.1.88,hq,HQ,FIN,KD2DCM-1,\n", "no user or password"},
 		"duplicate column":       {"address,role,station_name,code,callsign,callsign\n", "appears twice"},
 		"too big":                {header + strings.Repeat("#"+strings.Repeat("x", 1000)+"\n", 300), "larger than"},
+		"bad backend":            {"address,role,station_name,code,callsign,backend\n10.0.1.88,hq,HQ,FIN,KD2DCM-1,aprsd\n", "backend"},
 		"name too long":          {header + "10.0.1.88,hq,A name much longer than twenty five,,KD2DCM-1,\n", "race config"},
 	} {
 		_, err := Parse(strings.NewReader(tc.csv))
