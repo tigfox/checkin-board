@@ -324,3 +324,9 @@ func (s *Session) SetCallsign(ctx context.Context, cs string) error {
 	_, err = s.ReadSettings(ctx)
 	return err
 }
+
+// Capabilities is what the radio's firmware can do.
+func (s *Session) Capabilities() Capabilities { return s.Caps }
+
+// FirmwareVersion is the firmware's version string from the handshake.
+func (s *Session) FirmwareVersion() string { return s.Version }
