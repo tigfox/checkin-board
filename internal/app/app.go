@@ -47,6 +47,9 @@ type Config struct {
 	// DataDir holds the bib journal and reset backups (normally the
 	// database's directory).
 	DataDir string
+	// Hold, if set, says why race reports can't go on air now ("": they
+	// can), e.g. the radio cable is missing (cablewatch).
+	Hold func() string
 	// StartedAt is saved, on a node's first run only, as the inbox
 	// reader's starting point, so a fresh node doesn't replay old races
 	// from graywolf's history. Later runs keep the first value.
@@ -90,7 +93,7 @@ func New(cfg Config) (*App, error) {
 	ensurer := peers.NewEnsurer(cfg.Graywolf, cfg.Store, nil)
 	var opsSvc *ops.Service // set below; the check-in hook needs it
 	cp, err := checkpoint.New(checkpoint.Config{
-		Store: cfg.Store, Graywolf: cfg.Graywolf, Clock: clock, Peers: ensurer, Logger: log,
+		Store: cfg.Store, Graywolf: cfg.Graywolf, Clock: clock, Peers: ensurer, Logger: log, Hold: cfg.Hold,
 		OnCheckedIn: func(ctx context.Context) error {
 			if opsSvc == nil {
 				return errors.New("app: not ready")

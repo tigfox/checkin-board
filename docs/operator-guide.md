@@ -144,8 +144,10 @@ file). If the node also has an uplink you don't want it on, set
      transmitted. Fix anything marked ✗ before the race; the Race page
      shows the same summary before **Start race**, and Start lists any
      failures in its confirmation.
-   - **Radio cable missing** (on the panel, the graywolf card and in
-     Check radio): the AIOC is unplugged or dropped off USB. Replug it;
+   - **Radio cable missing** (on the keypad, the panel, the graywolf
+     card and in Check radio): the AIOC is unplugged or dropped off USB.
+     A checkpoint holds its reports until the cable is back (entries are
+     kept; no retries are spent), then sends them. Replug it;
      on a Pi Zero, reboot if it doesn't come back (the USB port can stay
      stuck). If it drops every time the radio transmits, swap the cable
      and keep the antenna away from the Pi.

@@ -1034,3 +1034,45 @@ func TestHeartbeatCarriesClosedFlagOnceClosed(t *testing.T) {
 		t.Fatalf("heartbeats = %+v", hbs)
 	}
 }
+
+// Field test 2026-10-11: with the radio cable gone, graywolf still
+// "sent" every message. While held, reports are batched but nothing is
+// sent and no retry is spent; they go out as soon as the hold lifts.
+func TestHoldWhileRadioCableMissing(t *testing.T) {
+	h := newHarness(t)
+	var mu sync.Mutex
+	hold := "radio cable missing"
+	e, err := New(Config{Store: h.s, Graywolf: h.gw, Clock: raceclock.NewClock(h.ft.Now, func() bool { return true }),
+		Now: h.ft.Now, Hold: func() string { mu.Lock(); defer mu.Unlock(); return hold }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e = e
+	h.log(101)
+	h.log(102)
+	for range 10 {
+		h.ft.Advance(30 * time.Second)
+		h.tick()
+	}
+	if n := len(h.gw.Transmissions()); n != 0 {
+		t.Fatalf("sent %d messages while held", n)
+	}
+	pending, err := h.s.ListPendingBatches(ctx)
+	if err != nil || len(pending) != 1 || pending[0].Attempts != 0 {
+		t.Fatalf("pending = %+v (err %v): want one batch, no attempts spent", pending, err)
+	}
+	if e.HoldReason() != hold {
+		t.Fatalf("HoldReason = %q", e.HoldReason())
+	}
+
+	mu.Lock()
+	hold = ""
+	mu.Unlock()
+	h.tick()
+	if len(h.reports()) != 1 || len(h.gw.TransmissionsWithPrefix("RC1 H ")) != 1 {
+		t.Fatalf("after the hold: reports %d, heartbeats %d", len(h.reports()), len(h.gw.TransmissionsWithPrefix("RC1 H ")))
+	}
+	if e.HoldReason() != "" {
+		t.Fatal("hold not cleared")
+	}
+}

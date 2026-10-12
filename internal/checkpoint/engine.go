@@ -99,7 +99,11 @@ type Config struct {
 	// in checked_in (also after a restart) until it returns nil, so it
 	// must be idempotent.
 	OnCheckedIn func(ctx context.Context) error
-	Logger      *slog.Logger
+	// Hold, if set, says why nothing can go on air now ("": it can),
+	// e.g. the radio cable is missing (cablewatch). While held, entries
+	// are still batched but nothing is sent and no retry is spent.
+	Hold   func() string
+	Logger *slog.Logger
 }
 
 // Engine drives the checkpoint side. Tick is called once a second by
@@ -109,6 +113,7 @@ type Engine struct {
 	gw          Messages
 	peers       *peers.Ensurer
 	onCheckedIn func(ctx context.Context) error
+	hold        func() string
 	clock       *raceclock.Clock
 	now         func() time.Time
 	every       time.Duration
@@ -128,6 +133,7 @@ type Engine struct {
 	heardLocal    time.Time // when HQ was last heard, by this node's clock
 	lastRevive    time.Time // last re-expedite of parked batches during check-in
 	hookPending   bool      // OnCheckedIn still to run (or retry)
+	held          string    // the hold in force at the last tick ("": none)
 }
 
 // reviveEvery spaces re-expediting parked batches during a check-in.
@@ -200,7 +206,7 @@ func New(cfg Config) (*Engine, error) {
 		return nil, errors.New("checkpoint: Store, Graywolf and Clock are required")
 	}
 	e := &Engine{store: cfg.Store, gw: cfg.Graywolf, peers: cfg.Peers, onCheckedIn: cfg.OnCheckedIn,
-		clock: cfg.Clock, now: cfg.Now, every: cfg.Interval, log: cfg.Logger}
+		hold: cfg.Hold, clock: cfg.Clock, now: cfg.Now, every: cfg.Interval, log: cfg.Logger}
 	if e.now == nil {
 		e.now = time.Now
 	}
@@ -323,12 +329,41 @@ func (e *Engine) Tick(ctx context.Context, cfg store.Settings) error {
 	if err := e.flush(ctx, cfg, now); err != nil {
 		return fmt.Errorf("checkpoint: flush: %w", err)
 	}
-	err := errors.Join(e.recoverUnbound(ctx, cfg), e.poll(ctx, cfg, now),
-		e.transmit(ctx, cfg, now), e.heartbeat(ctx, cfg, now))
+	err := errors.Join(e.recoverUnbound(ctx, cfg), e.poll(ctx, cfg, now))
+	if !e.updateHold() {
+		err = errors.Join(err, e.transmit(ctx, cfg, now), e.heartbeat(ctx, cfg, now))
+	}
 	if cfg.RaceState == store.RaceCheckingIn {
 		err = errors.Join(err, e.finishCheckIn(ctx, cfg))
 	}
 	return err
+}
+
+// updateHold reads the hold, logs a change, and reports whether sending
+// must wait.
+func (e *Engine) updateHold() bool {
+	reason := ""
+	if e.hold != nil {
+		reason = e.hold()
+	}
+	e.mu.Lock()
+	prev := e.held
+	e.held = reason
+	e.mu.Unlock()
+	switch {
+	case reason != "" && reason != prev:
+		e.log.Debug("checkpoint: holding reports", "reason", reason) // cablewatch logs it
+	case reason == "" && prev != "":
+		e.log.Debug("checkpoint: sending reports again", "was", prev)
+	}
+	return reason != ""
+}
+
+// HoldReason is why reports are held at the last tick ("": they aren't).
+func (e *Engine) HoldReason() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.held
 }
 
 func (e *Engine) setLastState(state string) {

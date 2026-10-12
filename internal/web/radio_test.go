@@ -1,13 +1,10 @@
 package web
 
 import (
-	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"checkin-board/internal/hostmon"
 	"checkin-board/internal/radiocheck"
@@ -76,28 +73,31 @@ func TestRadioCheckCableMissing(t *testing.T) {
 	}
 }
 
-func TestPanelAndAdminWarnCableMissing(t *testing.T) {
-	now := time.Date(2026, 10, 11, 18, 0, 0, 0, time.UTC)
-	host := &fakeHost{snap: hostmon.Snapshot{SoundCardsKnown: true, SoundCards: []hostmon.SoundCard{{Index: 1, ID: "vc4hdmi"}}}}
-	e := newEnvWith(t, checkpointSettings(store.RaceActive), func(d *Deps) {
-		d.HookToken, d.Host, d.Now = hookTok, host, func() time.Time { return now }
-	})
-	if v := hookView(t, e); !slices.Contains(v.Status.Warnings, "Radio cable missing") {
+type fakeCable struct{ missing []string }
+
+func (f *fakeCable) Missing() []string { return f.missing }
+
+func TestCableMissingWarnings(t *testing.T) {
+	cable := &fakeCable{missing: []string{"AllInOneCable"}}
+	e := newEnvWith(t, checkpointSettings(store.RaceActive), func(d *Deps) { d.HookToken, d.Cable = hookTok, cable })
+	if v := hookView(t, e); !slices.Contains(v.Status.Warnings, cableWarning) {
 		t.Fatalf("panel warnings = %v", v.Status.Warnings)
 	}
 	gv := decode[graywolfView](t, e.do("GET", "/api/admin/gw", e.admin, nil))
 	if !slices.ContainsFunc(gv.Warnings, func(w string) bool { return strings.Contains(w, "AllInOneCable") }) {
 		t.Fatalf("admin warnings = %v", gv.Warnings)
 	}
-
-	// Plugged back in: the cached reading holds for cableTTL, then clears.
-	host.snap.SoundCards = append(host.snap.SoundCards, hostmon.SoundCard{Index: 0, ID: "AllInOneCable"})
-	if v := hookView(t, e); !slices.Contains(v.Status.Warnings, "Radio cable missing") {
-		t.Fatalf("within the cache window: warnings = %v", v.Status.Warnings)
+	st := decode[stationView](t, e.do("GET", "/api/station", e.volunt, nil))
+	if st.Graywolf.Problem != cableWarning {
+		t.Fatalf("keypad banner = %q", st.Graywolf.Problem)
 	}
-	now = now.Add(cableTTL)
-	if v := hookView(t, e); slices.Contains(v.Status.Warnings, "Radio cable missing") {
+
+	cable.missing = nil
+	if v := hookView(t, e); slices.Contains(v.Status.Warnings, cableWarning) {
 		t.Fatalf("after replug: warnings = %v", v.Status.Warnings)
+	}
+	if st := decode[stationView](t, e.do("GET", "/api/station", e.volunt, nil)); st.Graywolf.Problem != "" {
+		t.Fatalf("after replug: banner = %q", st.Graywolf.Problem)
 	}
 }
 
@@ -110,40 +110,4 @@ func radioItem(t *testing.T, r radiocheck.Report, key string) radiocheck.Item {
 	}
 	t.Fatalf("no %q item in %+v", key, r.Items)
 	return radiocheck.Item{}
-}
-
-// A reading that can't tell (graywolf down) keeps the previous one.
-func TestCableWarningSurvivesGraywolfErrors(t *testing.T) {
-	now := time.Date(2026, 10, 11, 18, 0, 0, 0, time.UTC)
-	host := &fakeHost{snap: hostmon.Snapshot{SoundCardsKnown: true, SoundCards: []hostmon.SoundCard{{Index: 1, ID: "vc4hdmi"}}}}
-	e := newEnvWith(t, checkpointSettings(store.RaceActive), func(d *Deps) {
-		d.HookToken, d.Host, d.Now = hookTok, host, func() time.Time { return now }
-	})
-	if v := hookView(t, e); !slices.Contains(v.Status.Warnings, cableWarning) {
-		t.Fatalf("warnings = %v", v.Status.Warnings)
-	}
-	host.snap.SoundCardsKnown = false // can't tell any more
-	now = now.Add(cableTTL)
-	if v := hookView(t, e); !slices.Contains(v.Status.Warnings, cableWarning) {
-		t.Fatalf("an unknown reading cleared the warning: %v", v.Status.Warnings)
-	}
-}
-
-func TestCableWatchConcurrent(t *testing.T) {
-	host := &fakeHost{snap: hostmon.Snapshot{SoundCardsKnown: true}}
-	e := newEnvWith(t, checkpointSettings(store.RaceActive), func(d *Deps) { d.HookToken, d.Host = hookTok, host })
-	cfg, err := e.st.GetSettings(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := &server{Deps: Deps{Graywolf: e.gw, Host: host}, log: slog.New(slog.DiscardHandler), now: time.Now}
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Add(1)
-		go func() { defer wg.Done(); _ = s.missingCards(cfg) }()
-	}
-	wg.Wait()
-	if got := s.missingCards(cfg); len(got) != 1 {
-		t.Fatalf("missing = %v", got)
-	}
 }

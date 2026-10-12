@@ -134,8 +134,10 @@ rm -f &quot;$J&quot;</pre>
         modem keeps up with its audio. Nothing is transmitted. The Race page shows its summary before Start.
         It also checks that the radio cable's sound card is actually plugged in: graywolf keeps listing a
         cable that has dropped off USB.</li>
-      <li><strong>"Radio cable missing"</strong> (panel, graywolf card, Check radio): the AIOC is unplugged
-        or dropped off USB, so nothing is sent or received even though graywolf looks fine. Replug it. On a
+      <li><strong>"Radio cable missing"</strong> (keypad, panel, graywolf card, Check radio): the AIOC is
+        unplugged or dropped off USB, so nothing is sent or received even though graywolf looks fine. A
+        checkpoint holds its reports meanwhile (entries are kept and batched, no retries are spent) and sends
+        them as soon as the cable is back. Replug it. On a
         Pi Zero the USB port can stay stuck after a drop, and only a reboot brings the cable back. A cable
         that drops every time the radio transmits is faulty or picking up RF: try another cable, a ferrite,
         or the antenna further from the Pi. Watch that radio: it can stay keyed after the drop.</li>

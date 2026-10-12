@@ -293,10 +293,13 @@ func (m *Monitor) readMachine() string {
 // " 0 [AllInOneCable  ]: USB-Audio - All-In-One-Cable".
 var cardLineRe = regexp.MustCompile(`^\s*(\d+)\s+\[([^\]\s]+)\s*\]:`)
 
-// readSoundCards lists the sound cards; ok is false when the list can't
-// be read (no ALSA, or not Linux).
-func (m *Monitor) readSoundCards() (cards []SoundCard, ok bool) {
-	b, err := os.ReadFile(filepath.Join(m.proc, "asound", "cards"))
+func (m *Monitor) readSoundCards() ([]SoundCard, bool) { return ReadSoundCards(m.proc) }
+
+// ReadSoundCards lists the sound cards from the proc filesystem at proc
+// ("/proc" on a node); ok is false when the list can't be read (no ALSA,
+// or not Linux). Cheap: one small file.
+func ReadSoundCards(proc string) (cards []SoundCard, ok bool) {
+	b, err := os.ReadFile(filepath.Join(proc, "asound", "cards"))
 	if err != nil {
 		return nil, false
 	}
