@@ -28,7 +28,9 @@ type FakeRadio struct {
 	status   Status
 	gap      time.Duration
 	busy     bool // the channel never clears
+	lowBatt  bool
 	out      io.Writer
+	sink     func(line string) // DirectSession: lines without a port
 	wmu      sync.Mutex
 	ts       uint32
 	monitor  bool
@@ -62,12 +64,12 @@ func NewFakeRadio(cs string, now func() time.Time) *FakeRadio {
 	if err != nil {
 		panic(err)
 	}
-	all := FeatSendInfo | FeatSentDrop | FeatMultiAck | FeatQueue | FeatStatus | FeatCounters | FeatSetCall | FeatRSSI
+	all := uint32(0x3ff) // revision 1: bits 0-9
 	return &FakeRadio{
 		Now:      now,
 		settings: Settings{APRSOn: true, Call: call, SSID: ssid, Callsign: callsign(call, ssid)},
 		caps:     Capabilities{Revision: 1, Features: all, QueueDepth: 4, AckDepth: 4, MaxText: MaxText},
-		status:   Status{InBand: true, BatteryMV: 7900, Monitor: false, FreqHz: 144_390_000},
+		status:   Status{InBand: true, BatteryMV: 7900, FreqHz: 144_390_000},
 		gap:      5 * time.Second,
 		rssi:     -90,
 	}
@@ -98,7 +100,7 @@ func (f *FakeRadio) SetBusy(busy bool) {
 func (f *FakeRadio) SetLowBattery(low bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.status.LowBattery = low
+	f.lowBatt = low
 }
 
 // SetRSSI sets the signal strength reported for frames heard.
@@ -153,9 +155,17 @@ func (f *FakeRadio) write(b []byte) {
 
 // writeLine writes a monitor line if a host turned monitoring on.
 func (f *FakeRadio) writeLine(on bool, s string) {
-	if on {
-		f.write([]byte(s + "\r\n"))
+	if !on {
+		return
 	}
+	f.mu.Lock()
+	sink := f.sink
+	f.mu.Unlock()
+	if sink != nil {
+		sink(s)
+		return
+	}
+	f.write([]byte(s + "\r\n"))
 }
 
 func ack(ok bool) []byte { return []byte{b2u(ok), 0, 0, 0} }
@@ -198,19 +208,26 @@ func (f *FakeRadio) handle(c Frame) ([]byte, bool) {
 			return nil, false
 		}
 		st := f.status
-		st.Busy = f.busy
-		st.Inhibit = f.inhibit()
+		st.Busy, st.Monitor, st.Inhibit = f.busy, f.monitor, f.inhibit()
+		st.WouldTransmit = st.Inhibit == ReasonNone && !f.busy
+		st.FreeSlots, st.AcksWaiting = f.free(), uint8(len(f.acks))
 		return st.encode(), true
 	case cmdSetCallsign:
-		if !f.caps.Has(FeatSetCall) || !tsOK || len(c.Data) < 12 {
-			return ack(false), true
+		refuse := func(r Reason) []byte { return []byte{0, 0, 0, uint8(r)} }
+		switch {
+		case !f.caps.Has(FeatSetCall):
+			return nil, false
+		case !tsOK:
+			return refuse(ReasonSession), true
+		case len(c.Data) != 13 || c.Data[10] != 0 || c.Data[11] != 0 || c.Data[12] > 15:
+			return refuse(ReasonInvalid), true
 		}
-		call := cString(c.Data[4:11])
-		if _, _, err := SplitCallsign(call); err != nil || c.Data[11] > 15 {
-			return ack(false), true
+		call := cString(c.Data[4:12])
+		if _, _, err := SplitCallsign(call); err != nil || strings.ToUpper(call) != call {
+			return refuse(ReasonInvalid), true
 		}
-		f.settings.Call, f.settings.SSID = call, c.Data[11]
-		f.settings.Callsign = callsign(call, c.Data[11])
+		f.settings.Call, f.settings.SSID = call, c.Data[12]
+		f.settings.Callsign = callsign(call, c.Data[12])
 		return ack(true), true
 	}
 	return nil, false
@@ -218,13 +235,19 @@ func (f *FakeRadio) handle(c Frame) ([]byte, bool) {
 
 func (f *FakeRadio) queueMessage(d []byte, tsOK bool) []byte {
 	refuse := func(r Reason) []byte { return []byte{0, 0, f.free(), uint8(r)} }
-	if !tsOK || len(d) < 15 {
-		return refuse(ReasonRefused)
+	if !tsOK {
+		return refuse(ReasonSession)
+	}
+	if len(d) < 15 {
+		return refuse(ReasonEmpty)
 	}
 	to := cString(d[4:14])
 	text := cString(d[14:])
-	if to == "" || text == "" || len(text) > MaxText {
-		return refuse(ReasonRefused)
+	switch {
+	case to == "" || text == "":
+		return refuse(ReasonEmpty)
+	case len(text) > MaxText:
+		return refuse(ReasonTooLong)
 	}
 	if len(f.queue) >= int(f.caps.QueueDepth) {
 		return refuse(ReasonFull)
@@ -246,7 +269,7 @@ func (f *FakeRadio) inhibit() Reason {
 		return ReasonAPRSOff
 	case !f.status.InBand:
 		return ReasonBand
-	case f.status.LowBattery:
+	case f.lowBatt:
 		return ReasonBattery
 	}
 	return ReasonNone

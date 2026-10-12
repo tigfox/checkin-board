@@ -252,20 +252,34 @@ func (s *Session) Settings() Settings {
 // the radio will use ("07"); a full queue is refused (RefusedError with
 // ReasonFull), never replacing anything.
 func (s *Session) Send(ctx context.Context, to, text string) (SendResult, error) {
-	call, ssid, err := SplitCallsign(to)
+	data, err := sendData(s.ts, to, text)
 	if err != nil {
 		return SendResult{}, err
 	}
-	if err := ValidText(text); err != nil {
-		return SendResult{}, err
-	}
-	dest := make([]byte, 10)
-	copy(dest, callsign(call, ssid))
-	f, err := s.command(ctx, cmdSendMessage, s.withTS(append(dest, text...)))
+	f, err := s.command(ctx, cmdSendMessage, data)
 	if err != nil {
 		return SendResult{}, fmt.Errorf("uvk5: send: %w", err)
 	}
-	res, err := parseSendResult(f.Data)
+	return checkSendReply(f.Data)
+}
+
+// sendData builds 0x0700's data: ts, a 10-byte destination, the text.
+func sendData(ts uint32, to, text string) ([]byte, error) {
+	call, ssid, err := SplitCallsign(to)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidText(text); err != nil {
+		return nil, err
+	}
+	d := make([]byte, 14, 14+len(text))
+	put32(d, ts)
+	copy(d[4:], callsign(call, ssid))
+	return append(d, text...), nil
+}
+
+func checkSendReply(d []byte) (SendResult, error) {
+	res, err := parseSendResult(d)
 	if err != nil {
 		return SendResult{}, err
 	}
@@ -319,7 +333,11 @@ func (s *Session) SetCallsign(ctx context.Context, cs string) error {
 		return fmt.Errorf("uvk5: set callsign: %w", err)
 	}
 	if len(f.Data) < 1 || f.Data[0] != 1 {
-		return &RefusedError{Cmd: "the callsign"}
+		r := ReasonNone
+		if len(f.Data) >= 4 {
+			r = Reason(f.Data[3])
+		}
+		return &RefusedError{Cmd: "the callsign", Reason: r}
 	}
 	_, err = s.ReadSettings(ctx)
 	return err

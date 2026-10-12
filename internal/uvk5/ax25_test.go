@@ -107,7 +107,8 @@ func TestParseLine(t *testing.T) {
 		"SENT:kd2dcm-1{07":               Sent{To: "KD2DCM-1", Line: "07"},
 		"DROP:KD2DCM-1{07} busy":         Dropped{To: "KD2DCM-1", Line: "07", Reason: ReasonBusy},
 		"DROP:ack KD2DCM-1{050} battery": Dropped{To: "KD2DCM-1", Line: "050", Ack: true, Reason: ReasonBattery},
-		"DROP:KD2DCM-1{07} whatever":     Dropped{To: "KD2DCM-1", Line: "07", Reason: ReasonRefused},
+		"DROP:KD2DCM-1{07} whatever":     Dropped{To: "KD2DCM-1", Line: "07", Reason: ReasonUnknown},
+		"DROP:KD2DCM-1{07} mode":         Dropped{To: "KD2DCM-1", Line: "07", Reason: ReasonMode},
 		"APRSRSSI:-87":                   HeardRSSI{DBm: -87},
 		"APRSRSSI:x":                     OtherLine{"APRSRSSI:x"},
 		"APRSRAW:ZZ":                     OtherLine{"APRSRAW:ZZ"},
@@ -122,12 +123,18 @@ func TestParseLine(t *testing.T) {
 }
 
 func TestReasonNames(t *testing.T) {
-	for r := ReasonNone + 1; r <= ReasonRefused; r++ {
+	for r := ReasonFull; r <= ReasonStore; r++ {
 		if ParseReason(r.String()) != r {
 			t.Errorf("%d: %q doesn't round trip", r, r)
 		}
 	}
-	if Reason(200).String() != "reason-200" {
-		t.Error("unknown reason name")
+	if Reason(200).String() != "reason-200" || ReasonNone.String() != "ok" || ParseReason("nope") != ReasonUnknown {
+		t.Error("reason names")
+	}
+	// The spec's pinned numbers (5.7).
+	for r, n := range map[Reason]uint8{ReasonFull: 1, ReasonSession: 2, ReasonBusy: 5, ReasonBattery: 9, ReasonOff: 12, ReasonStore: 14} {
+		if uint8(r) != n {
+			t.Errorf("%s = %d, want %d", r, r, n)
+		}
 	}
 }

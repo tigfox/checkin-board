@@ -18,7 +18,9 @@ import (
 	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/peers"
 	"checkin-board/internal/raceclock"
+	"checkin-board/internal/radiobackend"
 	"checkin-board/internal/store"
+	"checkin-board/internal/uvk5"
 )
 
 var ctx = context.Background()
@@ -45,12 +47,15 @@ func (c *Clock) advance(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
-// Node is one station: graywolf plus checkin-board.
+// Node is one station: graywolf (or a UV-K5 radio) plus checkin-board.
 type Node struct {
 	Call     string
 	Settings store.Settings
 	Store    *store.Store
-	GW       *gwfake.Station
+	GW       *gwfake.Station // nil on a radio node
+	// UV and RB are a radio node's fake radio and radio backend (phase 17).
+	UV       *uvk5.FakeRadio
+	RB       *radiobackend.Backend
 	CP       *checkpoint.Engine
 	HQ       *hq.Engine
 	Inbox    *inbox.Reader
@@ -84,6 +89,51 @@ func (s *Sim) AddNode(call string, settings store.Settings) (*Node, error) {
 	return n, nil
 }
 
+// AddRadioNode adds a node that uses a UV-K5 radio (the fake radio with
+// the agreed firmware's limits) instead of graywolf.
+func (s *Sim) AddRadioNode(call string, settings store.Settings) (*Node, error) {
+	uv := uvk5.NewFakeRadio(call, s.Clock.Now)
+	uv.Air = func(from, to string, m uvk5.Message) {
+		s.Radio.Transmit(gwfake.Frame{From: from, To: to, Text: m.Text, MsgID: m.ID, IsAck: m.Ack})
+	}
+	s.Radio.AttachListener(radioListener{uv})
+	n := &Node{Call: call, Settings: settings, UV: uv}
+	if err := s.build(n); err != nil {
+		return nil, err
+	}
+	s.Nodes = append(s.Nodes, n)
+	return n, nil
+}
+
+// radioListener puts a fake radio on the simulated channel.
+type radioListener struct{ uv *uvk5.FakeRadio }
+
+func (l radioListener) Callsign() string { return l.uv.Callsign() }
+func (l radioListener) HearFrame(f gwfake.Frame) {
+	l.uv.Hear(f.From, nil, uvk5.Message{Addressee: f.To, Text: f.Text, ID: f.MsgID, Ack: f.IsAck})
+}
+
+// UnplugRadio disconnects a radio node's radio; PlugRadio reconnects it.
+func (s *Sim) UnplugRadio(n *Node) { n.RB.Detach(fmt.Errorf("simulated: radio unplugged")) }
+
+// PlugRadio reconnects a radio node's radio (a new session).
+func (s *Sim) PlugRadio(n *Node) error {
+	sess, err := uvk5.NewDirectSession(n.UV)
+	if err != nil {
+		return err
+	}
+	n.RB.Attach(sess)
+	return nil
+}
+
+// messages is what n's engines talk to: graywolf, or the radio backend.
+func (n *Node) messages() app.Graywolf {
+	if n.RB != nil {
+		return n.RB
+	}
+	return n.GW
+}
+
 // build gives n a fresh store and engines (also used to simulate a
 // node whose database was wiped or restored from an old backup).
 func (s *Sim) build(n *Node) error {
@@ -96,6 +146,20 @@ func (s *Sim) build(n *Node) error {
 		return err
 	}
 	old := n.Store
+	if n.UV != nil {
+		rb, err := radiobackend.New(radiobackend.Config{Store: st, Now: s.Clock.Now,
+			Dial: func(context.Context) (radiobackend.Session, error) { return nil, fmt.Errorf("simulated: no dialling") }})
+		if err != nil {
+			return err
+		}
+		if n.RB != nil {
+			n.RB.Detach(fmt.Errorf("simulated: replaced"))
+		}
+		n.RB = rb
+		if err := s.PlugRadio(n); err != nil {
+			return err
+		}
+	}
 	if err := s.wire(n, st); err != nil {
 		return err
 	}
@@ -126,20 +190,21 @@ func (s *Sim) Restart(n *Node) error {
 // wire builds n's engines, link check and inbox reader over st.
 func (s *Sim) wire(n *Node, st *store.Store) error {
 	clock := raceclock.NewClock(s.Clock.Now, func() bool { return true })
-	ens := peers.NewEnsurer(n.GW, st, s.Clock.Now)
-	cp, err := checkpoint.New(checkpoint.Config{Store: st, Graywolf: n.GW, Clock: clock, Now: s.Clock.Now, Peers: ens})
+	gw := n.messages()
+	ens := peers.NewEnsurer(gw, st, s.Clock.Now)
+	cp, err := checkpoint.New(checkpoint.Config{Store: st, Graywolf: gw, Clock: clock, Now: s.Clock.Now, Peers: ens})
 	if err != nil {
 		return err
 	}
-	hqe, err := hq.New(hq.Config{Store: st, Graywolf: n.GW, Clock: clock, Now: s.Clock.Now, Peers: ens})
+	hqe, err := hq.New(hq.Config{Store: st, Graywolf: gw, Clock: clock, Now: s.Clock.Now, Peers: ens})
 	if err != nil {
 		return err
 	}
-	lc, err := linkcheck.New(linkcheck.Config{Store: st, Graywolf: n.GW, Peers: ens, Now: s.Clock.Now})
+	lc, err := linkcheck.New(linkcheck.Config{Store: st, Graywolf: gw, Peers: ens, Now: s.Clock.Now})
 	if err != nil {
 		return err
 	}
-	reader, err := inbox.New(inbox.Config{Graywolf: n.GW, Store: st, Dispatcher: app.NewDispatcher(st, cp, hqe, lc)})
+	reader, err := inbox.New(inbox.Config{Graywolf: gw, Store: st, Dispatcher: app.NewDispatcher(st, cp, hqe, lc)})
 	if err != nil {
 		return err
 	}
@@ -160,6 +225,9 @@ func (s *Sim) ReplaceStore(n *Node) error {
 // Close releases every node's database.
 func (s *Sim) Close() {
 	for _, n := range s.Nodes {
+		if n.RB != nil {
+			n.RB.Detach(fmt.Errorf("simulation closed"))
+		}
 		_ = n.Store.Close()
 	}
 }
@@ -171,6 +239,9 @@ func (s *Sim) Step() {
 	s.Clock.advance(time.Second)
 	s.Radio.Deliver()
 	for _, n := range s.Nodes {
+		if n.RB != nil {
+			n.RB.Step(ctx) // what the radio heard and reported
+		}
 		_ = n.Inbox.CatchUp(ctx)
 		// Re-read settings: the lifecycle (and the engine itself, on
 		// finishing a check-in) changes the race state.
@@ -186,6 +257,10 @@ func (s *Sim) Step() {
 			if cfg.RaceState == store.RaceActive || cfg.RaceState == store.RaceComplete {
 				_ = n.HQ.Tick(ctx, cfg)
 			}
+		}
+		if n.RB != nil {
+			n.RB.Step(ctx) // hand new messages to the radio
+			n.UV.Tick()    // the radio transmits what its gap allows
 		}
 	}
 }

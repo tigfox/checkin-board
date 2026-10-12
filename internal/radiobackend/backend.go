@@ -453,3 +453,36 @@ func (b *Backend) toMessage(m store.RadioMessage) graywolf.Message {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// Attach connects the backend to an open session without Run, for
+// simulations that drive it with Step in simulated time.
+func (b *Backend) Attach(sess Session) { b.up(sess) }
+
+// Detach drops the session (the radio is unplugged), for simulations.
+func (b *Backend) Detach(err error) {
+	b.mu.Lock()
+	sess := b.sess
+	b.mu.Unlock()
+	if sess != nil {
+		_ = sess.Close()
+	}
+	b.setDown(err)
+}
+
+// Step handles the radio's pending events and moves rows without
+// waiting: one Run iteration, for simulations.
+func (b *Backend) Step(ctx context.Context) {
+	if sess, err := b.session(); err == nil {
+	drain:
+		for {
+			select {
+			case ev := <-sess.Events():
+				b.handle(ctx, ev)
+			default:
+				break drain
+			}
+		}
+	}
+	b.expireSubmitted(ctx)
+	b.submit(ctx)
+}

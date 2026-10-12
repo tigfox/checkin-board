@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 func unhex(t *testing.T, s string) []byte {
@@ -107,4 +108,82 @@ func FuzzReader(f *testing.F) {
 			}
 		}
 	})
+}
+
+// Spec 5.8's worked example: status command and reply.
+func TestGoldenStatus(t *testing.T) {
+	if got, want := EncodeFrame(cmdStatus, nil, false), unhex(t, "ab cd 04 00 02 6b 14 e6 e8 c5 dc ba"); !bytes.Equal(got, want) {
+		t.Fatalf("command\n got %x\nwant %x", got, want)
+	}
+	wire := unhex(t, "ab cd 18 00 03 6b 00 e6 2f 9b 0d 40 dd 29 d7 41 4b 51 35 80 11 6c 18 e6 2d 90 0d 40 de ca dc ba")
+	it, err := NewReader(bytes.NewReader(wire)).Next()
+	if err != nil || it.Frame == nil || it.Frame.ID != cmdStatus+1 {
+		t.Fatalf("reply: %+v %v", it, err)
+	}
+	st, err := parseStatus(it.Frame.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Status{WouldTransmit: true, InBand: true, BatteryMV: 7420, Decoded: 258, FreqHz: 144_390_000,
+		Damaged: 7, Sent: 12, FreeSlots: 3, AcksWaiting: 1}
+	if st != want {
+		t.Fatalf("status\n got %+v\nwant %+v", st, want)
+	}
+	if got := EncodeFrame(cmdStatus+1, st.encode(), true); !bytes.Equal(got, wire) {
+		t.Fatalf("re-encoded\n got %x\nwant %x", got, wire)
+	}
+}
+
+// Spec 5.9's worked example: set callsign W1ABC-7, then both replies.
+func TestGoldenSetCallsign(t *testing.T) {
+	want := unhex(t, "ab cd 11 00 00 6b 19 e6 6a a2 2f 51 76 04 94 02 50 03 e9 80 11 be 57 dc ba")
+	if got := EncodeFrame(cmdSetCallsign, setCallsignData(0x11223344, "W1ABC", 7), false); !bytes.Equal(got, want) {
+		t.Fatalf("command\n got %x\nwant %x", got, want)
+	}
+	for wire, ok := range map[string]bool{
+		"ab cd 08 00 01 6b 10 e6 2f 91 0d 40 de ca dc ba": true,
+		"ab cd 08 00 01 6b 10 e6 2e 91 0d 4d de ca dc ba": false,
+	} {
+		it, err := NewReader(bytes.NewReader(unhex(t, wire))).Next()
+		if err != nil || it.Frame.ID != cmdSetCallsign+1 || (it.Frame.Data[0] == 1) != ok {
+			t.Fatalf("%s: %+v %v", wire, it, err)
+		}
+		if !ok && Reason(it.Frame.Data[3]) != ReasonInvalid {
+			t.Fatalf("refusal reason %d", it.Frame.Data[3])
+		}
+	}
+}
+
+// Spec 5.2's worked record: W1ABC-7, APRS on, path direct, 6 s gap.
+func TestGoldenSettingsRecord(t *testing.T) {
+	rec := unhex(t, `41 50 52 31 01 01 8a 07 58 02 42 fe 57 31 41 42
+		43 00 00 00 4e 30 43 41 4c 4c 2d 37 00 00 31 33
+		30 37 31 32 38 31 30 35 39 39 34 30 35 00 52 69
+		64 67 65 20 64 69 67 69 00 00 00 00 00 00 00 00
+		00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+		00 00 00 00 00 00 00 00 00 00 7a 1f 02 0c 00 00`)
+	st, err := parseSettings(append([]byte{1, 0, 0, 0}, rec...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Callsign != "W1ABC-7" || !st.APRSOn || st.Path != "" || st.Gap != 6*time.Second || !st.Configured() {
+		t.Fatalf("settings = %+v", st)
+	}
+	rec[92], rec[93] = 0, 0
+	st, _ = parseSettings(append([]byte{1, 0, 0, 0}, rec...))
+	if st.Path != "WIDE1-1,WIDE2-1" || st.Gap != 5*time.Second {
+		t.Fatalf("defaults = %+v", st)
+	}
+}
+
+// A capability refusal is revision 0 (and so too old for us).
+func TestCapabilitiesRefused(t *testing.T) {
+	c, err := parseCapabilities(make([]byte, 12))
+	if err != nil || c.Has(Required) || c.Revision != 0 {
+		t.Fatalf("refused = %+v %v", c, err)
+	}
+	full := Capabilities{Revision: 1, Features: 0x3ff, QueueDepth: 4, AckDepth: 4, MaxText: 67}
+	if back, _ := parseCapabilities(full.encode()); back != full || !back.Has(Required|FeatStatus|FeatSetCall|FeatRSSI|FeatCounters) {
+		t.Fatalf("round trip = %+v", back)
+	}
 }
