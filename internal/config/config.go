@@ -31,6 +31,15 @@ const (
 	// Action that runs a link check); unset leaves it off.
 	EnvHookTokenFile = "CB_HOOK_TOKEN_FILE"
 
+	// EnvBackend chooses how the node sends race traffic: "graywolf"
+	// (default) or "uvk5", a UV-K5 V3 / UV-K1 radio on USB-C (phase 17).
+	EnvBackend = "CB_BACKEND"
+	// EnvUVK5Port is the radio's serial port ("": the first that answers).
+	EnvUVK5Port = "CB_UVK5_PORT"
+
+	BackendGraywolf = "graywolf"
+	BackendUVK5     = "uvk5"
+
 	// MinHookTokenLen is the shortest accepted hook token.
 	MinHookTokenLen = 24
 
@@ -46,13 +55,25 @@ type Config struct {
 	DBPath           string
 	Listen           string
 	HookToken        string // "" = automation hook off
+	Backend          string // BackendGraywolf or BackendUVK5
+	UVK5Port         string // "" = find the radio
 }
+
+// Radio reports whether the node uses a UV-K5 radio instead of graywolf.
+func (c Config) Radio() bool { return c.Backend == BackendUVK5 }
 
 // String never includes the password.
 func (c Config) String() string {
 	hook := "off"
 	if c.HookToken != "" {
 		hook = "on"
+	}
+	if c.Radio() {
+		port := c.UVK5Port
+		if port == "" {
+			port = "auto"
+		}
+		return fmt.Sprintf("backend=uvk5 port=%s db=%s listen=%s hook=%s", port, c.DBPath, c.Listen, hook)
 	}
 	return fmt.Sprintf("graywolf=%s user=%s timeout=%s db=%s listen=%s hook=%s", c.GraywolfURL, c.GraywolfUser, c.Timeout, c.DBPath, c.Listen, hook)
 }
@@ -78,6 +99,14 @@ func Load() (Config, error) {
 
 // LoadFrom reads configuration from env.
 func LoadFrom(env Env) (Config, error) {
+	backend := strings.ToLower(valueOr(strings.TrimSpace(env.Getenv(EnvBackend)), BackendGraywolf))
+	switch backend {
+	case BackendGraywolf:
+	case BackendUVK5:
+		return loadRadio(env)
+	default:
+		return Config{}, fmt.Errorf("%s must be %q or %q, got %q", EnvBackend, BackendGraywolf, BackendUVK5, backend)
+	}
 	gwURL := valueOr(env.Getenv(EnvGraywolfURL), DefaultGraywolfURL)
 	if err := validateURL(gwURL); err != nil {
 		return Config{}, err
@@ -94,21 +123,45 @@ func LoadFrom(env Env) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	hook := ""
-	if path := env.Getenv(EnvHookTokenFile); path != "" {
-		if hook, err = readSecretFile(env, EnvHookTokenFile, path); err != nil {
-			return Config{}, err
-		}
-		if len(hook) < MinHookTokenLen {
-			return Config{}, fmt.Errorf("%s: the token must be at least %d characters", EnvHookTokenFile, MinHookTokenLen)
-		}
+	hook, err := loadHook(env)
+	if err != nil {
+		return Config{}, err
 	}
 	return Config{
 		GraywolfURL: gwURL, GraywolfUser: user, GraywolfPassword: pass, Timeout: timeout,
 		DBPath:    DBPathFrom(env.Getenv),
 		Listen:    valueOr(strings.TrimSpace(env.Getenv(EnvListen)), DefaultListen),
-		HookToken: hook,
+		HookToken: hook, Backend: BackendGraywolf,
 	}, nil
+}
+
+// loadRadio reads a radio node's configuration: no graywolf settings.
+func loadRadio(env Env) (Config, error) {
+	port := strings.TrimSpace(env.Getenv(EnvUVK5Port))
+	if port != "" && (!strings.HasPrefix(port, "/dev/") || strings.Contains(port, "..")) {
+		return Config{}, fmt.Errorf("%s must be a device path under /dev, got %q", EnvUVK5Port, port)
+	}
+	hook, err := loadHook(env)
+	if err != nil {
+		return Config{}, err
+	}
+	return Config{Backend: BackendUVK5, UVK5Port: port, DBPath: DBPathFrom(env.Getenv),
+		Listen: valueOr(strings.TrimSpace(env.Getenv(EnvListen)), DefaultListen), HookToken: hook}, nil
+}
+
+func loadHook(env Env) (string, error) {
+	path := env.Getenv(EnvHookTokenFile)
+	if path == "" {
+		return "", nil
+	}
+	hook, err := readSecretFile(env, EnvHookTokenFile, path)
+	if err != nil {
+		return "", err
+	}
+	if len(hook) < MinHookTokenLen {
+		return "", fmt.Errorf("%s: the token must be at least %d characters", EnvHookTokenFile, MinHookTokenLen)
+	}
+	return hook, nil
 }
 
 // DBPathFrom reads only the database path (for host commands that don't
@@ -235,6 +288,9 @@ func PanelFrom(env Env) (Panel, error) {
 // GraywolfLocal reports whether graywolf runs on this machine (a loopback
 // URL), so the node's own hardware (its sound cards) is graywolf's.
 func (c Config) GraywolfLocal() bool {
+	if c.Radio() {
+		return false
+	}
 	u, err := url.Parse(c.GraywolfURL)
 	if err != nil {
 		return false

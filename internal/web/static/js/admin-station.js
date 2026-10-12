@@ -12,44 +12,51 @@ const MAX_STATION_NAME = 25;
 export async function renderStation(sec, ctx) {
   const s = ctx.settings;
   const gw = await get("/api/admin/gw");
+  // A radio node (UV-K5/UV-K1 on USB-C) has no graywolf: the radio is
+  // the station.
+  const radio = gw.backend === "uvk5";
+  const where = radio ? "on the radio" : "in graywolf";
   sec.append(h("h1", {}, "Station"));
   sec.append(h("p", {}, h("a", { href: "/guide", id: "guide-link" }, "Station guide"),
     ": what each setting does, radio and graywolf setup, Pi Zero notes, and the 2 m band plan."));
   if (s.role === "checkpoint" && L.sameStation(gw.callsign, s.hq_call)) {
     sec.append(h("p", { class: "banner warn" },
-      `The HQ callsign ${s.hq_call.toUpperCase()} is this station's own callsign: graywolf ignores messages from its own call, so this checkpoint would never hear HQ. Give each station its own callsign-SSID.`));
+      `The HQ callsign ${s.hq_call.toUpperCase()} is this station's own callsign: ${radio ? "the radio" : "graywolf"} ignores messages from its own call, so this checkpoint would never hear HQ. Give each station its own callsign-SSID.`));
   }
 
   // graywolf callsign: changes graywolf for everything, so it confirms.
   const call = h("input", { id: "callsign", value: gw.callsign || "", autocapitalize: "characters" });
   sec.append(h("div", { class: "card" },
-    h("h2", {}, "Callsign (graywolf)"),
+    h("h2", {}, radio ? "Callsign (the radio)" : "Callsign (graywolf)"),
     h("p", { class: "muted" }, "This is the Amateur Operator's callsign. This is used for all messaging at this station."),
     h("div", { class: "row" }, call, h("button", {
       type: "button",
       onclick: async () => {
         if (!confirm(`Change the Amateur Operator's callsign to ${call.value.toUpperCase()}? It is used for all messaging at this station.`)) return;
-        const r = await ctx.run(() => put("/api/admin/callsign", { callsign: call.value, confirm: true }), "Callsign changed in graywolf.");
-        if (r) await afterSave(ctx, r, "Callsign changed in graywolf.");
+        const r = await ctx.run(() => put("/api/admin/callsign", { callsign: call.value, confirm: true }), `Callsign changed ${where}.`);
+        if (r) await afterSave(ctx, r, `Callsign changed ${where}.`);
       },
     }, "Change")),
   ));
 
   sec.append(raceSettingsForm(s, ctx), messagingSettingsForm(s, ctx));
 
-  sec.append(radioCard());
+  sec.append(radioCard(radio));
   sec.append(await eventPageCard(ctx));
 
   sec.append(h("div", { class: "card" },
-    h("h2", {}, "graywolf connection"),
-    h("p", {}, gw.reachable ? `graywolf ${gw.version} reachable` : "graywolf not reachable",
-      gw.connected ? " · live updates on" : " · live updates off", gw.auth_failed ? " · LOGIN FAILED" : ""),
-    gw.max_text ? h("p", {}, `Max message length ${gw.max_text}; message retention ${gw.retention_days || "forever"} day(s).`) : null,
+    h("h2", {}, radio ? "Radio connection" : "graywolf connection"),
+    radio
+      ? h("p", {}, gw.reachable ? `Radio connected: firmware ${gw.version}` : "Radio not connected")
+      : h("p", {}, gw.reachable ? `graywolf ${gw.version} reachable` : "graywolf not reachable",
+        gw.connected ? " · live updates on" : " · live updates off", gw.auth_failed ? " · LOGIN FAILED" : ""),
+    gw.max_text && !radio ? h("p", {}, `Max message length ${gw.max_text}; message retention ${gw.retention_days || "forever"} day(s).`) : null,
     ...(gw.warnings || []).map((w) => h("p", { class: "banner warn" }, w)),
     gw.stream_error ? h("p", { class: "muted mono" }, gw.stream_error) : null,
     gw.skipped_rows ? h("p", { class: "banner warn" }, `${gw.skipped_rows} message(s) skipped after repeated failures. Last: ${gw.last_skipped}`) : null,
   ));
 
+  if (radio) return; // no graywolf retries or graywolf messages to re-read
   const { peers } = await get("/api/admin/peers");
   sec.append(h("div", { class: "card" },
     h("h2", {}, "graywolf retries for race contacts"),
@@ -74,7 +81,7 @@ export async function renderStation(sec, ctx) {
 // radioCard is the radio check (feedback 2026-10-09, item 6): is the
 // radio set up in graywolf, and working? It runs on request, since it
 // asks graywolf several questions.
-function radioCard() {
+function radioCard(radio) {
   const out = h("div", { id: "radio-result" });
   const run = async () => {
     out.replaceChildren(h("p", { class: "muted" }, "Checking…"));
@@ -95,7 +102,9 @@ function radioCard() {
   };
   return h("div", { class: "card" },
     h("h2", {}, "Radio"),
-    h("p", { class: "muted" }, "Checks that the radio is set up in graywolf and working: build, channel, audio devices, push-to-talk, sample rate, receive level, packets decoded, and whether graywolf's modem keeps up. Nothing is transmitted."),
+    h("p", { class: "muted" }, radio
+      ? "Checks the radio: connection and firmware, callsign, whether it can transmit (and why not), frequency, battery, packets decoded and its message queue. Nothing is transmitted."
+      : "Checks that the radio is set up in graywolf and working: build, channel, audio devices, push-to-talk, sample rate, receive level, packets decoded, and whether graywolf's modem keeps up. Nothing is transmitted."),
     h("p", {}, h("button", { type: "button", id: "radio-check", onclick: run }, "Check radio")),
     out);
 }

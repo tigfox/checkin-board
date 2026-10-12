@@ -69,9 +69,10 @@ const (
 // decode quality is judged on what changed since the previous check.
 // Safe for concurrent use.
 type Checker struct {
-	now  func() time.Time
-	mu   sync.Mutex
-	last map[uint32]statsAt
+	now       func() time.Time
+	mu        sync.Mutex
+	last      map[uint32]statsAt
+	lastRadio *radioCounters
 }
 
 type statsAt struct {

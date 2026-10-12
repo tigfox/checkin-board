@@ -4,8 +4,12 @@ import (
 	"checkin-board/internal/hostmon"
 )
 
-// cableWarning is the panel's line (ASCII: the panel font).
-const cableWarning = "Radio cable missing"
+// cableWarning and radioDownWarning are the keypad's and panel's lines
+// (ASCII: the panel font).
+const (
+	cableWarning     = "Radio cable missing"
+	radioDownWarning = "Radio not connected"
+)
 
 // CableStatus is the radio cable watcher (cablewatch.Watcher).
 type CableStatus interface {
@@ -32,4 +36,28 @@ func (s *server) missingCards() []string {
 		return nil
 	}
 	return s.Cable.Missing()
+}
+
+// radioProblem is why race traffic can't go on air right now, from the
+// node's own view ("": no problem it can see): a radio node's radio not
+// connected, or graywolf's radio cable missing.
+func (s *server) radioProblem() string {
+	if s.Radio != nil {
+		if !s.Radio.State().Connected {
+			return radioDownWarning
+		}
+		return ""
+	}
+	if len(s.missingCards()) > 0 {
+		return cableWarning
+	}
+	return ""
+}
+
+// backend names how this node sends race traffic.
+func (s *server) backend() string {
+	if s.Radio != nil {
+		return "uvk5"
+	}
+	return "graywolf"
 }

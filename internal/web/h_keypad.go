@@ -83,9 +83,9 @@ func (s *server) getStation(w http.ResponseWriter, r *http.Request) {
 	js := s.Ops.JournalStatus()
 	v.Journal = journalView{Enabled: js.Enabled, LastError: js.LastError}
 	v.Graywolf = bannerFor(s.Inbox.Status())
-	if v.Graywolf.Problem == "" && len(s.missingCards()) > 0 {
+	if p := s.radioProblem(); v.Graywolf.Problem == "" && p != "" {
 		// The keypad adds ": entries are kept here and sent when it's back."
-		v.Graywolf.Problem = cableWarning
+		v.Graywolf.Problem = p
 	}
 	writeJSON(w, http.StatusOK, v)
 }

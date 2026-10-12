@@ -43,11 +43,21 @@ type GraywolfAPI interface {
 type Service struct {
 	st *store.Store
 	gw GraywolfAPI
-	mu sync.Mutex
+	// radio: the node uses a UV-K5 radio (phase 17), so of the file's
+	// graywolf part only the station callsign applies (set on the radio).
+	radio bool
+	mu    sync.Mutex
 }
 
 // NewService returns a service.
 func NewService(st *store.Store, gw GraywolfAPI) *Service { return &Service{st: st, gw: gw} }
+
+// NewRadioService returns a service for a radio node: the station
+// callsign is set on the radio; TX timing, retention and the digipeater
+// are graywolf's and are left out.
+func NewRadioService(st *store.Store, gw GraywolfAPI) *Service {
+	return &Service{st: st, gw: gw, radio: true}
+}
 
 // Change is one value a config would change.
 type Change struct {
@@ -243,11 +253,15 @@ func (s *Service) graywolfPlan(ctx context.Context, f *File, station string, nex
 		case !store.SameStation(sc.Callsign, call):
 			orig := sc.Callsign
 			p.orig.Callsign, p.callsign = &orig, call
-			p.changes = append(p.changes, Change{"callsign", "Station callsign (graywolf, for all messaging)", sc.Callsign, call})
+			label := "Station callsign (graywolf, for all messaging)"
+			if s.radio {
+				label = "Station callsign (the radio, for all messaging)"
+			}
+			p.changes = append(p.changes, Change{"callsign", label, sc.Callsign, call})
 		}
 	}
 	g := f.Graywolf
-	if g == nil {
+	if g == nil || s.radio {
 		return p
 	}
 	if g.TxDelayMS != nil || g.TxTailMS != nil {

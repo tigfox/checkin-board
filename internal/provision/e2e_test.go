@@ -94,3 +94,32 @@ func TestSetupReportsBadNodes(t *testing.T) {
 		t.Fatal("applied without a preview")
 	}
 }
+
+// A radio node (UV-K5, phase 17) is set up from the same CSV: its race
+// settings, and the callsign on the radio.
+func TestSetupRadioNode(t *testing.T) {
+	ctx := context.Background()
+	hq := startNode(t, "N0CALL")
+	rnode := testnode.Start(t, testnode.Options{Call: "W1RAD-1", Password: adminPW, UVK5: true})
+	csv := fmt.Sprintf("address,role,station_name,code,callsign,course_order,race_name\n"+
+		"%s,hq,Finish,FIN,KD2DCM-1,,Michaux Mud\n%s,checkpoint,Cattle Chute,CTL,KD2DCM-4,1,\n", hq.URL, rnode.URL)
+	p, err := Parse(strings.NewReader(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opt := Options{Password: adminPW, Graywolf: true}
+	nodes := PreviewAll(ctx, p, opt)
+	if !nodes[1].Ready() || len(nodes[1].Preview.Graywolf) != 1 || !strings.Contains(nodes[1].Preview.Graywolf[0].Label, "radio") {
+		t.Fatalf("radio node preview: err %v, %+v", nodes[1].Err, nodes[1].Preview)
+	}
+	ApplyAll(ctx, p, nodes, opt)
+	if !nodes[1].Applied || len(nodes[1].GraywolfErrors) > 0 {
+		t.Fatalf("radio node: applied %v, err %v, %v", nodes[1].Applied, nodes[1].Err, nodes[1].GraywolfErrors)
+	}
+	if got := rnode.UV.Callsign(); got != "KD2DCM-4" {
+		t.Fatalf("radio callsign = %q", got)
+	}
+	if s, _ := rnode.Store.GetSettings(ctx); s.CheckpointCode != "CTL" || s.HQCall != "KD2DCM-1" {
+		t.Fatalf("radio node settings = %+v", s)
+	}
+}

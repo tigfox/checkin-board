@@ -51,12 +51,12 @@ func TestLoadFrom(t *testing.T) {
 		{
 			name: "defaults",
 			vars: base,
-			want: Config{GraywolfURL: DefaultGraywolfURL, GraywolfUser: "race", GraywolfPassword: "pw", Timeout: DefaultTimeout, DBPath: DefaultDBPath, Listen: DefaultListen},
+			want: Config{GraywolfURL: DefaultGraywolfURL, GraywolfUser: "race", GraywolfPassword: "pw", Timeout: DefaultTimeout, DBPath: DefaultDBPath, Listen: DefaultListen, Backend: BackendGraywolf},
 		},
 		{
 			name: "overrides",
 			vars: with(map[string]string{EnvGraywolfURL: "http://10.0.0.2:8080", EnvTimeout: "3s", EnvDBPath: "/var/lib/cb/race.db", EnvListen: "127.0.0.1:9000"}),
-			want: Config{GraywolfURL: "http://10.0.0.2:8080", GraywolfUser: "race", GraywolfPassword: "pw", Timeout: 3 * time.Second, DBPath: "/var/lib/cb/race.db", Listen: "127.0.0.1:9000"},
+			want: Config{GraywolfURL: "http://10.0.0.2:8080", GraywolfUser: "race", GraywolfPassword: "pw", Timeout: 3 * time.Second, DBPath: "/var/lib/cb/race.db", Listen: "127.0.0.1:9000", Backend: BackendGraywolf},
 		},
 		{name: "bad scheme", vars: with(map[string]string{EnvGraywolfURL: "ftp://x"}), wantErr: "scheme"},
 		{name: "missing host", vars: with(map[string]string{EnvGraywolfURL: "http://"}), wantErr: "host"},
@@ -221,5 +221,35 @@ func TestGraywolfLocal(t *testing.T) {
 		if got := (Config{GraywolfURL: url}).GraywolfLocal(); got != want {
 			t.Errorf("%q: got %v, want %v", url, got, want)
 		}
+	}
+}
+
+func TestRadioBackend(t *testing.T) {
+	env := func(m map[string]string) Env {
+		return Env{Getenv: func(k string) string { return m[k] }, Open: func(string) (fs.File, error) { return nil, fs.ErrNotExist }}
+	}
+	// No graywolf login needed on a radio node.
+	c, err := LoadFrom(env(map[string]string{EnvBackend: "UVK5", EnvUVK5Port: "/dev/ttyACM0"}))
+	if err != nil || !c.Radio() || c.UVK5Port != "/dev/ttyACM0" || c.GraywolfLocal() || c.Listen != DefaultListen {
+		t.Fatalf("radio config = %+v %v", c, err)
+	}
+	if s := c.String(); !strings.Contains(s, "backend=uvk5") || !strings.Contains(s, "/dev/ttyACM0") {
+		t.Fatalf("String() = %q", s)
+	}
+	if c, _ := LoadFrom(env(map[string]string{EnvBackend: "uvk5"})); !strings.Contains(c.String(), "port=auto") {
+		t.Fatalf("auto port: %q", c.String())
+	}
+	for _, bad := range []map[string]string{
+		{EnvBackend: "aprsd"},
+		{EnvBackend: "uvk5", EnvUVK5Port: "ttyACM0"},
+		{EnvBackend: "uvk5", EnvUVK5Port: "/dev/../etc/passwd"},
+	} {
+		if _, err := LoadFrom(env(bad)); err == nil {
+			t.Errorf("%v: want an error", bad)
+		}
+	}
+	// The default is graywolf, which still needs its login.
+	if _, err := LoadFrom(env(map[string]string{})); err == nil {
+		t.Error("graywolf without GW_USER: want an error")
 	}
 }

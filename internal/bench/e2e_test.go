@@ -97,3 +97,43 @@ func TestBenchSetupChecks(t *testing.T) {
 		}
 	}
 }
+
+// A radio checkpoint (UV-K5, phase 17) and a graywolf checkpoint report
+// to a graywolf HQ through the nodes' web APIs, in real time.
+func TestBenchMixedRadioNode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real-time bench")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	radio := gwfake.NewRadio(5, gwfake.Profile{Loss: 0.05, MaxDelay: 200 * time.Millisecond}, time.Now)
+	go func() {
+		tk := time.NewTicker(20 * time.Millisecond)
+		defer tk.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tk.C:
+				radio.Deliver()
+			}
+		}
+	}()
+	hqCfg := store.DefaultSettings()
+	hqCfg.Role, hqCfg.HQLocalCodes, hqCfg.RaceState = store.RoleHQ, "FIN", store.RaceActive
+	hqURL := startNode(ctx, t, radio, "HQ-1", hqCfg)
+	rcp := cpSettings("AS1")
+	radioCP := testnode.Start(t, testnode.Options{Call: "W1RAD-7", Password: benchPassword, Settings: &rcp, Radio: radio, Run: true, UVK5: true})
+	gwCP := startNode(ctx, t, radio, "CP-2", cpSettings("AS2"))
+
+	var out strings.Builder
+	rep, err := Run(ctx, Config{
+		HQ: hqURL, Checkpoints: []string{radioCP.URL, gwCP}, Password: benchPassword,
+		Runners: 10, FirstBib: 9001, Duration: 3 * time.Second, Settle: 4 * time.Minute,
+		PollEvery: time.Second, Seed: 2, Out: &out,
+	})
+	t.Logf("%+v\n%s", rep, out.String())
+	if err != nil || !rep.OK() || rep.Expected != 20 {
+		t.Fatalf("report = %+v, err = %v", rep, err)
+	}
+}

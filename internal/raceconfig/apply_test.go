@@ -277,3 +277,31 @@ func TestHQLocalCodesAtPreview(t *testing.T) {
 		t.Fatalf("clashing local code err = %v", err)
 	}
 }
+
+// A radio node (phase 17): only the station callsign of the graywolf
+// part applies; TX timing, retention and the digipeater are left out.
+func TestRadioNodeGraywolfPart(t *testing.T) {
+	st, err := store.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	gw := gwfake.New("N0CALL-1")
+	svc := NewRadioService(st, gw)
+	// Changes a graywolf node would make: TX delay and the digipeater.
+	f, _ := parse(t, strings.NewReplacer(`"tx_delay_ms": 300`, `"tx_delay_ms": 450`, `"digipeater": false`, `"digipeater": true`).Replace(sample))
+	p, err := svc.Preview(ctx, f, "AS1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Graywolf) != 1 || p.Graywolf[0].Field != "callsign" || !strings.Contains(p.Graywolf[0].Label, "radio") {
+		t.Fatalf("graywolf changes = %+v", p.Graywolf)
+	}
+	res, err := svc.Apply(ctx, f, "AS1", true, p.Token)
+	if err != nil || len(res.GraywolfErrors) != 0 {
+		t.Fatalf("apply = %+v %v", res, err)
+	}
+	if sc, _ := gw.StationConfig(ctx); sc.Callsign != "KD2DCM-4" {
+		t.Fatalf("callsign = %q", sc.Callsign)
+	}
+}

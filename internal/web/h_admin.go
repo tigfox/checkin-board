@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"checkin-board/internal/graywolf"
 	"checkin-board/internal/ops"
 	"checkin-board/internal/store"
 )
@@ -49,6 +50,8 @@ type settingsBody struct {
 
 type settingsView struct {
 	settingsBody
+	// Backend is how this node sends race traffic: "graywolf" or "uvk5".
+	Backend       string     `json:"backend"`
 	RaceState     string     `json:"race_state"`
 	RaceStartedAt *time.Time `json:"race_started_at,omitempty"`
 	UpdatedAt     time.Time  `json:"updated_at"`
@@ -128,7 +131,9 @@ func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toSettingsView(cfg))
+	v := toSettingsView(cfg)
+	v.Backend = s.backend()
+	writeJSON(w, http.StatusOK, v)
 }
 
 // putSettings saves every editable field at once.
@@ -227,6 +232,9 @@ type graywolfView struct {
 	RetentionDays    int      `json:"retention_days"`
 	RetryMaxAttempts int      `json:"retry_max_attempts,omitempty"`
 	Warnings         []string `json:"warnings,omitempty"`
+	// Backend is "graywolf" or "uvk5" (a radio node: Version is the
+	// radio's firmware, Reachable whether it's connected).
+	Backend string `json:"backend"`
 	// Inbox reader detail, for the admin only.
 	StreamError  string `json:"stream_error,omitempty"`
 	CatchUpError string `json:"catch_up_error,omitempty"`
@@ -240,6 +248,11 @@ func (s *server) getGraywolf(w http.ResponseWriter, r *http.Request) {
 	is := s.Inbox.Status()
 	v.Connected, v.AuthFailed = is.Connected, is.AuthFailed
 	v.StreamError, v.CatchUpError, v.SkippedRows, v.LastSkipped = is.StreamError, is.CatchUpError, is.SkippedRows, is.LastSkipped
+	v.Backend = s.backend()
+	if s.Radio != nil {
+		s.radioConnection(w, r, v)
+		return
+	}
 	ver, err := s.Graywolf.Version(r.Context())
 	if err != nil {
 		v.Warnings = append(v.Warnings, "graywolf not reachable: "+safeErr(err))
@@ -265,6 +278,16 @@ func (s *server) getGraywolf(w http.ResponseWriter, r *http.Request) {
 	}
 	if m := s.missingCards(); len(m) > 0 {
 		v.Warnings = append(v.Warnings, "radio cable missing: sound card "+strings.Join(m, ", ")+" isn't on this node (unplugged or dropped off USB; replug, or reboot if it doesn't come back); race reports are held until it's back")
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+// radioConnection is the connection card for a radio node.
+func (s *server) radioConnection(w http.ResponseWriter, r *http.Request, v graywolfView) {
+	st := s.Radio.State()
+	v.Reachable, v.Version, v.Callsign, v.MaxText = st.Connected, st.Firmware, st.Callsign, graywolf.MaxMessageText
+	if !st.Connected {
+		v.Warnings = append(v.Warnings, "radio not connected: "+st.Error)
 	}
 	writeJSON(w, http.StatusOK, v)
 }

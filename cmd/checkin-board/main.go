@@ -34,7 +34,6 @@ import (
 
 	"checkin-board/internal/app"
 	"checkin-board/internal/auth"
-	"checkin-board/internal/cablewatch"
 	"checkin-board/internal/config"
 	"checkin-board/internal/graywolf"
 	"checkin-board/internal/hostmon"
@@ -138,34 +137,24 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("starting", "config", cfg.String())
 
-	gw, err := graywolf.New(graywolf.Config{
-		BaseURL: cfg.GraywolfURL, Username: cfg.GraywolfUser, Password: cfg.GraywolfPassword,
-		Timeout: cfg.Timeout, Logger: logger,
-	})
-	if err != nil {
-		return fmt.Errorf("create graywolf client: %w", err)
-	}
-	checkGraywolf(ctx, gw, logger)
-
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer st.Close()
 
-	// The node's own health: CPU, whether graywolf's modem keeps up, and
-	// its sound cards (hostmon reads /proc; unknown elsewhere). The cable
-	// watcher holds race reports while the radio cable is missing.
+	// The node's own health: CPU, whether graywolf's modem keeps up, its
+	// sound cards (hostmon reads /proc; unknown elsewhere).
 	host := hostmon.New("/proc")
 	go host.Run(ctx, hostmon.SampleEvery, time.Now)
-	cable := cablewatch.New(cablewatch.Config{Graywolf: gw, Settings: st.GetSettings,
-		Cards: func() ([]hostmon.SoundCard, bool) { return hostmon.ReadSoundCards("/proc") },
-		Local: cfg.GraywolfLocal(), Logger: logger})
-	go cable.Run(ctx, cablewatch.Every)
+	msg, err := startMessaging(ctx, cfg, st, logger)
+	if err != nil {
+		return err
+	}
 
 	a, err := app.New(app.Config{
-		Store: st, Graywolf: gw, Logger: logger, StartedAt: startedAt,
-		DataDir: filepath.Dir(cfg.DBPath), Hold: cable.HoldReason,
+		Store: st, Graywolf: msg.gw, Logger: logger, StartedAt: startedAt,
+		DataDir: filepath.Dir(cfg.DBPath), Hold: msg.hold,
 	})
 	if err != nil {
 		return fmt.Errorf("assemble app: %w", err)
@@ -181,8 +170,9 @@ func run(logger *slog.Logger) error {
 	}
 	handler, err := web.NewHandler(web.Deps{
 		Store: st, Auth: authSvc, Ops: a.Ops, HQ: a.HQ, Checkpoint: a.Checkpoint, Inbox: a.Inbox,
-		Clock: a.Clock, Graywolf: gw, Logger: logger, HookToken: cfg.HookToken, WebPort: listenPort(cfg.Listen),
-		Host: host, Cable: cable, GraywolfRemote: !cfg.GraywolfLocal(), RaceConfigDir: filepath.Join(filepath.Dir(cfg.DBPath), "race-configs"),
+		Clock: a.Clock, Graywolf: msg.gw, Logger: logger, HookToken: cfg.HookToken, WebPort: listenPort(cfg.Listen),
+		Host: host, Cable: msg.cable, Radio: msg.radio, GraywolfRemote: !msg.local,
+		RaceConfigDir: filepath.Join(filepath.Dir(cfg.DBPath), "race-configs"),
 	})
 	if err != nil {
 		return fmt.Errorf("web handler: %w", err)

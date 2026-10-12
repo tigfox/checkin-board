@@ -91,6 +91,10 @@ type Deps struct {
 	Host HostMonitor
 	// Cable watches the radio cable; nil: not watched.
 	Cable CableStatus
+	// Radio is set on a node that uses a UV-K5/UV-K1 radio instead of
+	// graywolf (phase 17): Check radio, the connection card and the
+	// keypad banner read it, and graywolf-only parts step aside.
+	Radio radiocheck.Radio
 	// GraywolfRemote: graywolf runs on another machine, so this node's
 	// sound cards say nothing about its radio cable.
 	GraywolfRemote bool
@@ -131,6 +135,9 @@ func NewHandler(d Deps) (http.Handler, error) {
 	s.dedup = newRequestDedup(s.now)
 	s.radio = radiocheck.NewChecker(s.now)
 	s.raceConfigs = raceconfig.NewService(d.Store, d.Graywolf)
+	if d.Radio != nil {
+		s.raceConfigs = raceconfig.NewRadioService(d.Store, d.Graywolf)
+	}
 	dir := d.RaceConfigDir
 	if dir == "" {
 		dir = filepath.Join(os.TempDir(), "checkin-board-race-configs")

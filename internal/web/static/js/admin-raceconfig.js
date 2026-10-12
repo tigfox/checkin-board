@@ -26,27 +26,31 @@ async function showPlan(out, name, station, label, ctx) {
   }
   const app = [...plan.settings, ...(plan.checkpoints ? [plan.checkpoints] : []), ...(plan.event_page ? [plan.event_page] : [])];
   const withGW = h("input", { type: "checkbox", id: "rc-graywolf" });
+  // On a radio node (UV-K5/UV-K1) only the station callsign applies: it's
+  // set on the radio.
+  const radio = ctx.settings.backend === "uvk5";
+  const gwName = radio ? "the radio" : "graywolf";
   out.replaceChildren(
     ...(plan.problems || []).map((p) => h("p", { class: "banner warn" }, p)),
     h("h3", {}, "This node's settings"),
     app.length ? changeTable(app) : h("p", { class: "muted" }, "No changes: this node already matches the file."),
-    h("h3", {}, "graywolf"),
+    h("h3", {}, radio ? "The radio" : "graywolf"),
     plan.graywolf.length
       ? h("div", {}, changeTable(plan.graywolf),
         h("label", { class: "row" }, withGW,
-          " Also apply these graywolf changes. They change graywolf for everything on this node; its current values are saved for Restore graywolf settings."))
-      : h("p", { class: "muted" }, "No graywolf changes."),
+          ` Also apply these changes to ${gwName}. Its current values are saved for Restore ${radio ? "radio" : "graywolf"} settings.`))
+      : h("p", { class: "muted" }, radio ? "No changes to the radio (TX timing and digipeater settings in the file are graywolf's and don't apply here)." : "No graywolf changes."),
     h("p", {}, h("button", {
       type: "button", class: "primary", id: "rc-apply", disabled: !plan.can_apply,
       onclick: async () => {
         const gw = withGW.checked && plan.graywolf.length > 0;
-        if (!confirm(`Load ${name} as ${label}${gw ? ", including the graywolf changes" : ""}? Every setting stays editable afterwards.`)) return;
+        if (!confirm(`Load ${name} as ${label}${gw ? `, including the changes to ${gwName}` : ""}? Every setting stays editable afterwards.`)) return;
         // The token makes the node apply exactly this preview (or refuse).
         const r = await ctx.run(() => post(`${path(name)}/apply`, { station, graywolf: gw, token: plan.token }), "Race config loaded.");
         if (!r) return;
         await ctx.reload();
         await ctx.refresh();
-        if (r.graywolf_errors?.length) ctx.notify(`Race config loaded, but some graywolf changes failed: ${r.graywolf_errors.join("; ")}`, "warn");
+        if (r.graywolf_errors?.length) ctx.notify(`Race config loaded, but some changes to ${gwName} failed: ${r.graywolf_errors.join("; ")}`, "warn");
       },
     }, "Load this race config")),
   );
