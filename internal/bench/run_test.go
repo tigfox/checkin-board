@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"checkin-board/internal/nodeapi"
 	"checkin-board/internal/store"
 )
 
@@ -263,15 +264,15 @@ func TestRunRefusesWithoutWriting(t *testing.T) {
 
 func TestRetryable(t *testing.T) {
 	for err, want := range map[error]bool{
-		&APIError{Status: 500}:   true,
-		&APIError{Status: 502}:   true,
-		&APIError{Status: 409}:   true,
-		&APIError{Status: 429}:   true,
-		&APIError{Status: 400}:   false,
-		&APIError{Status: 422}:   false,
-		errors.New("conn reset"): true,
-		context.Canceled:         false,
-		context.DeadlineExceeded: false,
+		&nodeapi.APIError{Status: 500}: true,
+		&nodeapi.APIError{Status: 502}: true,
+		&nodeapi.APIError{Status: 409}: true,
+		&nodeapi.APIError{Status: 429}: true,
+		&nodeapi.APIError{Status: 400}: false,
+		&nodeapi.APIError{Status: 422}: false,
+		errors.New("conn reset"):       true,
+		context.Canceled:               false,
+		context.DeadlineExceeded:       false,
 	} {
 		if got := Retryable(err); got != want {
 			t.Errorf("%v: got %v", err, got)

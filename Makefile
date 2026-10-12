@@ -1,10 +1,15 @@
-.PHONY: build benchrace pi dist run test jstest e2e installtest soak fuzz cover contract vet fmt
+.PHONY: build benchrace stationsetup pi dist run test jstest e2e installtest soak fuzz cover contract vet fmt
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 build:
 	go build -trimpath -ldflags '$(LDFLAGS)' -o bin/checkin-board ./cmd/checkin-board
+
+# Station setup from a CSV (README "Setting up every node from a CSV"):
+# runs on the operator's machine.
+stationsetup:
+	go build -trimpath -o bin/stationsetup ./cmd/stationsetup
 
 # Bench tool (phase 12 g): runs on the operator's machine, not on nodes.
 # See docs/bench-race.md.

@@ -1,0 +1,17 @@
+# Stations for one race: one line per node. Load it on every node with
+#   CB_ADMIN_PASSWORD='...' stationsetup example_stations.csv
+# (see README, "Setting up every node from a CSV"). Lines starting with #
+# are comments. Blank optional cells leave a node's current value alone.
+#
+# address        node's IP or name (port 8090 if not given)
+# role           hq or checkpoint (exactly one hq)
+# station_name   tactical name, up to 25 characters
+# code           checkpoint code; for HQ, its local codes (e.g. START;FIN)
+# callsign       this node's callsign-SSID, unique per node (set in graywolf)
+# course_order   checkpoints' order on the course (1, 2, ...)
+# race_name ... tx_tail_ms   race-wide: give them once, or the same on every row.
+#   path "direct" means no digipeaters.
+address,role,station_name,code,callsign,course_order,race_name,checkpoint_name,path,heartbeat_sec,flush_after_sec,max_in_flight,tx_delay_ms,tx_tail_ms
+10.0.1.88,hq,Finish Line,START;FIN,KD2DCM-1,,Michaux Mud,,"WIDE1-1",300,20,4,300,100
+10.0.1.183,checkpoint,Cattle Chute,CTL,KD2DCM-4,1,,Cattle Chute Aid,,,,,,
+10.0.0.65,checkpoint,Ridge Top,RDG,KD2DCM-3,2,,,,,,,,

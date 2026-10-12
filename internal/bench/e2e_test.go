@@ -2,59 +2,20 @@ package bench
 
 import (
 	"context"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"checkin-board/internal/app"
-	"checkin-board/internal/auth"
 	"checkin-board/internal/gwfake"
 	"checkin-board/internal/store"
-	"checkin-board/internal/web"
+	"checkin-board/internal/testnode"
 )
 
 const benchPassword = "bench-admin-password"
 
-// startNode runs a whole checkin-board node (app engines and web API)
-// on a fake graywolf attached to radio, and returns its URL.
 func startNode(ctx context.Context, t *testing.T, radio *gwfake.Radio, call string, cfg store.Settings) string {
 	t.Helper()
-	gw := gwfake.New(call)
-	radio.Attach(gw)
-	st, err := store.OpenMemory()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	if _, err := st.SaveSettings(ctx, cfg); err != nil {
-		t.Fatal(err)
-	}
-	a, err := app.New(app.Config{Store: st, Graywolf: gw, DataDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = a.Close() })
-	done := make(chan struct{})
-	go func() { defer close(done); _ = a.Run(ctx) }()
-	t.Cleanup(func() { <-done })
-
-	au := auth.New(st, nil, 0)
-	code, err := au.SetupCode(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := au.Setup(ctx, code, benchPassword); err != nil {
-		t.Fatal(err)
-	}
-	h, err := web.NewHandler(web.Deps{Store: st, Auth: au, Ops: a.Ops, HQ: a.HQ, Checkpoint: a.Checkpoint,
-		Inbox: a.Inbox, Clock: a.Clock, Graywolf: gw})
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewServer(h)
-	t.Cleanup(srv.Close)
-	return srv.URL
+	return testnode.Start(t, testnode.Options{Call: call, Password: benchPassword, Settings: &cfg, Radio: radio, Run: true}).URL
 }
 
 func cpSettings(code string) store.Settings {

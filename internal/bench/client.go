@@ -4,34 +4,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"strconv"
-	"strings"
 	"time"
-)
 
-const (
-	requestTimeout = 15 * time.Second
-	maxBody        = 8 << 20 // results export of a large race
+	"checkin-board/internal/nodeapi"
 )
 
 // Node is one checkin-board node's web API, logged in as admin (an
 // admin session also works the keypad).
 type Node struct {
-	Base string
-	http *http.Client
+	*nodeapi.Client
 }
 
 // NewNode returns a client for base, e.g. "http://10.0.1.183:8090".
-func NewNode(base string) *Node {
-	jar, _ := cookiejar.New(nil)
-	return &Node{Base: strings.TrimRight(base, "/"), http: &http.Client{Jar: jar, Timeout: requestTimeout}}
-}
+func NewNode(base string) *Node { return &Node{nodeapi.New(base)} }
 
 // Station is the node's role and state (GET /api/station).
 type Station struct {
@@ -40,80 +29,27 @@ type Station struct {
 	LocalCodes []string `json:"local_codes"`
 }
 
-// APIError is a non-2xx reply.
-type APIError struct {
-	Status int
-	Body   string
-}
-
-func (e *APIError) Error() string { return fmt.Sprintf("HTTP %d: %s", e.Status, e.Body) }
-
 // Retryable reports whether a request may be sent again with the same
 // request_id: a network error, a server-side failure, 409 (the node is
 // still saving the first attempt) or 429 (rate limited).
 func Retryable(err error) bool {
-	var ae *APIError
-	if errors.As(err, &ae) {
-		return ae.Status >= 500 || ae.Status == http.StatusConflict || ae.Status == http.StatusTooManyRequests
+	if st := nodeapi.StatusOf(err); st != 0 {
+		return st >= 500 || st == http.StatusConflict || st == http.StatusTooManyRequests
 	}
 	return err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
-}
-
-func (n *Node) do(ctx context.Context, method, path string, body, out any) error {
-	var rd io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		rd = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, n.Base+path, rd)
-	if err != nil {
-		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	req.Header.Set("Origin", n.Base) // the app's same-origin check
-	resp, err := n.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode/100 != 2 {
-		return &APIError{Status: resp.StatusCode, Body: strings.TrimSpace(string(data))}
-	}
-	if out == nil {
-		return nil
-	}
-	if raw, ok := out.(*[]byte); ok {
-		*raw = data
-		return nil
-	}
-	return json.Unmarshal(data, out)
-}
-
-// Login logs in as admin.
-func (n *Node) Login(ctx context.Context, password string) error {
-	return n.do(ctx, http.MethodPost, "/api/login", map[string]string{"role": "admin", "password": password}, nil)
 }
 
 // Station reads the node's role and state.
 func (n *Node) Station(ctx context.Context) (Station, error) {
 	var s Station
-	err := n.do(ctx, http.MethodGet, "/api/station", nil, &s)
+	err := n.Do(ctx, http.MethodGet, "/api/station", nil, &s)
 	return s, err
 }
 
 // SyncClock sets the node's race clock from this machine's clock, as the
 // keypad page does from the browser's.
 func (n *Node) SyncClock(ctx context.Context, now time.Time) error {
-	return n.do(ctx, http.MethodPost, "/api/clock/sync", map[string]int64{"client_unix_ms": now.UnixMilli()}, nil)
+	return n.Do(ctx, http.MethodPost, "/api/clock/sync", map[string]int64{"client_unix_ms": now.UnixMilli()}, nil)
 }
 
 // LogBib logs bib on the node's keypad. requestID makes a retry safe:
@@ -122,7 +58,7 @@ func (n *Node) LogBib(ctx context.Context, bib int, requestID string) (time.Time
 	var res struct {
 		TimeIn time.Time `json:"time_in"`
 	}
-	err := n.do(ctx, http.MethodPost, "/api/entries", map[string]string{"bib": strconv.Itoa(bib), "request_id": requestID}, &res)
+	err := n.Do(ctx, http.MethodPost, "/api/entries", map[string]string{"bib": strconv.Itoa(bib), "request_id": requestID}, &res)
 	if err == nil && res.TimeIn.IsZero() {
 		err = errors.New("bench: the node's reply has no time_in")
 	}
@@ -134,7 +70,7 @@ func (n *Node) HQCall(ctx context.Context) (string, error) {
 	var s struct {
 		HQCall string `json:"hq_call"`
 	}
-	err := n.do(ctx, http.MethodGet, "/api/admin/settings", nil, &s)
+	err := n.Do(ctx, http.MethodGet, "/api/admin/settings", nil, &s)
 	return s.HQCall, err
 }
 
@@ -144,7 +80,7 @@ func (n *Node) RecentBibs(ctx context.Context) ([]int, error) {
 	var res struct {
 		Entries []struct{ Bib int } `json:"entries"`
 	}
-	if err := n.do(ctx, http.MethodGet, "/api/entries?limit=500", nil, &res); err != nil {
+	if err := n.Do(ctx, http.MethodGet, "/api/entries?limit=500", nil, &res); err != nil {
 		return nil, err
 	}
 	bibs := make([]int, len(res.Entries))
@@ -157,7 +93,7 @@ func (n *Node) RecentBibs(ctx context.Context) ([]int, error) {
 // Results reads HQ's results export.
 func (n *Node) Results(ctx context.Context) ([]Result, error) {
 	var raw []byte
-	if err := n.do(ctx, http.MethodGet, "/api/admin/export.csv", nil, &raw); err != nil {
+	if err := n.Do(ctx, http.MethodGet, "/api/admin/export.csv", nil, &raw); err != nil {
 		return nil, err
 	}
 	return ParseResults(raw)

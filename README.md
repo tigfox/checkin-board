@@ -28,6 +28,13 @@ internal/web/static/   the UI: plain HTML + ES modules, no build step, no inline
 internal/web/jstest/   `node --test` unit tests for the UI logic
 internal/peers/        graywolf per-peer retry settings (backup / restore)
 internal/linkcheck/    deployment link check: RC1 P probes, RC1 Q replies, verdicts
+internal/provision/    stationsetup: stations CSV -> race config, pushed to and applied on every node
+internal/nodeapi/      client for a node's web API (stationsetup, benchrace)
+internal/bench/        benchrace: scripted race across nodes, exactly-once and latency report
+internal/cablewatch/   radio cable watcher: holds checkpoint reports while the cable is missing
+internal/testnode/     whole nodes on a fake graywolf over HTTP (tests)
+cmd/stationsetup/      set up every node from a stations CSV
+cmd/benchrace/         radio bench race tool
 internal/raceconfig/   race config files: parse/validate, preview, apply (incl. graywolf, with backup/restore), export, folder
 internal/radiocheck/   radio status check: graywolf build, channel, audio, PTT, rate, level, decodes, modem keep-up
 internal/hostmon/      node health from /proc: CPU 5-min average, graywolf modem keeping up, machine
@@ -91,6 +98,91 @@ echo 'a new admin password' | CB_DB_PATH=/path/to/checkin-board.db checkin-board
 
 This logs out every admin session and doesn't touch race data.
 
+## Setting up every node from a CSV
+
+`stationsetup` sets up all of a race's nodes from your computer, over the
+local network, from one CSV with a line per node. Every node must already
+be installed, have finished first-run setup with the **same admin
+password**, and be in race setup (race not started).
+
+1. Copy [`example_stations.csv`](example_stations.csv) and edit it, one
+   line per node:
+
+   | Column | Required | Meaning |
+   |---|---|---|
+   | `address` | yes | the node's IP or name (port 8090 unless given) |
+   | `role` | yes | `hq` or `checkpoint`; exactly one `hq` |
+   | `station_name` | yes | tactical name, up to 25 characters |
+   | `code` | checkpoints | the checkpoint code; on the HQ line, HQ's own codes separated by `;` (or spaces), such as `START;FIN` |
+   | `callsign` | yes | the node's callsign-SSID, different on every node. Checkpoints report to the HQ line's callsign |
+   | `course_order` | no | the checkpoint's place along the course (1, 2, ...) |
+   | `checkpoint_name` | no | the name on HQ's checkpoint list (default: `station_name`) |
+   | `race_name`, `path`, `heartbeat_sec`, `flush_after_sec`, `max_in_flight`, `max_text_len`, `gap_grace_sec`, `gw_channel`, `tx_delay_ms`, `tx_tail_ms` | no | race-wide: set once (any line) or the same on every line. `path` is the digipeater path, `direct` for none |
+
+   Blank cells leave a node's current value alone. Lines starting with `#`
+   are comments. The CSV holds no passwords.
+2. Build the tool and preview every node. Nothing changes yet, except that
+   each node receives the generated race config file:
+
+   ```sh
+   make stationsetup
+   CB_ADMIN_PASSWORD='the admin password' bin/stationsetup -dry-run my_stations.csv
+   ```
+
+   Each node lists what it would change, from its current value to the
+   new one, or why it can't (a node that's unreachable, already racing,
+   or has a wrong password).
+3. Run it without `-dry-run`. It shows the same list, asks you to type
+   `yes`, then sets up every node that's ready and reports each one:
+
+   ```sh
+   CB_ADMIN_PASSWORD='the admin password' bin/stationsetup my_stations.csv
+   ```
+
+What it sets on each node: the role, race name, station name and code,
+the HQ callsign (checkpoints), the local codes and checkpoint list (HQ),
+the messaging settings, and in graywolf the node's station callsign and
+TX delay and tail. `-no-graywolf` leaves graywolf alone. graywolf's
+original values are kept on the node, and **Admin → Race → Race config →
+Restore graywolf settings** puts them back. Every setting stays editable
+on the node afterwards. Under the hood the CSV becomes a race config file
+(`stationsetup-<hash>.json`, named from its contents so it never replaces
+one of yours; it's listed on each node's Race page), so it's checked by
+the same rules as a file loaded in the browser. Running it again is safe:
+a node that's already set up has nothing to change. If a node doesn't
+answer while applying, it's reported as "outcome unknown": run the tool
+again to see whether it was set up.
+
+Exit status: 0 every node set up, 1 one or more weren't, 2 a usage or
+CSV error (no node touched).
+
+## Roster
+
+A roster is optional. It lets HQ's board and results show each runner's
+category, and flag bibs that aren't registered. It's a CSV with one line
+per runner, like [`example_roster.csv`](example_roster.csv):
+
+```csv
+bib,category,name
+0001,50K,Sample Runner 1
+0101,25K,Sample Runner 11
+```
+
+- The **bib** must be the first column: 1-9999; leading zeros are fine.
+- A column headed **category** (up to 32 characters, such as the
+  distance or wave) is kept. Every other column (names, ages, emails)
+  is **discarded on import**, so a registration export can be loaded as
+  it is and no personal data reaches the node or the radio.
+- With no header line, only the bibs are read.
+- Excel's "CSV UTF-8" is fine. Blank lines are skipped.
+
+Load it on the **HQ** node: **Admin → HQ → Roster → Import roster**,
+then pick the file. The import is all or nothing: a bad line (a bib
+out of range or listed twice) rejects the file and every bad line is
+listed, so you can fix them in one pass. Importing again adds new bibs
+and updates categories; bibs already loaded stay. A race reset keeps
+the roster unless you tick "Also clear the checkpoint list and roster".
+
 ## Link check
 
 Before the race, each node checks its radio link (spec 4.8): Admin → Link
@@ -149,6 +241,8 @@ CB_HOOK_TOKEN_FILE=... CB_LISTEN=:8090 checkin-board panel -display png:/tmp/fra
 make test     # unit tests with -race (no network, no RF)
 make cover    # coverage report
 make build    # bin/checkin-board
+make stationsetup  # bin/stationsetup: set up every node from a CSV (see above)
+make benchrace     # bin/benchrace: radio bench race (docs/bench-race.md)
 make pi       # bin/checkin-board-armv6 for Pi Zero W
 make jstest   # UI logic tests (needs Node 20+; test-only)
 make e2e      # drives the real pages in headless Chrome (needs Chrome; test-only)
