@@ -22,24 +22,25 @@ type FakeRadio struct {
 	Air func(from, to string, m Message)
 	Now func() time.Time
 
-	mu       sync.Mutex
-	settings Settings
-	caps     Capabilities
-	status   Status
-	gap      time.Duration
-	busy     bool // the channel never clears
-	lowBatt  bool
-	out      io.Writer
-	sink     func(line string) // DirectSession: lines without a port
-	wmu      sync.Mutex
-	ts       uint32
-	monitor  bool
-	queue    []fakeQueued
-	acks     []fakeAck
-	line     int
-	lastTX   time.Time
-	rssi     int
-	commands []uint16
+	mu        sync.Mutex
+	settings  Settings
+	caps      Capabilities
+	status    Status
+	gap       time.Duration
+	busy      bool // the channel never clears
+	lowBatt   bool
+	out       io.Writer
+	sink      func(line string) // DirectSession: lines without a port
+	wmu       sync.Mutex
+	ts        uint32
+	monitor   bool
+	queue     []fakeQueued
+	acks      []fakeAck
+	line      int
+	lastTX    time.Time
+	headSince time.Time // when the front item started waiting on a busy channel
+	rssi      int
+	commands  []uint16
 }
 
 type fakeQueued struct {
@@ -287,20 +288,27 @@ func (f *FakeRadio) Tick() {
 		}
 		f.queue = nil
 	}
-	f.queue = slices.DeleteFunc(f.queue, func(q fakeQueued) bool {
-		if f.busy && now.Sub(q.at) >= fakeGiveUp {
-			lines = append(lines, fmt.Sprintf("DROP:%s{%s} %s", q.to, q.line, ReasonBusy))
-			return true
+	// Spec 8.3: the item at the front gets 60 s of busy channel, then
+	// it's given up and the next one gets its own minute (acks first).
+	if f.busy && (len(f.acks) > 0 || len(f.queue) > 0) {
+		if f.headSince.IsZero() {
+			f.headSince = now
 		}
-		return false
-	})
-	f.acks = slices.DeleteFunc(f.acks, func(a fakeAck) bool {
-		if f.busy && now.Sub(a.at) >= fakeGiveUp {
-			lines = append(lines, fmt.Sprintf("DROP:ack %s{%s} %s", a.to, a.id, ReasonBusy))
-			return true
+		if now.Sub(f.headSince) >= fakeGiveUp {
+			if len(f.acks) > 0 {
+				a := f.acks[0]
+				f.acks = f.acks[1:]
+				lines = append(lines, fmt.Sprintf("DROP:ack %s{%s} %s", a.to, a.id, ReasonBusy))
+			} else {
+				q := f.queue[0]
+				f.queue = f.queue[1:]
+				lines = append(lines, fmt.Sprintf("DROP:%s{%s} %s", q.to, q.line, ReasonBusy))
+			}
+			f.headSince = now
 		}
-		return false
-	})
+	} else if !f.busy {
+		f.headSince = time.Time{}
+	}
 	var air func(from, to string, m Message)
 	var from, to string
 	var msg Message
@@ -318,7 +326,7 @@ func (f *FakeRadio) Tick() {
 		f.status.Sent++
 	}
 	if to != "" {
-		f.lastTX = now
+		f.lastTX, f.headSince = now, time.Time{}
 		air = f.Air
 	}
 	monitor := f.monitor
@@ -351,13 +359,16 @@ func (f *FakeRadio) Hear(from string, path []string, m Message) {
 	f.mu.Lock()
 	f.status.Decoded++
 	own := strings.EqualFold(m.Addressee, f.settings.Callsign)
+	var dropAck string
 	if own && !m.Ack && !m.Rej && m.ID != "" {
-		dup := slices.ContainsFunc(f.acks, func(a fakeAck) bool { return a.to == from && a.id == m.ID })
-		if !dup {
-			if len(f.acks) >= int(f.caps.AckDepth) {
-				f.acks = f.acks[1:] // the oldest is lost (firmware: oldest out)
-			}
-			f.acks = append(f.acks, fakeAck{to: strings.ToUpper(from), id: m.ID, at: f.Now()})
+		to := strings.ToUpper(from)
+		dup := slices.ContainsFunc(f.acks, func(a fakeAck) bool { return a.to == to && a.id == m.ID })
+		switch {
+		case dup:
+		case len(f.acks) >= int(f.caps.AckDepth): // spec 8.2: a fifth is dropped and reported
+			dropAck = fmt.Sprintf("DROP:ack %s{%s} %s", to, m.ID, ReasonFull)
+		default:
+			f.acks = append(f.acks, fakeAck{to: to, id: m.ID, at: f.Now()})
 		}
 	}
 	monitor, rssi, haveRSSI := f.monitor, f.rssi, f.caps.Has(FeatRSSI)
@@ -369,6 +380,9 @@ func (f *FakeRadio) Hear(from string, path []string, m Message) {
 	f.writeLine(monitor, FormatHeard(raw))
 	if haveRSSI {
 		f.writeLine(monitor, fmt.Sprintf("APRSRSSI:%d", rssi))
+	}
+	if dropAck != "" {
+		f.writeLine(monitor, dropAck)
 	}
 }
 

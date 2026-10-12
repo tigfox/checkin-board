@@ -3,6 +3,7 @@ package uvk5
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -180,6 +181,7 @@ func TestDropOnBusyAndBattery(t *testing.T) {
 	if _, err := s.Send(ctx, "KD2DCM-1", "stuck"); err != nil {
 		t.Fatal(err)
 	}
+	radio.Tick() // it reaches the front: its minute starts
 	clk.Add(fakeGiveUp)
 	radio.Tick()
 	if d, ok := nextEvent(t, s).(Dropped); !ok || d.Reason != ReasonBusy || d.Line != "01" {
@@ -262,5 +264,23 @@ func TestNoReply(t *testing.T) {
 	_, err := Connect(context.Background(), host)
 	if !errors.Is(err, ErrNoReply) || time.Since(start) > 2*replyTimeout {
 		t.Fatalf("err = %v after %s", err, time.Since(start))
+	}
+}
+
+// Spec 8.2: a fifth pending ack is dropped and reported, not the oldest.
+func TestAckListFull(t *testing.T) {
+	s, radio, _, _ := connect(t, nil)
+	for i := range 5 {
+		radio.Hear(fmt.Sprintf("KD2DCM-%d", i+1), nil, Message{Addressee: "KD2DCM-4", Text: "x", ID: "1"})
+	}
+	var drop Dropped
+	for range 12 { // 5 frames x (APRSRAW + APRSRSSI) + the DROP
+		if d, ok := nextEvent(t, s).(Dropped); ok {
+			drop = d
+			break
+		}
+	}
+	if !drop.Ack || drop.To != "KD2DCM-5" || drop.Reason != ReasonFull {
+		t.Fatalf("drop = %+v", drop)
 	}
 }

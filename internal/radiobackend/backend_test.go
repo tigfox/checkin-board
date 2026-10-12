@@ -260,6 +260,7 @@ func TestDropThenResend(t *testing.T) {
 	h.radio.SetBusy(true)
 	m := h.send("stuck")
 	h.waitFor("submitted", func() bool { return h.status(m.ID) == graywolf.StatusTxSubmitted })
+	h.radio.Tick() // at the front: its minute starts
 	h.clk.Add(61 * time.Second)
 	h.radio.Tick()
 	h.waitFor("failed", func() bool { return h.status(m.ID) == graywolf.StatusFailed })
