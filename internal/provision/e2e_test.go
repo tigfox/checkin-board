@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"checkin-board/internal/store"
 	"checkin-board/internal/testnode"
@@ -103,13 +104,13 @@ func TestSetupRadioNode(t *testing.T) {
 	rnode := testnode.Start(t, testnode.Options{Call: "W1RAD-1", Password: adminPW, UVK5: true})
 	csv := fmt.Sprintf("address,role,station_name,code,callsign,course_order,race_name\n"+
 		"%s,hq,Finish,FIN,KD2DCM-1,,Michaux Mud\n%s,checkpoint,Cattle Chute,CTL,KD2DCM-4,1,\n", hq.URL, rnode.URL)
-	// The backend column must match the node.
+	// This radio node has no graywolf: it can't be switched to it.
 	wrong, err := Parse(strings.NewReader(strings.NewReplacer("race_name\n", "race_name,backend\n", "Michaux Mud\n", "Michaux Mud,\n", "CTL,KD2DCM-4,1,\n", "CTL,KD2DCM-4,1,,graywolf\n").Replace(csv)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := PreviewAll(ctx, wrong, Options{Password: adminPW}); n[1].Err == nil || !strings.Contains(n[1].Err.Error(), "uses uvk5") {
-		t.Fatalf("backend mismatch: %v", n[1].Err)
+	if n := PreviewAll(ctx, wrong, Options{Password: adminPW}); n[1].Err == nil || !strings.Contains(n[1].Err.Error(), "isn't available") {
+		t.Fatalf("graywolf on a radio-only node: %v", n[1].Err)
 	}
 	p, err := Parse(strings.NewReader(csv))
 	if err != nil {
@@ -129,5 +130,46 @@ func TestSetupRadioNode(t *testing.T) {
 	}
 	if s, _ := rnode.Store.GetSettings(ctx); s.CheckpointCode != "CTL" || s.HQCall != "KD2DCM-1" {
 		t.Fatalf("radio node settings = %+v", s)
+	}
+}
+
+// The backend column switches a node's radio type: the node restarts
+// with it, and the rest is set up for that radio (here the callsign goes
+// on the UV-K5, not graywolf).
+func TestSetupSwitchesRadioType(t *testing.T) {
+	ctx := context.Background()
+	hq := startNode(t, "N0CALL")
+	node := testnode.Start(t, testnode.Options{Call: "N0CALL", Password: adminPW, Switchable: true, Run: true})
+	csv := fmt.Sprintf("address,role,station_name,code,callsign,course_order,race_name,backend\n"+
+		"%s,hq,Finish,FIN,KD2DCM-1,,Michaux Mud,\n%s,checkpoint,Cattle Chute,CTL,KD2DCM-4,1,,uvk5\n", hq.URL, node.URL)
+	p, err := Parse(strings.NewReader(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opt := Options{Password: adminPW, Graywolf: true, RestartWait: 20 * time.Second}
+	nodes := PreviewAll(ctx, p, opt)
+	if !nodes[1].Ready() || nodes[1].SwitchFrom != "graywolf" || nodes[0].SwitchFrom != "" {
+		t.Fatalf("preview: err %v, switch from %q", nodes[1].Err, nodes[1].SwitchFrom)
+	}
+	if k, _ := node.Store.RadioKind(ctx); k != "graywolf" {
+		t.Fatalf("the preview changed the radio type: %q", k)
+	}
+	ApplyAll(ctx, p, nodes, opt)
+	if !nodes[1].Applied || !nodes[1].Switched || nodes[1].Err != nil || len(nodes[1].GraywolfErrors) > 0 {
+		t.Fatalf("apply: applied %v switched %v err %v %v", nodes[1].Applied, nodes[1].Switched, nodes[1].Err, nodes[1].GraywolfErrors)
+	}
+	if k, _ := node.Store.RadioKind(ctx); k != "uvk5" {
+		t.Fatalf("radio type = %q", k)
+	}
+	if got := node.UV.Callsign(); got != "KD2DCM-4" {
+		t.Fatalf("UV-K5 callsign = %q", got)
+	}
+	if sc, _ := node.GW.StationConfig(ctx); sc.Callsign != "N0CALL" {
+		t.Fatalf("graywolf was changed too: %q", sc.Callsign)
+	}
+	// Again: already that radio type, nothing to switch.
+	nodes = PreviewAll(ctx, p, opt)
+	if !nodes[1].Ready() || nodes[1].SwitchFrom != "" {
+		t.Fatalf("second run: err %v, switch from %q", nodes[1].Err, nodes[1].SwitchFrom)
 	}
 }

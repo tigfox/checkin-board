@@ -109,6 +109,10 @@ type CleanupResult struct {
 	Gone    int // already gone (deleted by the operator)
 	Kept    int // still needed: batches HQ hasn't confirmed
 	Failed  int // graywolf errors; run cleanup again
+	// OtherRadio counts rows sent or received through the other radio
+	// type (the node switched mid-race): left for a cleanup run on that
+	// radio type.
+	OtherRadio int
 }
 
 // cleanupStates are where graywolf cleanup is allowed: after the race.
@@ -141,6 +145,10 @@ func (s *Service) CleanupGraywolf(ctx context.Context) (CleanupResult, error) {
 		return res, err
 	}
 	for _, r := range rows {
+		if s.cfg.OwnsRow != nil && !s.cfg.OwnsRow(r.GWMessageID) {
+			res.OtherRadio++
+			continue
+		}
 		if keep[r.GWMessageID] {
 			res.Kept++
 			continue

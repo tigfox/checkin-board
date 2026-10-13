@@ -464,3 +464,33 @@ func TestE2ERadioNodeStation(t *testing.T) {
 	b.waitText("#radio-result", "144.3900 MHz")
 	b.noErrors()
 }
+
+// The Station page's Radio card switches the radio type: confirmed, the
+// app restarts, and the page waits for it.
+func TestE2ERadioKindSwitch(t *testing.T) {
+	restarted := make(chan struct{}, 1)
+	e := newEnvWith(t, checkpointSettings(store.RaceActive), func(d *Deps) {
+		d.RadioKind, d.GraywolfReady = "graywolf", true
+		d.Restart = func() { restarted <- struct{}{} }
+	})
+	b := newBrowser(t, e.srv.URL)
+	b.login(e.admin)
+	b.run(chromedp.Navigate(e.srv.URL+"/admin.html"),
+		chromedp.Click(`//nav[@id="tabs"]/button[text()="Station"]`, chromedp.BySearch))
+	b.waitText("#radio-card", "Radio type")
+	b.waitText("#radio-kind-help", "AIOC")
+	b.run(chromedp.SetValue("#radio-kind", "uvk5", chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector("#radio-kind").dispatchEvent(new Event("change"))`, nil))
+	b.waitText("#radio-kind-help", "USB-C")
+	b.run(chromedp.Click("#radio-kind-change", chromedp.ByQuery))
+	b.waitText("#radio-kind-status", "Restarting with the new radio")
+	select {
+	case <-restarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the app wasn't restarted")
+	}
+	if k, _ := e.st.RadioKind(ctx); k != "uvk5" {
+		t.Fatalf("saved kind = %q", k)
+	}
+	b.noErrors()
+}

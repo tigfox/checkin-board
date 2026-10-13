@@ -70,6 +70,24 @@ func (r *Radio) Attach(s *Station) {
 	s.mu.Unlock()
 }
 
+// Detach takes s off the channel (its radio cable unplugged): it hears
+// and sends nothing until attached again.
+func (r *Radio) Detach(s *Station) {
+	r.mu.Lock()
+	r.stations = slices.DeleteFunc(r.stations, func(x *Station) bool { return x == s })
+	r.mu.Unlock()
+	s.mu.Lock()
+	s.radio = nil
+	s.mu.Unlock()
+}
+
+// DetachListener takes l off the channel.
+func (r *Radio) DetachListener(l Listener) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.listeners = slices.DeleteFunc(r.listeners, func(x Listener) bool { return x == l })
+}
+
 // Listener is a station on the channel that isn't a graywolf fake (a
 // UV-K5 radio's fake): it hears frames addressed to its callsign.
 type Listener interface {

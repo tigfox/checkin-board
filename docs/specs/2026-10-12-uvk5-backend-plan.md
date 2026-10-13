@@ -257,3 +257,43 @@ only.
 - Not done: the radio's RSSI isn't used by the link check yet (it's kept
   per sender in `State().LastRSSI`); answers to the firmware team's two
   questions are in the estimate document's reply.
+
+## Radio type on the Station page (17g, 2026-10-13)
+
+Radios get swapped in the field, so the radio type is no longer fixed at
+install time (`install.sh --backend` is gone):
+
+- One install sets up both: graywolf and the app's graywolf login, and
+  the UV-K5's `/dev/ttyACM*` access (the `50-uvk5.conf` drop-in) on every
+  node.
+- **Station → Radio → Radio type** lists every kind from
+  `internal/radiokind` (a registry: a future radio is an entry there, a
+  backend, and a case in `startMessaging`). A kind that can't be used
+  (graywolf without its login) is shown as not available, with why.
+- The choice is saved in `node_radio` (migration 0010). `CB_BACKEND` is
+  only the type until one is chosen. Choosing another type restarts the
+  app in place (`syscall.Exec`, same PID, so systemd's restart limits
+  don't apply); the page waits and reloads.
+- Switching is safe mid-race:
+  - Each kind keeps its own inbox cursor (`inbox_cursors`). The cursors
+    are swapped at startup (`ActivateRadioKind`) before the inbox runs.
+  - Radio message ids start at 2^40, so a batch bound to one backend's row
+    never matches the other's. A row the new backend doesn't have answers
+    404, and the batch goes out again as new; HQ dedups by
+    (checkpoint, seq, text).
+  - In the sims, a checkpoint goes graywolf → UV-K5 → graywolf with
+    reports in flight, and HQ moves to a UV-K5. Every passage arrives
+    exactly once.
+- `stationsetup`'s `backend` column sets the type. The preview shows the
+  switch; apply switches it, waits for the restart, previews again (what
+  loading changes depends on the radio), then applies.
+- Migration 0010 moves an existing UV-K5 node's message rows (and every
+  reference to them) above 2^40.
+- Post-race cleanup touches only the current radio's messages. Rows sent
+  through the other type are counted ("left alone") and kept for a
+  cleanup after switching back.
+- A node whose chosen type needs graywolf but has no graywolf login (one
+  first set up as a UV-K5 node) starts on the UV-K5 instead of failing,
+  so its Station page stays reachable. The page says why.
+- Not done: carrying the callsign over to a fresh radio automatically.
+  **Check radio** flags N0CALL, and the Station page's Callsign sets it.

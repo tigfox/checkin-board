@@ -72,10 +72,10 @@ install it with `sudo ./install.sh --graywolf-deb FILE.deb`. Then
 
 | Variable           | Default                 | Description |
 |--------------------|-------------------------|-------------|
-| `CB_BACKEND`       | `graywolf`              | how the node sends race traffic: `graywolf`, or `uvk5` for a UV-K5 V3 / UV-K1 radio on USB-C (then the `GW_` variables are unused; see "Radio nodes") |
+| `CB_BACKEND`       | `graywolf`              | the radio type until one is chosen on the Station page (Radio → Radio type), which wins from then on: `graywolf` (a radio on an AIOC cable), or `uvk5` (a UV-K5 V3 / UV-K1 on USB-C); see "Radio types" |
 | `CB_UVK5_PORT`     | (found)                 | the radio's serial port (`/dev/ttyACM*`, `/dev/ttyUSB*`, `/dev/serial/...`); unset: the first one that answers |
 | `GW_BASE_URL`      | `http://localhost:8080` | graywolf base URL |
-| `GW_USER`          | (required with graywolf) | a graywolf login (not a Linux user) for the app; `install.sh` creates `checkin-board` with graywolf's CLI (see the operator guide) |
+| `GW_USER`          | (needed for the graywolf radio type) | a graywolf login (not a Linux user) for the app; `install.sh` creates `checkin-board` with graywolf's CLI (see the operator guide) |
 | `GW_PASSWORD`      |                         | graywolf password (or use `GW_PASSWORD_FILE`) |
 | `GW_PASSWORD_FILE` |                         | file holding the password; must be `chmod 600`; wins over `GW_PASSWORD` |
 | `GW_TIMEOUT`       | `10s`                   | per-request timeout |
@@ -103,21 +103,38 @@ echo 'a new admin password' | CB_DB_PATH=/path/to/checkin-board.db checkin-board
 
 This logs out every admin session and doesn't touch race data.
 
-## Radio nodes (UV-K5 V3 / UV-K1)
+## Radio types (AIOC + graywolf, UV-K5 V3 / UV-K1)
 
-A node can send race traffic through a **UV-K5 V3 or UV-K1 running the
-custom APRS firmware** (protocol revision 1 or later), plugged into the Pi
-by USB-C, instead of graywolf and an AIOC (spec phase 17). The radio does
-the packet work, so even a Pi Zero has CPU to spare. Radio nodes and
-graywolf nodes share one frequency and one race: they speak the same RC1
-messages in ordinary APRS messages. Use radios for **checkpoints**; keep HQ
-on graywolf.
+Every node can send race traffic through either kind of radio, chosen on
+**Admin → Station → Radio → Radio type**:
 
-```sh
-sudo ./install.sh --backend uvk5          # or: --uvk5-port /dev/ttyACM0
-```
+- **Radio with an AIOC cable (graywolf)**: any 2 m radio on an AIOC (or
+  other sound-card) cable, with graywolf on the Pi as the modem. The
+  default.
+- **UV-K5 V3 / UV-K1 on USB-C (APRS firmware)**: a radio running the
+  custom APRS firmware (protocol revision 1 or later), plugged into the Pi
+  by USB-C (spec phase 17). The radio does the packet work, so even a Pi
+  Zero has CPU to spare.
 
-On the radio: this station's callsign-SSID (or let the Station page or
+Nodes with either radio share one frequency and one race: they speak the
+same RC1 messages in ordinary APRS messages. One install covers both
+(`install.sh` sets up graywolf and lets the app open the radio's USB
+port), so a radio can be **swapped mid-race**: connect the new radio,
+choose its type and press **Change radio type**. The app restarts with it
+in about 10 seconds (a bib logged meanwhile shows NOT confirmed: tap LOG
+again); entries are kept, and reports not yet acknowledged go out through
+the new radio (HQ ignores repeats). Then run **Check radio**. Unplug or
+switch off the old radio: graywolf keeps running. `stationsetup`'s
+`backend` column sets the type from the stations CSV. UV-K5s suit
+**checkpoints** best; HQ is happier on graywolf, which has no 5-second gap
+between packets.
+
+To add a new kind of radio later: an entry in `internal/radiokind`, a
+backend that answers the app's graywolf-shaped message calls (as
+`internal/radiobackend` does), and a case in `cmd/checkin-board`'s
+`startMessaging`.
+
+On a UV-K5: this station's callsign-SSID (or let the Station page or
 `stationsetup` set it), APRS on, the race frequency in FM, and its Path
 set to Direct or WIDE1-1. **Check radio** shows the connection, firmware,
 callsign, whether it can transmit and why not, frequency, battery,
@@ -150,8 +167,8 @@ password**, and be in race setup (race not started).
    | `callsign` | yes | the node's callsign-SSID, different on every node. Checkpoints report to the HQ line's callsign |
    | `course_order` | no | the checkpoint's place along the course (1, 2, ...) |
    | `checkpoint_name` | no | the name on HQ's checkpoint list (default: `station_name`) |
-   | `race_name`, `path`, `heartbeat_sec`, `flush_after_sec`, `max_in_flight`, `max_text_len`, `gap_grace_sec`, `gw_channel`, `tx_delay_ms`, `tx_tail_ms` | no | race-wide: set once (any line) or the same on every line. `path` is the digipeater path, `direct` for none. Radio nodes ignore `path`, `gw_channel` and the TX timing (the radio has its own) |
-   | `backend` | no | `graywolf` or `uvk5`: checks the node is that kind; a node that isn't is reported and not touched |
+   | `race_name`, `path`, `heartbeat_sec`, `flush_after_sec`, `max_in_flight`, `max_text_len`, `gap_grace_sec`, `gw_channel`, `tx_delay_ms`, `tx_tail_ms` | no | race-wide: set once (any line) or the same on every line. `path` is the digipeater path, `direct` for none. UV-K5 nodes ignore `path`, `gw_channel` and the TX timing (the radio has its own) |
+   | `backend` | no | the node's radio type: `graywolf` (AIOC cable) or `uvk5` (UV-K5 V3 / UV-K1 on USB-C). A node on another type is switched to it (it restarts) before the rest is set; blank leaves it as it is |
 
    Blank cells leave a node's current value alone. Lines starting with `#`
    are comments. The CSV holds no passwords.
@@ -176,7 +193,10 @@ password**, and be in race setup (race not started).
 What it sets on each node: the role, race name, station name and code,
 the HQ callsign (checkpoints), the local codes and checkpoint list (HQ),
 the messaging settings, and in graywolf the node's station callsign and
-TX delay and tail (on a radio node: the radio's callsign). `-no-graywolf` leaves graywolf alone. graywolf's
+TX delay and tail (on a UV-K5 node: the radio's callsign), and, from the
+optional `backend` column, the node's radio type (`graywolf` or `uvk5`; the
+node restarts with it first, then the rest is set for that radio).
+`-no-graywolf` leaves graywolf alone. graywolf's
 original values are kept on the node, and **Admin → Race → Race config →
 Restore graywolf settings** puts them back. Every setting stays editable
 on the node afterwards. Under the hood the CSV becomes a race config file

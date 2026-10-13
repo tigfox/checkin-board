@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"checkin-board/internal/gwfake"
+	"checkin-board/internal/radiokind"
 	"checkin-board/internal/store"
 )
 
@@ -130,6 +131,52 @@ func TestRadioCheckpointRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	massStart(t, s, rng, 31, 20, cp)
+	runUntilConfirmed(t, s, 2*time.Hour, cp)
+	s.Run(10 * time.Minute)
+	assertExactlyOnce(t, hqNode, cp)
+}
+
+// A checkpoint swaps radios mid-race, with reports in flight: graywolf
+// to a UV-K5 and back (the Station page's radio type; the app restarts
+// over the same database). Every passage still arrives exactly once.
+func TestRadioSwapMidRace(t *testing.T) {
+	s := newSim(t, 17, gwfake.Profile{Loss: 0.15, Dup: 0.1, MaxDelay: 2 * time.Second})
+	hqNode := addNode(t, s, hqCall, HQSettings())
+	cp := addNode(t, s, "W1RAD-7", CheckpointSettings("AS1", hqCall))
+	rng := rand.New(rand.NewPCG(17, 17))
+	massStart(t, s, rng, 1, 30, cp)
+	if err := s.SwitchRadio(cp, radiokind.UVK5); err != nil {
+		t.Fatal(err)
+	}
+	massStart(t, s, rng, 31, 30, cp)
+	s.Run(2 * time.Minute)
+	if sent, _ := cp.Store.RadioChanges(ctx, 0, 0); len(sent) == 0 {
+		t.Fatal("nothing went out through the UV-K5")
+	}
+	if err := s.SwitchRadio(cp, radiokind.Graywolf); err != nil {
+		t.Fatal(err)
+	}
+	massStart(t, s, rng, 61, 20, cp)
+	took := runUntilConfirmed(t, s, 2*time.Hour, cp)
+	t.Logf("two radio swaps: 80 runners confirmed %v after the last", took)
+	s.Run(10 * time.Minute)
+	assertExactlyOnce(t, hqNode, cp)
+}
+
+// HQ swaps radios mid-race too: checkpoints keep reporting to the same
+// callsign, now heard by the UV-K5. (A real callsign: a UV-K5 sends
+// nothing as N0CALL.)
+func TestHQRadioSwap(t *testing.T) {
+	const radioHQ = "W1HQ-10"
+	s := newSim(t, 18, gwfake.Profile{Loss: 0.1, MaxDelay: time.Second})
+	hqNode := addNode(t, s, radioHQ, HQSettings())
+	cp := addNode(t, s, "N0CALL-8", CheckpointSettings("AS2", radioHQ))
+	rng := rand.New(rand.NewPCG(18, 18))
+	massStart(t, s, rng, 1, 30, cp)
+	if err := s.SwitchRadio(hqNode, radiokind.UVK5); err != nil {
+		t.Fatal(err)
+	}
+	massStart(t, s, rng, 31, 30, cp)
 	runUntilConfirmed(t, s, 2*time.Hour, cp)
 	s.Run(10 * time.Minute)
 	assertExactlyOnce(t, hqNode, cp)

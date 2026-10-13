@@ -184,13 +184,19 @@ func (s *Store) EnsureInboxSince(ctx context.Context, t time.Time) error {
 	})
 }
 
-// SetInboxSince replaces the starting point and clears the cursor, so
-// the reader re-reads graywolf's messages from t (an admin recovery
-// action, e.g. after a wiped database; spec 4.7). Rows already recorded
-// are skipped, so re-reading is safe.
+// SetInboxSince replaces the starting point and clears the cursor (and
+// those put aside for other radio kinds), so the reader re-reads
+// messages from t (an admin recovery action, e.g. after a wiped
+// database; spec 4.7). Rows already recorded are skipped, so re-reading
+// is safe.
 func (s *Store) SetInboxSince(ctx context.Context, t time.Time) error {
 	since := normTime(t)
-	return s.db.WithContext(ctx).Save(&inboxState{ID: 1, Since: &since, UpdatedAt: normTime(s.now())}).Error
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("DELETE FROM inbox_cursors").Error; err != nil {
+			return err
+		}
+		return tx.Save(&inboxState{ID: 1, Since: &since, UpdatedAt: normTime(s.now())}).Error
+	})
 }
 
 // RecordBadReport keeps an undecodable RC1 text and records its

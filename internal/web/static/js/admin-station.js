@@ -11,7 +11,7 @@ const MAX_STATION_NAME = 25;
 
 export async function renderStation(sec, ctx) {
   const s = ctx.settings;
-  const gw = await get("/api/admin/gw");
+  const [gw, kinds] = await Promise.all([get("/api/admin/gw"), get("/api/admin/radio-kind")]);
   // A radio node (UV-K5/UV-K1 on USB-C) has no graywolf: the radio is
   // the station.
   const radio = gw.backend === "uvk5";
@@ -41,7 +41,7 @@ export async function renderStation(sec, ctx) {
 
   sec.append(raceSettingsForm(s, ctx), messagingSettingsForm(s, ctx));
 
-  sec.append(radioCard(radio));
+  sec.append(radioCard(radio, kinds, ctx));
   sec.append(await eventPageCard(ctx));
 
   sec.append(h("div", { class: "card" },
@@ -78,10 +78,71 @@ export async function renderStation(sec, ctx) {
   ));
 }
 
-// radioCard is the radio check (feedback 2026-10-09, item 6): is the
-// radio set up in graywolf, and working? It runs on request, since it
-// asks graywolf several questions.
-function radioCard(radio) {
+// RESTART_WAIT_MS is how long the page waits for the app to come back
+// after a radio type change.
+const RESTART_WAIT_MS = 90_000;
+
+// radioTypePicker chooses the kind of radio this node sends through. A
+// change restarts the app (a few seconds); reports wait in the outbox.
+function radioTypePicker(kinds, ctx) {
+  const sel = h("select", { id: "radio-kind" }, ...kinds.kinds.map((k) =>
+    h("option", { value: k.id, selected: k.id === kinds.current, disabled: !k.available },
+      k.available ? k.label : `${k.label} (not available)`)));
+  const help = h("p", { class: "muted", id: "radio-kind-help" });
+  const status = h("p", { id: "radio-kind-status" });
+  const showHelp = () => {
+    const k = kinds.kinds.find((x) => x.id === sel.value);
+    help.textContent = k ? (k.available ? k.help : `${k.help} ${k.why}`) : "";
+  };
+  sel.addEventListener("change", showHelp);
+  showHelp();
+  const chosen = kinds.kinds.find((x) => x.id === kinds.chosen);
+  if (kinds.chosen !== kinds.current && chosen) {
+    status.className = "banner warn";
+    status.textContent = chosen.available
+      ? "A new radio type was chosen; it takes effect when the app restarts."
+      : `${chosen.label} was chosen but can't be used here (${chosen.why}), so this node runs on the radio below.`;
+  }
+  const change = h("button", { type: "button", id: "radio-kind-change", onclick: async () => {
+    const k = kinds.kinds.find((x) => x.id === sel.value);
+    if (!k || k.id === kinds.current) return;
+    if (!confirm(L.radioKindConfirm(k.label))) return;
+    const r = await ctx.run(() => put("/api/admin/radio-kind", { kind: k.id }));
+    if (!r) return;
+    if (!r.restarting) {
+      ctx.notify(`Radio type set to ${k.label}; it takes effect when the app restarts.`, "warn");
+      return;
+    }
+    change.disabled = sel.disabled = true;
+    status.className = "banner";
+    status.textContent = "Restarting with the new radio…";
+    if (await waitForKind(k.id)) {
+      location.reload();
+    } else {
+      status.className = "banner bad";
+      status.textContent = "The node hasn't come back yet. Reload this page in a minute; if it still doesn't answer, check the node.";
+    }
+  } }, "Change radio type");
+  return [h("label", { for: "radio-kind" }, "Radio type"), h("div", { class: "row" }, sel, change), help, status];
+}
+
+// waitForKind polls until the restarted app runs with kind.
+async function waitForKind(kind) {
+  const until = Date.now() + RESTART_WAIT_MS;
+  while (Date.now() < until) {
+    await new Promise((res) => setTimeout(res, 2000));
+    try {
+      const v = await get("/api/admin/radio-kind", { redirectOn401: false });
+      if (v.current === kind) return true;
+    } catch { /* restarting: not answering yet */ }
+  }
+  return false;
+}
+
+// radioCard is the radio type and the radio check (feedback 2026-10-09,
+// item 6): is the radio set up, and working? The check runs on request,
+// since it asks the radio (or graywolf) several questions.
+function radioCard(radio, kinds, ctx) {
   const out = h("div", { id: "radio-result" });
   const run = async () => {
     out.replaceChildren(h("p", { class: "muted" }, "Checking…"));
@@ -100,8 +161,9 @@ function radioCard(radio) {
       out.replaceChildren(h("p", { class: "error" }, e.message));
     }
   };
-  return h("div", { class: "card" },
+  return h("div", { class: "card", id: "radio-card" },
     h("h2", {}, "Radio"),
+    ...radioTypePicker(kinds, ctx),
     h("p", { class: "muted" }, radio
       ? "Checks the radio: connection and firmware, callsign, whether it can transmit (and why not), frequency, battery, packets decoded and its message queue. Nothing is transmitted."
       : "Checks that the radio is set up in graywolf and working: build, channel, audio devices, push-to-talk, sample rate, receive level, packets decoded, and whether graywolf's modem keeps up. Nothing is transmitted."),

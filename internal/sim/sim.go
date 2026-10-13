@@ -19,6 +19,7 @@ import (
 	"checkin-board/internal/peers"
 	"checkin-board/internal/raceclock"
 	"checkin-board/internal/radiobackend"
+	"checkin-board/internal/radiokind"
 	"checkin-board/internal/store"
 	"checkin-board/internal/uvk5"
 )
@@ -92,12 +93,7 @@ func (s *Sim) AddNode(call string, settings store.Settings) (*Node, error) {
 // AddRadioNode adds a node that uses a UV-K5 radio (the fake radio with
 // the agreed firmware's limits) instead of graywolf.
 func (s *Sim) AddRadioNode(call string, settings store.Settings) (*Node, error) {
-	uv := uvk5.NewFakeRadio(call, s.Clock.Now)
-	uv.Air = func(from, to string, m uvk5.Message) {
-		s.Radio.Transmit(gwfake.Frame{From: from, To: to, Text: m.Text, MsgID: m.ID, IsAck: m.Ack})
-	}
-	s.Radio.AttachListener(radioListener{uv})
-	n := &Node{Call: call, Settings: settings, UV: uv}
+	n := &Node{Call: call, Settings: settings, UV: s.newFakeRadio(call)}
 	if err := s.build(n); err != nil {
 		return nil, err
 	}
@@ -126,6 +122,72 @@ func (s *Sim) PlugRadio(n *Node) error {
 	return nil
 }
 
+// SwitchRadio swaps n's radio mid-race, as an operator does on the
+// Station page: the old radio is unplugged (off the channel), the new
+// one connected, and the app restarts with the new radio kind over the
+// same database. A UV-K5 gets the node's callsign; graywolf keeps its
+// own state from before.
+func (s *Sim) SwitchRadio(n *Node, kind string) error {
+	from := radiokind.Graywolf
+	if n.RB != nil {
+		from = radiokind.UVK5
+	}
+	if from == kind {
+		return nil
+	}
+	if _, err := n.Store.ActivateRadioKind(ctx, from); err != nil { // as the app did at its last start
+		return err
+	}
+	switch kind {
+	case radiokind.UVK5:
+		if n.UV == nil {
+			n.UV = s.newFakeRadio(n.Call)
+		} else {
+			s.Radio.AttachListener(radioListener{n.UV})
+			n.UV.Air = s.air
+		}
+		s.Radio.Detach(n.GW)
+		rb, err := radiobackend.New(radiobackend.Config{Store: n.Store, Now: s.Clock.Now,
+			Dial: func(context.Context) (radiobackend.Session, error) { return nil, fmt.Errorf("simulated: no dialling") }})
+		if err != nil {
+			return err
+		}
+		n.RB = rb
+		if err := s.PlugRadio(n); err != nil {
+			return err
+		}
+	case radiokind.Graywolf:
+		if n.GW == nil {
+			n.GW = gwfake.New(n.Call)
+			n.GW.Now = s.Clock.Now
+		}
+		n.RB.Detach(fmt.Errorf("simulated: radio swapped"))
+		s.Radio.DetachListener(radioListener{n.UV})
+		n.UV.Air = nil
+		n.RB = nil
+		s.Radio.Attach(n.GW)
+	default:
+		return fmt.Errorf("sim: unknown radio kind %q", kind)
+	}
+	if _, err := n.Store.ActivateRadioKind(ctx, kind); err != nil {
+		return err
+	}
+	return s.Restart(n)
+}
+
+// newFakeRadio puts a fake UV-K5 with callsign call on the channel.
+func (s *Sim) newFakeRadio(call string) *uvk5.FakeRadio {
+	uv := uvk5.NewFakeRadio(call, s.Clock.Now)
+	uv.Air = s.air
+	s.Radio.AttachListener(radioListener{uv})
+	return uv
+}
+
+// air is what a fake UV-K5 sends, on the channel.
+func (s *Sim) air(from, to string, m uvk5.Message) {
+	s.Radio.Transmit(gwfake.Frame{From: from, To: to, Text: m.Text, MsgID: m.ID, IsAck: m.Ack})
+}
+
 // messages is what n's engines talk to: graywolf, or the radio backend.
 func (n *Node) messages() app.Graywolf {
 	if n.RB != nil {
@@ -146,7 +208,7 @@ func (s *Sim) build(n *Node) error {
 		return err
 	}
 	old := n.Store
-	if n.UV != nil {
+	if n.UV != nil && (n.RB != nil || n.GW == nil) { // on its UV-K5 now
 		rb, err := radiobackend.New(radiobackend.Config{Store: st, Now: s.Clock.Now,
 			Dial: func(context.Context) (radiobackend.Session, error) { return nil, fmt.Errorf("simulated: no dialling") }})
 		if err != nil {

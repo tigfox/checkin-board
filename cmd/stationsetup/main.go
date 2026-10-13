@@ -114,6 +114,10 @@ func printPreview(w io.Writer, i int, n *provision.Node, graywolf bool) {
 		return
 	}
 	p := n.Preview
+	if n.SwitchFrom != "" {
+		fmt.Fprintf(w, "    %-22s %s -> %s (the node restarts first; the changes below are checked again for the new radio)\n",
+			"Radio type:", n.SwitchFrom, n.Backend)
+	}
 	for _, c := range p.Settings {
 		fmt.Fprintf(w, "    %-22s %s -> %s\n", c.Label+":", orNone(c.From), orNone(c.To))
 	}
@@ -130,7 +134,7 @@ func printPreview(w io.Writer, i int, n *provision.Node, graywolf bool) {
 		}
 		fmt.Fprintf(w, "    %s%s: %s -> %s\n", tag, c.Label, orNone(c.From), orNone(c.To))
 	}
-	if len(p.Settings) == 0 && p.Checkpoints == nil && p.EventPage == nil && len(p.Graywolf) == 0 {
+	if n.SwitchFrom == "" && len(p.Settings) == 0 && p.Checkpoints == nil && p.EventPage == nil && len(p.Graywolf) == 0 {
 		fmt.Fprintln(w, "    (already set up: nothing to change)")
 	}
 	for _, pr := range p.Problems {
@@ -143,6 +147,9 @@ func printPreview(w io.Writer, i int, n *provision.Node, graywolf bool) {
 }
 
 func printResult(w io.Writer, i int, n *provision.Node) {
+	if n.Switched {
+		fmt.Fprintf(w, "[%d] %s: radio type now %s\n", i, n.Label, n.Backend)
+	}
 	switch {
 	case n.Applied && len(n.GraywolfErrors) == 0:
 		fmt.Fprintf(w, "[%d] %s: set up\n", i, n.Label)

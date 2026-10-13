@@ -64,23 +64,23 @@ check "logs kept in RAM, 16-64 MB" sh -c "grep -qx 'Storage=volatile' $jc && gre
 check "graywolf's log rate capped" grep -qx 'LogRateLimitBurst=500' /etc/systemd/system/graywolf.service.d/60-checkin-board-logs.conf
 check "...journald restarted once over all the re-runs" [ "$(grep -c 'restart systemd-journald' /tmp/systemctl.log)" = 1 ]
 
-# A radio node (phase 17): UV-K5 on USB-C, no graywolf.
-out=$(./install.sh --backend nope </dev/null 2>&1); rc=$?
-check "an unknown backend is refused (exit 2)" [ "$rc" = 2 ]
-out=$(./install.sh --uvk5-port /dev/ttyACM0 </dev/null 2>&1); rc=$?
-check "--uvk5-port without --backend uvk5 is refused" [ "$rc" = 2 ]
-out=$(./install.sh --backend uvk5 --uvk5-port '/dev/tty;rm' </dev/null 2>&1); rc=$?
-check "...as is a port that isn't a plain path" [ "$rc" = 2 ]
-: > /tmp/systemctl.log
-out=$(./install.sh --backend uvk5 --uvk5-port /dev/ttyACM0 </dev/null 2>&1); rc=$?
+# Radio types (phase 17): every node can use a UV-K5/UV-K1 on USB-C; the
+# type is chosen on the Station page, not here.
 env=/etc/checkin-board/checkin-board.env
 dropin=/etc/systemd/system/checkin-board.service.d/50-uvk5.conf
-check "--backend uvk5 installs (exit 0)" [ "$rc" = 0 ]
-check "...sets CB_BACKEND and CB_UVK5_PORT" sh -c "grep -qx 'CB_BACKEND=uvk5' $env && grep -qx 'CB_UVK5_PORT=/dev/ttyACM0' $env"
-check "...lets the service open the radio's port only" sh -c "grep -qx 'DeviceAllow=char-ttyACM rw' $dropin && grep -qx 'SupplementaryGroups=dialout' $dropin"
-check "...and starts it with no graywolf password" grep -q 'start checkin-board' /tmp/systemctl.log
-out=$(./install.sh --backend uvk5 </dev/null 2>&1)
-check "a re-run keeps one CB_BACKEND line" [ "$(grep -c '^CB_BACKEND=' $env)" = 1 ]
-out=$(./install.sh --backend graywolf </dev/null 2>&1)
-check "--backend graywolf switches back and drops the device access" sh -c "grep -qx 'CB_BACKEND=graywolf' $env && [ ! -e $dropin ]"
+check "every node may open a UV-K5's port, and only that" sh -c "grep -qx 'DeviceAllow=char-ttyACM rw' $dropin && grep -qx 'SupplementaryGroups=dialout' $dropin"
+check "...with no CB_BACKEND set" sh -c "! grep -q '^CB_BACKEND=' $env"
+out=$(./install.sh --backend uvk5 </dev/null 2>&1); rc=$?
+check "--backend is refused (exit 2), pointing to the Station page" sh -c "[ $rc = 2 ] && printf '%s' \"\$1\" | grep -q 'Station page'" _ "$out"
+out=$(./install.sh --uvk5-port '/dev/tty;rm' </dev/null 2>&1); rc=$?
+check "a UV-K5 port that isn't a plain path is refused" [ "$rc" = 2 ]
+: > /tmp/systemctl.log
+out=$(./install.sh --uvk5-port /dev/ttyACM0 </dev/null 2>&1); rc=$?
+check "--uvk5-port installs (exit 0) and sets CB_UVK5_PORT once" sh -c "[ $rc = 0 ] && [ \"\$(grep -c '^CB_UVK5_PORT=/dev/ttyACM0' $env)\" = 1 ]"
+check "...and graywolf's login is still needed to start (graywolf is the default)" sh -c "! grep -q 'start checkin-board' /tmp/systemctl.log"
+# A node set up as a radio node by an older install starts without it.
+printf 'CB_BACKEND=uvk5\n' >> $env
+: > /tmp/systemctl.log
+out=$(./install.sh </dev/null 2>&1); rc=$?
+check "an older radio node (CB_BACKEND=uvk5) starts with no graywolf password" sh -c "[ $rc = 0 ] && grep -q 'start checkin-board' /tmp/systemctl.log"
 exit $fail

@@ -13,6 +13,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"checkin-board/internal/radiokind"
 )
 
 const (
@@ -32,14 +34,12 @@ const (
 	// Action that runs a link check); unset leaves it off.
 	EnvHookTokenFile = "CB_HOOK_TOKEN_FILE"
 
-	// EnvBackend chooses how the node sends race traffic: "graywolf"
-	// (default) or "uvk5", a UV-K5 V3 / UV-K1 radio on USB-C (phase 17).
+	// EnvBackend is the radio kind (radiokind) a node starts with until
+	// one is chosen on the Station page; the choice, saved in the
+	// database, wins from then on.
 	EnvBackend = "CB_BACKEND"
-	// EnvUVK5Port is the radio's serial port ("": the first that answers).
+	// EnvUVK5Port is the UV-K5's serial port ("": the first that answers).
 	EnvUVK5Port = "CB_UVK5_PORT"
-
-	BackendGraywolf = "graywolf"
-	BackendUVK5     = "uvk5"
 
 	// MinHookTokenLen is the shortest accepted hook token.
 	MinHookTokenLen = 24
@@ -56,12 +56,15 @@ type Config struct {
 	DBPath           string
 	Listen           string
 	HookToken        string // "" = automation hook off
-	Backend          string // BackendGraywolf or BackendUVK5
-	UVK5Port         string // "" = find the radio
+	// Backend is CB_BACKEND: the radio kind until one is chosen on the
+	// Station page ("": radiokind.Default).
+	Backend  string
+	UVK5Port string // "" = find the radio
 }
 
-// Radio reports whether the node uses a UV-K5 radio instead of graywolf.
-func (c Config) Radio() bool { return c.Backend == BackendUVK5 }
+// GraywolfReady reports whether graywolf's login is configured, which
+// the graywolf radio kind needs.
+func (c Config) GraywolfReady() bool { return c.GraywolfUser != "" && c.GraywolfPassword != "" }
 
 // String never includes the password.
 func (c Config) String() string {
@@ -69,14 +72,16 @@ func (c Config) String() string {
 	if c.HookToken != "" {
 		hook = "on"
 	}
-	if c.Radio() {
-		port := c.UVK5Port
-		if port == "" {
-			port = "auto"
-		}
-		return fmt.Sprintf("backend=uvk5 port=%s db=%s listen=%s hook=%s", port, c.DBPath, c.Listen, hook)
+	port := c.UVK5Port
+	if port == "" {
+		port = "auto"
 	}
-	return fmt.Sprintf("graywolf=%s user=%s timeout=%s db=%s listen=%s hook=%s", c.GraywolfURL, c.GraywolfUser, c.Timeout, c.DBPath, c.Listen, hook)
+	user := c.GraywolfUser
+	if user == "" {
+		user = "(none)"
+	}
+	return fmt.Sprintf("graywolf=%s user=%s timeout=%s uvk5_port=%s default_radio=%s db=%s listen=%s hook=%s",
+		c.GraywolfURL, user, c.Timeout, port, valueOr(c.Backend, radiokind.Default), c.DBPath, c.Listen, hook)
 }
 
 // Env abstracts the environment and filesystem so loading is testable.
@@ -98,15 +103,17 @@ func Load() (Config, error) {
 	return LoadFrom(OSEnv())
 }
 
-// LoadFrom reads configuration from env.
+// LoadFrom reads configuration from env. Every radio kind's settings
+// are read, since the kind can change while the app runs; graywolf's
+// login is optional (without it the graywolf kind can't be chosen).
 func LoadFrom(env Env) (Config, error) {
-	backend := strings.ToLower(valueOr(strings.TrimSpace(env.Getenv(EnvBackend)), BackendGraywolf))
-	switch backend {
-	case BackendGraywolf:
-	case BackendUVK5:
-		return loadRadio(env)
-	default:
-		return Config{}, fmt.Errorf("%s must be %q or %q, got %q", EnvBackend, BackendGraywolf, BackendUVK5, backend)
+	backend := strings.ToLower(strings.TrimSpace(env.Getenv(EnvBackend)))
+	if _, ok := radiokind.Lookup(backend); backend != "" && !ok {
+		return Config{}, fmt.Errorf("%s must be one of %s, got %q", EnvBackend, strings.Join(radiokind.IDs(), ", "), backend)
+	}
+	port := strings.TrimSpace(env.Getenv(EnvUVK5Port))
+	if port != "" && !serialPort(port) {
+		return Config{}, fmt.Errorf("%s must be a serial port (/dev/ttyACM*, /dev/ttyUSB*, /dev/serial/..., /dev/uvk5*), got %q", EnvUVK5Port, port)
 	}
 	gwURL := valueOr(env.Getenv(EnvGraywolfURL), DefaultGraywolfURL)
 	if err := validateURL(gwURL); err != nil {
@@ -116,13 +123,11 @@ func LoadFrom(env Env) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	user := strings.TrimSpace(env.Getenv(EnvGraywolfUser))
-	if user == "" {
-		return Config{}, fmt.Errorf("%s is required", EnvGraywolfUser)
-	}
-	pass, err := loadPassword(env)
-	if err != nil {
-		return Config{}, err
+	user, pass := strings.TrimSpace(env.Getenv(EnvGraywolfUser)), ""
+	if user != "" {
+		if pass, err = loadPassword(env); err != nil {
+			return Config{}, err
+		}
 	}
 	hook, err := loadHook(env)
 	if err != nil {
@@ -132,22 +137,8 @@ func LoadFrom(env Env) (Config, error) {
 		GraywolfURL: gwURL, GraywolfUser: user, GraywolfPassword: pass, Timeout: timeout,
 		DBPath:    DBPathFrom(env.Getenv),
 		Listen:    valueOr(strings.TrimSpace(env.Getenv(EnvListen)), DefaultListen),
-		HookToken: hook, Backend: BackendGraywolf,
+		HookToken: hook, Backend: backend, UVK5Port: port,
 	}, nil
-}
-
-// loadRadio reads a radio node's configuration: no graywolf settings.
-func loadRadio(env Env) (Config, error) {
-	port := strings.TrimSpace(env.Getenv(EnvUVK5Port))
-	if port != "" && !serialPort(port) {
-		return Config{}, fmt.Errorf("%s must be a serial port (/dev/ttyACM*, /dev/ttyUSB*, /dev/serial/..., /dev/uvk5*), got %q", EnvUVK5Port, port)
-	}
-	hook, err := loadHook(env)
-	if err != nil {
-		return Config{}, err
-	}
-	return Config{Backend: BackendUVK5, UVK5Port: port, DBPath: DBPathFrom(env.Getenv),
-		Listen: valueOr(strings.TrimSpace(env.Getenv(EnvListen)), DefaultListen), HookToken: hook}, nil
 }
 
 // serialPort accepts only the radio's kinds of serial device path.
@@ -305,9 +296,6 @@ func PanelFrom(env Env) (Panel, error) {
 // GraywolfLocal reports whether graywolf runs on this machine (a loopback
 // URL), so the node's own hardware (its sound cards) is graywolf's.
 func (c Config) GraywolfLocal() bool {
-	if c.Radio() {
-		return false
-	}
 	u, err := url.Parse(c.GraywolfURL)
 	if err != nil {
 		return false

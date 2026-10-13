@@ -248,3 +248,23 @@ func TestTransitionLosesToConcurrentChange(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// After a mid-race switch of radio type, cleanup on graywolf leaves the
+// UV-K5's rows (ids from store.RadioIDBase) for a cleanup on that radio.
+func TestCleanupLeavesOtherRadioRows(t *testing.T) {
+	e := newEnv(t, hqSettings(), store.RaceComplete)
+	e.svc.cfg.OwnsRow = func(id uint64) bool { return id < store.RadioIDBase }
+	radioRow := store.RadioIDBase + 7
+	for _, id := range []uint64{4242, radioRow} {
+		if _, err := e.st.RecordGWRow(ctx, id, store.GWRowGap); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := e.svc.CleanupGraywolf(ctx)
+	if err != nil || res.Gone != 1 || res.OtherRadio != 1 {
+		t.Fatalf("cleanup = %+v, %v", res, err)
+	}
+	if rows, _ := e.st.ListGWRows(ctx); len(rows) != 1 || rows[0].GWMessageID != radioRow {
+		t.Fatalf("left = %+v, want the UV-K5 row", rows)
+	}
+}

@@ -63,6 +63,10 @@ type Config struct {
 	BackupDir string
 	Now       func() time.Time // nil: time.Now
 	Logger    *slog.Logger
+	// OwnsRow says whether a recorded message id is the current radio
+	// type's (nil: every row is). After a mid-race switch, cleanup leaves
+	// the other type's rows alone.
+	OwnsRow func(id uint64) bool
 }
 
 // Service implements the operator actions.

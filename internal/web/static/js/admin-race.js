@@ -53,7 +53,7 @@ export async function renderRace(sec, ctx) {
         }
         if (!confirm(ask)) return;
         await ctx.run(() => post(`/api/admin/race/${a}`), (r) =>
-          a === "cleanup-graywolf" ? `${s.backend === "uvk5" ? "Message cleanup" : "graywolf cleanup"}: ${r.deleted} deleted, ${r.kept} kept (still needed), ${r.gone} already gone, ${r.failed} failed`
+          a === "cleanup-graywolf" ? `${s.backend === "uvk5" ? "Message cleanup" : "graywolf cleanup"}: ${r.deleted} deleted, ${r.kept} kept (still needed), ${r.gone} already gone, ${r.failed} failed${r.other_radio ? `; ${r.other_radio} sent through the other radio type left alone (clean them up after switching back)` : ""}`
             : a === "secure" ? `Secured. ${r.unconfirmed} entries will go out at the final check-in.` : `${label}: done`);
         await ctx.reload();
         await ctx.refresh();

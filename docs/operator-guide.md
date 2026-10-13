@@ -76,26 +76,33 @@ nodes"). Later upgrades with plain `sudo ./install.sh` keep it (an
 installed graywolf is never replaced without `--graywolf-deb`). On a Pi
 Zero the installer warns when graywolf lacks the fixes.
 
-**Radio nodes (UV-K5 V3 / UV-K1, no graywolf).** A checkpoint can use one
-of these radios, running the custom APRS firmware (protocol revision 1 or
-later), plugged into the Pi by **USB-C** with a cable that carries data.
-It replaces graywolf and the AIOC: the radio does the packet work, so any
-Pi will do. Install with:
+**Radio types: AIOC + graywolf, or UV-K5 V3 / UV-K1.** Every node can
+use either kind of radio, and the same install covers both: `install.sh`
+sets up graywolf (for a radio on an AIOC cable) and lets the sandboxed
+service open a UV-K5's USB serial port (`/dev/ttyACM*` only, through a
+unit drop-in). Choose the radio on **Admin → Station → Radio → Radio
+type** (or with `stationsetup`'s `backend` column). A UV-K5 V3 or UV-K1
+must run the custom APRS firmware (protocol revision 1 or later) and be
+plugged into the Pi by **USB-C** with a cable that carries data; the
+radio does the packet work, so any Pi will do. The port is found by
+itself; to pin it: `sudo ./install.sh --uvk5-port /dev/ttyACM0`.
 
-```sh
-sudo ./install.sh --backend uvk5                         # finds the radio
-sudo ./install.sh --backend uvk5 --uvk5-port /dev/ttyACM0  # or names its port
-```
-
-The script skips graywolf entirely (no download, login or password), sets
-`CB_BACKEND=uvk5` (and `CB_UVK5_PORT`) in the env file, and lets the
-sandboxed service open the radio's USB serial port (`/dev/ttyACM*` only,
-through a unit drop-in). `--backend graywolf` switches a node back. On
-the radio: set this station's callsign-SSID (or let the Station page or
+On a UV-K5: set this station's callsign-SSID (or let the Station page or
 `stationsetup` set it), switch APRS on, set the race frequency in FM, and
 set its **Path** to Direct or WIDE1-1. Then **Admin → Station → Radio →
-Check radio** must pass. See the station guide, "Radio nodes", for what
-differs during the race. Keep HQ on graywolf.
+Check radio** must pass. See the station guide, "Radio types", for what
+differs during the race. UV-K5s suit checkpoints best; HQ is happier on
+graywolf.
+
+**Swapping a radio mid-race:** connect the new radio (callsign, APRS,
+frequency set), choose its type on the Station page and press **Change
+radio type**, confirm. The app restarts with it in about 10 seconds: a
+bib logged meanwhile shows NOT confirmed (tap LOG again). Entries are
+kept; reports HQ hasn't acknowledged go out through the new radio, and
+HQ ignores repeats. Run **Check radio**, and unplug or switch off the old
+radio (graywolf keeps running, and would still digipeat or beacon if set
+to). Nodes installed with the old `--backend uvk5` keep working as UV-K5
+nodes; that option is gone.
 
 **Upgrading:** run `sudo ./install.sh` from the new bundle. Settings and
 the password are kept, and the database is copied to
@@ -283,7 +290,7 @@ fixes a mistake.
 
 ## 4. When something goes wrong
 
-**"Radio not connected" on a radio node** (keypad banner, panel "radio
+**"Radio not connected" with a UV-K5** (keypad banner, panel "radio
 DOWN"). The UV-K5/UV-K1 is unplugged, switched off, or another program
 holds its port. Entries are kept and sent when it's back. Check the USB-C
 cable (a charge-only cable won't do), switch the radio on, and wait a few

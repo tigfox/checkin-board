@@ -100,6 +100,15 @@ type Deps struct {
 	// GraywolfRemote: graywolf runs on another machine, so this node's
 	// sound cards say nothing about its radio cable.
 	GraywolfRemote bool
+	// RadioKind is the radio kind the app runs with (radiokind id; ""
+	// means graywolf, or uvk5 when Radio is set).
+	RadioKind string
+	// GraywolfReady: graywolf's login is configured, so the graywolf
+	// kind can be chosen.
+	GraywolfReady bool
+	// Restart starts the app again (with a newly chosen radio kind);
+	// nil: the kind is saved but takes effect at the next start.
+	Restart func()
 	// RaceConfigDir is the race config files' folder (phase 12a), e.g.
 	// /var/lib/checkin-board/race-configs; "" means a temporary one.
 	RaceConfigDir string

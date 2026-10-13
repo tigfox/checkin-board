@@ -247,3 +247,10 @@ test("a radio node names its message cleanup without graywolf", () => {
   assert.equal(L.actionLabel("cleanup-graywolf", "checkpoint", "graywolf")[0], "Clean up graywolf messages");
   assert.equal(L.actionLabel("start", "checkpoint", "uvk5")[0], "Open checkpoint");
 });
+
+test("radioKindConfirm names the radio and the restart", () => {
+  const q = L.radioKindConfirm("UV-K5 V3 / UV-K1 on USB-C (APRS firmware)");
+  assert.match(q, /UV-K5 V3/);
+  assert.match(q, /restarts/);
+  assert.match(q, /tap LOG again/);
+});

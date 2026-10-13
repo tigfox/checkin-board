@@ -17,6 +17,7 @@ import (
 	"checkin-board/internal/ops"
 	"checkin-board/internal/peers"
 	"checkin-board/internal/raceclock"
+	"checkin-board/internal/radiokind"
 	"checkin-board/internal/store"
 )
 
@@ -50,6 +51,9 @@ type Config struct {
 	// Hold, if set, says why race reports can't go on air now ("": they
 	// can), e.g. the radio cable is missing (cablewatch).
 	Hold func() string
+	// RadioKind is the radio kind the app runs with (radiokind id), so
+	// cleanup touches only that radio's messages; "": every message.
+	RadioKind string
 	// StartedAt is saved, on a node's first run only, as the inbox
 	// reader's starting point, so a fresh node doesn't replay old races
 	// from graywolf's history. Later runs keep the first value.
@@ -122,7 +126,7 @@ func New(cfg Config) (*App, error) {
 		Store: cfg.Store, Graywolf: cfg.Graywolf, Clock: clock, Peers: ensurer, Checkpoint: cp, HQ: hqe,
 		JournalPath: filepath.Join(cfg.DataDir, "race-journal.csv"),
 		BackupDir:   filepath.Join(cfg.DataDir, "backups"),
-		Logger:      log,
+		Logger:      log, OwnsRow: ownsRow(cfg.RadioKind),
 	})
 	if err != nil {
 		return nil, err
@@ -196,5 +200,17 @@ func (a *App) RefreshPrefs(ctx context.Context) error {
 	}
 	a.Checkpoint.SetGraywolfMaxText(p.MaxText())
 	a.HQ.SetGraywolfMaxText(p.MaxText())
+	return nil
+}
+
+// ownsRow tells the radio kind's message ids from the other's: radio
+// message ids start at store.RadioIDBase (nil: no kind given).
+func ownsRow(kind string) func(uint64) bool {
+	switch kind {
+	case radiokind.UVK5:
+		return func(id uint64) bool { return id >= store.RadioIDBase }
+	case radiokind.Graywolf:
+		return func(id uint64) bool { return id < store.RadioIDBase }
+	}
 	return nil
 }

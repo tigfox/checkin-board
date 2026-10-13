@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
+	"time"
 
 	"checkin-board/internal/nodeapi"
 	"checkin-board/internal/raceconfig"
@@ -20,7 +23,17 @@ type Options struct {
 	// callsign and the race's TX timing. graywolf's original values are
 	// kept on the node for Restore graywolf settings.
 	Graywolf bool
+	// RestartWait bounds the wait for a node to restart with a new radio
+	// type (0: DefaultRestartWait).
+	RestartWait time.Duration
 }
+
+// DefaultRestartWait is how long a node gets to restart with a new radio
+// type: the app restarts in seconds, but a Pi Zero can be slow.
+const DefaultRestartWait = 2 * time.Minute
+
+// restartPoll is how often a restarting node is asked whether it's back.
+const restartPoll = time.Second
 
 // Node is one target's progress: its preview, then what applying did.
 type Node struct {
@@ -30,7 +43,20 @@ type Node struct {
 	Applied        bool
 	Unsure         bool // the apply got no answer: it may have happened
 	GraywolfErrors []string
-	client         *nodeapi.Client
+	// SwitchFrom is the node's radio type when the CSV's backend column
+	// asks for another: applying switches it first (the node restarts).
+	SwitchFrom string
+	Switched   bool // the radio type was switched
+	client     *nodeapi.Client
+}
+
+type radioKinds struct {
+	Current string `json:"current"`
+	Kinds   []struct {
+		ID        string `json:"id"`
+		Available bool   `json:"available"`
+		Why       string `json:"why"`
+	} `json:"kinds"`
 }
 
 // Ready is whether the node can be set up (preview fine).
@@ -64,16 +90,40 @@ func preview(ctx context.Context, n *Node, p *Plan, opt Options) error {
 		return fmt.Errorf("login: %w", err)
 	}
 	if n.Backend != "" {
-		var set struct {
-			Backend string `json:"backend"`
-		}
-		if err := n.client.Do(ctx, http.MethodGet, "/api/admin/settings", nil, &set); err != nil {
-			return fmt.Errorf("settings: %w", err)
-		}
-		if set.Backend != "" && set.Backend != n.Backend {
-			return fmt.Errorf("the CSV says backend %s, but this node uses %s (is the address right?)", n.Backend, set.Backend)
+		if err := checkRadioKind(ctx, n); err != nil {
+			return err
 		}
 	}
+	return previewOnly(ctx, n, p)
+}
+
+// checkRadioKind sees whether the node can use the CSV's radio type,
+// and notes a switch when it uses another now.
+func checkRadioKind(ctx context.Context, n *Node) error {
+	var rk radioKinds
+	if err := n.client.Do(ctx, http.MethodGet, "/api/admin/radio-kind", nil, &rk); err != nil {
+		if nodeapi.StatusOf(err) == http.StatusNotFound {
+			return errors.New("this node's checkin-board can't change its radio type: update it first")
+		}
+		return fmt.Errorf("radio type: %w", err)
+	}
+	for _, k := range rk.Kinds {
+		if k.ID != n.Backend {
+			continue
+		}
+		if !k.Available {
+			return fmt.Errorf("radio type %s isn't available on this node: %s", n.Backend, k.Why)
+		}
+		if rk.Current != n.Backend {
+			n.SwitchFrom = rk.Current
+		}
+		return nil
+	}
+	return fmt.Errorf("this node doesn't know radio type %s: update it first", n.Backend)
+}
+
+// previewOnly uploads the race config if needed and previews it.
+func previewOnly(ctx context.Context, n *Node, p *Plan) error {
 	// A 409 means the file is already there: the name is its hash.
 	err := n.client.Upload(ctx, "/api/admin/raceconfigs", p.FileName(), p.Config, nil, nil)
 	if err != nil && nodeapi.StatusOf(err) != http.StatusConflict {
@@ -96,6 +146,12 @@ func ApplyAll(ctx context.Context, p *Plan, nodes []*Node, opt Options) {
 			continue
 		}
 		wg.Go(func() {
+			if n.SwitchFrom != "" {
+				if err := switchKind(ctx, n, p, opt); err != nil {
+					n.Err = err
+					return
+				}
+			}
 			var res raceconfig.Result
 			path := "/api/admin/raceconfigs/" + url.PathEscape(p.FileName()) + "/apply"
 			body := map[string]any{"station": n.Station, "graywolf": opt.Graywolf, "token": n.Preview.Token}
@@ -113,4 +169,45 @@ func ApplyAll(ctx context.Context, p *Plan, nodes []*Node, opt Options) {
 		})
 	}
 	wg.Wait()
+}
+
+// switchKind switches the node's radio type, waits for it to restart
+// with it, and previews again: what loading the config changes depends
+// on the radio type.
+func switchKind(ctx context.Context, n *Node, p *Plan, opt Options) error {
+	var out struct {
+		Restarting bool `json:"restarting"`
+	}
+	// No answer (the node restarting as it replied): the poll below sees
+	// whether the switch happened.
+	if err := n.client.Do(ctx, http.MethodPut, "/api/admin/radio-kind", map[string]string{"kind": n.Backend}, &out); err != nil &&
+		nodeapi.StatusOf(err) != 0 {
+		return fmt.Errorf("switch radio type to %s: %w", n.Backend, err)
+	}
+	wait := opt.RestartWait
+	if wait <= 0 {
+		wait = DefaultRestartWait
+	}
+	wctx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	for {
+		var rk radioKinds
+		err := n.client.Do(wctx, http.MethodGet, "/api/admin/radio-kind", nil, &rk)
+		if err == nil && rk.Current == n.Backend {
+			break
+		}
+		select {
+		case <-wctx.Done():
+			return fmt.Errorf("radio type %s chosen, but the node didn't come back with it within %s: check the node, then run again", n.Backend, wait)
+		case <-time.After(restartPoll):
+		}
+	}
+	n.Switched = true
+	if err := previewOnly(ctx, n, p); err != nil {
+		return fmt.Errorf("after switching the radio type: %w", err)
+	}
+	if !n.Preview.CanApply {
+		return fmt.Errorf("after switching the radio type, the node can't load the config: %s", strings.Join(n.Preview.Problems, "; "))
+	}
+	return nil
 }

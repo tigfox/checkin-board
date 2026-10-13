@@ -29,6 +29,8 @@ func (s *server) routes() []route {
 		{method: "PUT", pattern: "/api/admin/callsign", access: admin, h: s.putCallsign},
 		{method: "GET", pattern: "/api/admin/gw", access: admin, h: s.getGraywolf},
 		{method: "GET", pattern: "/api/admin/radio", access: admin, h: s.getRadio},
+		{method: "GET", pattern: "/api/admin/radio-kind", access: admin, h: s.getRadioKind},
+		{method: "PUT", pattern: "/api/admin/radio-kind", access: admin, h: s.putRadioKind},
 		// Race config files (phase 12a).
 		{method: "GET", pattern: "/api/admin/raceconfigs", access: admin, h: s.getRaceConfigs},
 		{method: "POST", pattern: "/api/admin/raceconfigs", access: admin, h: s.postRaceConfig, upload: true},

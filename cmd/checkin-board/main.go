@@ -76,6 +76,9 @@ func main() {
 		os.Exit(code)
 	default:
 		err = run(logger)
+		if errors.Is(err, errRestart) {
+			err = restartSelf(logger)
+		}
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("fatal", "err", err)
@@ -125,9 +128,29 @@ func resetAdminPassword(ctx context.Context, dbPath string, in io.Reader, out io
 	return nil
 }
 
+// errRestart ends run so the app starts again in place (a new radio
+// kind was chosen).
+var errRestart = errors.New("restart requested")
+
+// restartSelf replaces the process with a fresh copy of itself (same
+// PID, so systemd sees no exit). Everything was closed by run.
+func restartSelf(logger *slog.Logger) error {
+	exe := os.Args[0]
+	if !filepath.IsAbs(exe) {
+		var err error
+		if exe, err = os.Executable(); err != nil {
+			return fmt.Errorf("restart: %w", err)
+		}
+	}
+	logger.Info("restarting", "exe", exe)
+	return fmt.Errorf("restart: %w", syscall.Exec(exe, os.Args, os.Environ()))
+}
+
 func run(logger *slog.Logger) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, restart := context.WithCancelCause(sigCtx)
+	defer restart(nil)
 	startedAt := time.Now()
 	logger.Info("checkin-board starting", "version", version, "tested_graywolf", testedGraywolfVersion)
 
@@ -147,14 +170,18 @@ func run(logger *slog.Logger) error {
 	// sound cards (hostmon reads /proc; unknown elsewhere).
 	host := hostmon.New("/proc")
 	go host.Run(ctx, hostmon.SampleEvery, time.Now)
-	msg, err := startMessaging(ctx, cfg, st, logger)
+	kind, err := chooseRadio(ctx, cfg, st, logger)
+	if err != nil {
+		return err
+	}
+	msg, err := startMessaging(ctx, cfg, kind, st, logger)
 	if err != nil {
 		return err
 	}
 
 	a, err := app.New(app.Config{
 		Store: st, Graywolf: msg.gw, Logger: logger, StartedAt: startedAt,
-		DataDir: filepath.Dir(cfg.DBPath), Hold: msg.hold,
+		DataDir: filepath.Dir(cfg.DBPath), Hold: msg.hold, RadioKind: kind.ID,
 	})
 	if err != nil {
 		return fmt.Errorf("assemble app: %w", err)
@@ -172,6 +199,11 @@ func run(logger *slog.Logger) error {
 		Store: st, Auth: authSvc, Ops: a.Ops, HQ: a.HQ, Checkpoint: a.Checkpoint, Inbox: a.Inbox,
 		Clock: a.Clock, Graywolf: msg.gw, Logger: logger, HookToken: cfg.HookToken, WebPort: listenPort(cfg.Listen),
 		Host: host, Cable: msg.cable, Radio: msg.radio, GraywolfRemote: !msg.local,
+		RadioKind: kind.ID, GraywolfReady: cfg.GraywolfReady(),
+		Restart: func() {
+			logger.Warn("restarting with the newly chosen radio kind")
+			restart(errRestart)
+		},
 		RaceConfigDir: filepath.Join(filepath.Dir(cfg.DBPath), "race-configs"),
 	})
 	if err != nil {
@@ -201,6 +233,9 @@ func run(logger *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+	if errors.Is(context.Cause(ctx), errRestart) && sigCtx.Err() == nil && (err == nil || errors.Is(err, context.Canceled)) {
+		return errRestart
+	}
 	return err
 }
 

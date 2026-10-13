@@ -394,7 +394,8 @@ func (s *server) postCleanup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"deleted": res.Deleted, "gone": res.Gone, "kept": res.Kept, "failed": res.Failed})
+	writeJSON(w, http.StatusOK, map[string]int{"deleted": res.Deleted, "gone": res.Gone, "kept": res.Kept, "failed": res.Failed,
+		"other_radio": res.OtherRadio})
 }
 
 type resetBody struct {

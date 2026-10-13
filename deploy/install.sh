@@ -9,8 +9,13 @@
 #   sudo ./install.sh --graywolf-deb FILE.deb       # install this graywolf package
 #                                                   # (e.g. the Pi Zero build; replaces one)
 #   sudo ./install.sh --race-config FILE.json       # add a race config file to the node
-#   sudo ./install.sh --backend uvk5 [--uvk5-port /dev/ttyACM0]
-#                                                   # a radio node: a UV-K5/UV-K1 on USB-C, no graywolf
+#   sudo ./install.sh --uvk5-port /dev/ttyACM0      # pin the UV-K5/UV-K1's serial port
+#                                                   # (normally it's found by itself)
+#
+# Every node can use every kind of radio: a radio on an AIOC cable
+# (through graywolf) or a UV-K5/UV-K1 on USB-C. Choose it on the
+# Station page (Radio → Radio type), also mid-race when a radio is
+# swapped, or with stationsetup's backend column.
 #
 # If graywolf isn't installed, its latest release is installed first
 # (spec 2.3), and your graywolf admin login is set up: interactively, or
@@ -38,7 +43,6 @@ GW_VERSION_SET=no
 GW_INSTALL=yes
 GW_DEB=
 RACE_CONFIG=
-BACKEND=
 UVK5_PORT=
 BIN_ARG=
 while [ $# -gt 0 ]; do
@@ -74,14 +78,10 @@ while [ $# -gt 0 ]; do
 		GW_INSTALL=no
 		shift
 		;;
-	--backend)
-		[ $# -ge 2 ] || { printf 'install: --backend needs graywolf or uvk5\n' >&2; exit 2; }
-		BACKEND=$2
-		shift 2
-		;;
-	--backend=*)
-		BACKEND=${1#*=}
-		shift
+	--backend | --backend=*)
+		printf 'install: --backend is gone: every node can use every kind of radio.\n' >&2
+		printf '  Choose it on the Station page (Radio → Radio type), or with stationsetup.\n' >&2
+		exit 2
 		;;
 	--uvk5-port)
 		[ $# -ge 2 ] || { printf 'install: --uvk5-port needs a device path\n' >&2; exit 2; }
@@ -113,20 +113,8 @@ while [ $# -gt 0 ]; do
 		;;
 	esac
 done
-# --backend and --uvk5-port are checked before anything else happens.
-case "$BACKEND" in
-'' | graywolf) ;;
-uvk5)
-	GW_INSTALL=no
-	[ -z "$GW_DEB" ] || { printf 'install: --graywolf-deb makes no sense with --backend uvk5\n' >&2; exit 2; }
-	;;
-*)
-	printf 'install: --backend must be graywolf or uvk5, got %s\n' "$BACKEND" >&2
-	exit 2
-	;;
-esac
+# --uvk5-port is checked before anything else happens.
 if [ -n "$UVK5_PORT" ]; then
-	[ "$BACKEND" = uvk5 ] || { printf 'install: --uvk5-port needs --backend uvk5\n' >&2; exit 2; }
 	case "$UVK5_PORT" in
 	*..* | *//* | *[!A-Za-z0-9/_.:-]*) printf 'install: --uvk5-port %s: not a plain device path\n' "$UVK5_PORT" >&2; exit 2 ;;
 	/dev/ttyACM?* | /dev/ttyUSB?* | /dev/serial/?* | /dev/uvk5*) ;;
@@ -497,7 +485,7 @@ elif [ "$GW_INSTALL" = yes ]; then
 	# Before the app is stopped for an upgrade: downloads can take a while.
 	install_graywolf || true
 fi
-[ "$BACKEND" = uvk5 ] || pi_zero_notes
+pi_zero_notes
 
 # Upgrade: stop the service (also a crash-looping one) and copy the
 # database aside before the new binary migrates it. If anything below
@@ -580,22 +568,26 @@ set_env() {
 	fi
 }
 
-# The messaging backend (phase 17). A radio node needs the radio's USB
-# serial port inside the service's sandbox: real /dev, only ttyACM
-# devices, and the dialout group. Nothing else changes.
+# write_conf FILE CONTENT: write FILE if it differs; true if it changed.
+write_conf() {
+	[ -f "$1" ] && [ "$(cat "$1")" = "$2" ] && return 1
+	install -d -m 0755 "$(dirname "$1")"
+	printf '%s\n' "$2" >"$1"
+	chmod 0644 "$1"
+}
+
+# Every node may use a UV-K5/UV-K1 on USB-C (phase 17; the radio type is
+# chosen on the Station page): the service gets the radio's USB serial
+# port inside its sandbox: real /dev, only ttyACM devices, and the
+# dialout group. Nothing else changes.
 UVK5_DROPIN=/etc/systemd/system/checkin-board.service.d/50-uvk5.conf
-if [ "$BACKEND" = uvk5 ]; then
-	set_env CB_BACKEND uvk5
-	[ -z "$UVK5_PORT" ] || set_env CB_UVK5_PORT "$UVK5_PORT"
-	install -d -m 0755 "$(dirname "$UVK5_DROPIN")"
-	printf '%s\n' '# checkin-board: a radio node talks to a UV-K5/UV-K1 radio on USB-C.' \
-		'[Service]' 'PrivateDevices=no' 'DevicePolicy=closed' 'DeviceAllow=char-ttyACM rw' 'SupplementaryGroups=dialout' >"$UVK5_DROPIN"
-	chmod 0644 "$UVK5_DROPIN"
-	say "Radio node: CB_BACKEND=uvk5 in $ENV_FILE; the service may open /dev/ttyACM* ($UVK5_DROPIN)"
-elif [ "$BACKEND" = graywolf ]; then
-	set_env CB_BACKEND graywolf
-	rm -f "$UVK5_DROPIN"
+[ -z "$UVK5_PORT" ] || set_env CB_UVK5_PORT "$UVK5_PORT"
+if write_conf "$UVK5_DROPIN" "$(printf '%s\n' '# checkin-board: the UV-K5/UV-K1 radio type talks to the radio on USB-C.' \
+	'[Service]' 'PrivateDevices=no' 'DevicePolicy=closed' 'DeviceAllow=char-ttyACM rw' 'SupplementaryGroups=dialout')"; then
+	say "UV-K5/UV-K1 radios: the service may open /dev/ttyACM* ($UVK5_DROPIN)"
 fi
+# A node set up as a radio node before radio types were chosen on the
+# Station page (CB_BACKEND=uvk5) starts without graywolf's login.
 grep -q '^CB_BACKEND=uvk5' "$ENV_FILE" 2>/dev/null && RADIO_NODE=yes || RADIO_NODE=no
 
 if [ -n "$RACE_CONFIG" ]; then
@@ -653,9 +645,7 @@ create_gw_login() {
 	esac
 }
 
-if [ "$RADIO_NODE" = yes ]; then
-	: # no graywolf login on a radio node
-elif [ ! -s "$PW_FILE" ] && ! create_gw_login && [ ! -s "$PW_FILE" ]; then
+if [ ! -s "$PW_FILE" ] && ! create_gw_login && [ ! -s "$PW_FILE" ] && [ "$RADIO_NODE" != yes ]; then
 	if [ -t 0 ]; then
 		say "Password of the graywolf login the app uses (GW_USER in $ENV_FILE):"
 		trap 'stty echo; restart_on_failure' EXIT
@@ -716,13 +706,6 @@ fi
 # at most 64 MB, and cap graywolf's log rate.
 JOURNAL_CONF=/etc/systemd/journald.conf.d/60-checkin-board.conf
 GW_LOG_CONF=/etc/systemd/system/graywolf.service.d/60-checkin-board-logs.conf
-# write_conf FILE CONTENT: write FILE if it differs; true if it changed.
-write_conf() {
-	[ -f "$1" ] && [ "$(cat "$1")" = "$2" ] && return 1
-	install -d -m 0755 "$(dirname "$1")"
-	printf '%s\n' "$2" >"$1"
-	chmod 0644 "$1"
-}
 run_kb=$(df -Pk /run 2>/dev/null | awk 'NR == 2 {print $2}')
 case "$run_kb" in
 '' | *[!0-9]*) run_kb=0 ;;

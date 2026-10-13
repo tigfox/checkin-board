@@ -20,6 +20,7 @@ import (
 
 	"checkin-board/internal/nodeapi"
 	"checkin-board/internal/raceconfig"
+	"checkin-board/internal/radiokind"
 	"checkin-board/internal/store"
 )
 
@@ -49,7 +50,8 @@ type Target struct {
 	Station string // the race config's station id: raceconfig.HQ or a checkpoint code
 	Role    string
 	Label   string
-	// Backend is what the node must be ("graywolf" or "uvk5"; "": either).
+	// Backend is the radio type to give the node (a radiokind id; "":
+	// leave it as it is).
 	Backend string
 }
 
@@ -92,8 +94,8 @@ func Parse(r io.Reader) (*Plan, error) {
 		seenAddr[key] = row.line
 		t := Target{Line: row.line, Address: get("address"), Role: strings.ToLower(get("role")), Label: get("station_name"),
 			Backend: strings.ToLower(get("backend"))}
-		if t.Backend != "" && t.Backend != "graywolf" && t.Backend != "uvk5" {
-			return nil, lineErr(row.line, "backend %q must be graywolf or uvk5", get("backend"))
+		if _, ok := radiokind.Lookup(t.Backend); t.Backend != "" && !ok {
+			return nil, lineErr(row.line, "backend %q must be one of %s", get("backend"), strings.Join(radiokind.IDs(), ", "))
 		}
 		switch t.Role {
 		case store.RoleHQ:

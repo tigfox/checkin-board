@@ -54,8 +54,11 @@ func (s *server) radioProblem() string {
 	return ""
 }
 
-// backend names how this node sends race traffic.
+// backend names how this node sends race traffic (a radiokind id).
 func (s *server) backend() string {
+	if s.RadioKind != "" {
+		return s.RadioKind
+	}
 	if s.Radio != nil {
 		return "uvk5"
 	}

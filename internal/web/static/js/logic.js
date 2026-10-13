@@ -312,3 +312,12 @@ export function markdownBlocks(text) {
   flush();
   return blocks;
 }
+
+// radioKindConfirm is the question before switching the node's radio
+// type: the app restarts, and reports wait meanwhile.
+export function radioKindConfirm(label) {
+  return `Switch this node to: ${label}?\n\n` +
+    "Connect the new radio first. The app restarts, which takes about 10 seconds: a bib logged meanwhile " +
+    "shows NOT confirmed (tap LOG again). Saved entries are kept, and reports go out through the new radio. " +
+    "Then run Check radio.";
+}

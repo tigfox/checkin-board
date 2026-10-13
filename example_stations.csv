@@ -7,12 +7,13 @@
 # role           hq or checkpoint (exactly one hq)
 # station_name   tactical name, up to 25 characters
 # code           checkpoint code; for HQ, its local codes (e.g. START;FIN)
-# callsign       this node's callsign-SSID, unique per node (set in graywolf, or on a radio node's radio)
+# callsign       this node's callsign-SSID, unique per node (set in graywolf, or on a UV-K5's radio)
 # course_order   checkpoints' order on the course (1, 2, ...)
 # race_name ... tx_tail_ms   race-wide: give them once, or the same on every row.
 #   path "direct" means no digipeaters.
-# backend        optional check: graywolf or uvk5 (a UV-K5/UV-K1 radio node);
-#                a node that's the other kind is reported and left alone
+# backend        optional radio type: graywolf (a radio on an AIOC cable) or uvk5
+#                (a UV-K5 V3 / UV-K1 on USB-C); a node on the other type is
+#                switched to it (it restarts) first. Blank: left as it is.
 address,role,station_name,code,callsign,course_order,race_name,checkpoint_name,path,heartbeat_sec,flush_after_sec,max_in_flight,tx_delay_ms,tx_tail_ms,backend
 10.0.1.88,hq,Finish Line,START;FIN,KD2DCM-1,,Michaux Mud,,"WIDE1-1",300,20,4,300,100,graywolf
 10.0.1.183,checkpoint,Cattle Chute,CTL,KD2DCM-4,1,,Cattle Chute Aid,,,,,,,graywolf
