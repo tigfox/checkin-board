@@ -9,6 +9,8 @@
 #   sudo ./install.sh --graywolf-deb FILE.deb       # install this graywolf package
 #                                                   # (e.g. the Pi Zero build; replaces one)
 #   sudo ./install.sh --race-config FILE.json       # add a race config file to the node
+#   sudo ./install.sh --firmware FILE.bin           # add a UV-K5/UV-K1 firmware file to the node
+#                                                   # (flash it on Admin → Station → Radio firmware)
 #   sudo ./install.sh --uvk5-port /dev/ttyACM0      # pin the UV-K5/UV-K1's serial port
 #                                                   # (normally it's found by itself)
 #
@@ -43,6 +45,7 @@ GW_VERSION_SET=no
 GW_INSTALL=yes
 GW_DEB=
 RACE_CONFIG=
+FIRMWARE=
 UVK5_PORT=
 BIN_ARG=
 while [ $# -gt 0 ]; do
@@ -63,6 +66,15 @@ while [ $# -gt 0 ]; do
 		;;
 	--graywolf-deb=*)
 		GW_DEB=${1#*=}
+		shift
+		;;
+	--firmware)
+		[ $# -ge 2 ] || { printf 'install: --firmware needs a .bin file\n' >&2; exit 2; }
+		FIRMWARE=$2
+		shift 2
+		;;
+	--firmware=*)
+		FIRMWARE=${1#*=}
 		shift
 		;;
 	--race-config)
@@ -158,6 +170,19 @@ if [ -n "$RACE_CONFIG" ]; then
 	[ -f "$RACE_CONFIG" ] || { printf 'install: --race-config %s: not found\n' "$RACE_CONFIG" >&2; exit 2; }
 	if ! basename "$RACE_CONFIG" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}[.]json$'; then
 		printf 'install: --race-config %s: name it with letters, digits, ".", "-" or "_" (no spaces), ending in .json\n' "$RACE_CONFIG" >&2
+		exit 2
+	fi
+fi
+# --firmware too: a UV-K5/UV-K1 image (the app checks its size again).
+if [ -n "$FIRMWARE" ]; then
+	[ -f "$FIRMWARE" ] || { printf 'install: --firmware %s: not found\n' "$FIRMWARE" >&2; exit 2; }
+	if ! basename "$FIRMWARE" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}[.]bin$'; then
+		printf 'install: --firmware %s: name it with letters, digits, ".", "-" or "_" (no spaces), ending in .bin\n' "$FIRMWARE" >&2
+		exit 2
+	fi
+	fw_size=$(wc -c <"$FIRMWARE")
+	if [ "$fw_size" -eq 0 ] || [ "$fw_size" -gt 524288 ]; then
+		printf 'install: --firmware %s: %s bytes; a firmware image is 1 to 524288 bytes\n' "$FIRMWARE" "$fw_size" >&2
 		exit 2
 	fi
 fi
@@ -603,6 +628,19 @@ if [ -n "$RACE_CONFIG" ]; then
 		say "Race config $rc_name added: load it on Admin → Race."
 	else
 		say "Race config $rc_name couldn't be added; upload it on Admin → Race instead."
+	fi
+fi
+
+if [ -n "$FIRMWARE" ]; then
+	# As the race config above: copied in as the service user.
+	[ -L "$STATE" ] && die "$STATE is a symlink; refusing to write through it"
+	install -d -m 0750 -o "$USER_NAME" -g "$USER_NAME" "$STATE"
+	fw_name=$(basename "$FIRMWARE")
+	if run_as "$USER_NAME" sh -c 'umask 027 && mkdir -p "$1" && cat > "$1/.$2.tmp" && mv -f "$1/.$2.tmp" "$1/$2"' \
+		_ "$STATE/firmware" "$fw_name" <"$FIRMWARE"; then
+		say "Firmware $fw_name added: flash it on Admin → Station → Radio firmware (UV-K5 radio type)."
+	else
+		say "Firmware $fw_name couldn't be added; upload it on Admin → Station instead."
 	fi
 fi
 

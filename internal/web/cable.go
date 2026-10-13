@@ -43,7 +43,10 @@ func (s *server) missingCards() []string {
 // connected, or graywolf's radio cable missing.
 func (s *server) radioProblem() string {
 	if s.Radio != nil {
-		if !s.Radio.State().Connected {
+		switch st := s.Radio.State(); {
+		case st.Lent != "":
+			return "Radio in use: " + st.Lent // ASCII: the panel font
+		case !st.Connected:
 			return radioDownWarning
 		}
 		return ""

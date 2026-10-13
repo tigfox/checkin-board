@@ -346,3 +346,41 @@ Bench race (UV-K5 checkpoint .65 → UV-K5 HQ .183, 20 runners):
 
 Still to do: the bench race with a **graywolf HQ** (the Pi 3, 10.0.1.88)
 and UV-K5 checkpoints, once 183's hardware is sorted.
+
+## UV Studio and firmware on the node (17h, 2026-10-13)
+
+The user asked for a UV Studio page on the Pi (it normally runs as a
+static page in a browser with the radio on that computer), with firmware
+flashed by the Pi from files on the Pi rather than through the browser.
+
+- **UV Studio 1.8.0**, vendored in `internal/web/uvstudio/`.
+  `VENDORED.md` lists every change: a Web Serial stand-in
+  (`cb/serial-bridge.js`), firmware tools removed (`cb/cb.js`), the
+  internet flash counter dropped, factory images left out.
+- **Bridge:** `GET /api/admin/uvstudio/ws`.
+  - Who may connect: admin only, same-origin check, one at a time.
+  - The race: during a race it needs `?confirm=1`, which the page asks
+    for.
+  - Traffic: bytes travel as binary frames, control messages as JSON
+    text.
+  - Giving the radio back: after 10 minutes without clicks or keys
+    (reported by the page as "active"), or when the page closes.
+- **Flashing:** `internal/uvk5/flash.go`, the bootloader protocol ported
+  from UV Studio's flash.js. `internal/firmware` holds the folder and the
+  job.
+  - Detecting the radio: wait for 5 announcements at a plausible rate,
+    then check the bootloader is 7.00.07 or later.
+  - Handshake: answer three announcements with the bootloader version.
+  - Writing: 256-byte pages, each acknowledged, with 3 retries.
+  - Finding the radio: the job watches every ttyACM port (except an
+    AIOC) for up to 3 minutes while the operator starts the radio in
+    bootloader mode.
+  - Cancelling: a wait can be cancelled; a write in progress can't.
+- **Shared plumbing:**
+  - `radiobackend.Backend.Lend` closes the session, stops reconnecting
+    and holds reports with "radio in use: …" until given back.
+  - A closing session sends "monitor off" first, so the next program on
+    the port gets no APRS lines.
+- **Next:** "Revive silenced reports". If an expected SENT or DROP line
+  doesn't arrive, toggle DTR, because the firmware stops monitor output
+  after a timed-out USB write.

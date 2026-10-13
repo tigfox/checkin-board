@@ -195,8 +195,18 @@ func (s *Session) Err() error {
 // OtherLine values, in order.
 func (s *Session) Events() <-chan any { return s.events }
 
-// Close ends the session and closes the port.
+// closeQuiet bounds Close's "monitor off".
+const closeQuiet = 500 * time.Millisecond
+
+// Close turns monitoring off (so the next program on the port, such as
+// UV Studio, doesn't get APRS lines in its stream), ends the session and
+// closes the port.
 func (s *Session) Close() error {
+	if s.Err() == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), closeQuiet)
+		_, _ = s.command(ctx, cmdMonitor, []byte{0})
+		cancel()
+	}
 	s.fail(ErrClosed)
 	return s.rw.Close()
 }

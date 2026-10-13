@@ -21,6 +21,10 @@ func TestRadioHold(t *testing.T) {
 	if hold() != "" {
 		t.Fatalf("connected: %q", hold())
 	}
+	st = radiobackend.State{Lent: "UV Studio"}
+	if hold() != "radio in use: UV Studio" {
+		t.Fatalf("lent: %q", hold())
+	}
 }
 
 func TestChooseRadio(t *testing.T) {

@@ -29,7 +29,11 @@ internal/web/jstest/   `node --test` unit tests for the UI logic
 internal/peers/        graywolf per-peer retry settings (backup / restore)
 internal/linkcheck/    deployment link check: RC1 P probes, RC1 Q replies, verdicts
 internal/uvk5/         UV-K5/UV-K1 radio link: serial protocol codec, AX.25, monitor lines, session, fake radio
-internal/radiobackend/ a UV-K5 radio as graywolf's message API: message rows, paced sender, ack matching
+internal/radiobackend/ a UV-K5 radio as graywolf's message API: message rows, paced sender, ack matching, lending the port
+internal/radiokind/    the radio types a node can use (Station page, Radio type)
+internal/firmware/     UV-K5 firmware files on the node, and the flash job (the node flashes the radio itself)
+internal/web/uvstudio/ UV Studio (Apache-2.0, vendored, see VENDORED.md) with a Web Serial bridge to the node's radio
+cmd/uvk5probe/         bench tool: talk to a UV-K5 directly, print its events
 internal/provision/    stationsetup: stations CSV -> race config, pushed to and applied on every node
 internal/nodeapi/      client for a node's web API (stationsetup, benchrace)
 internal/bench/        benchrace: scripted race across nodes, exactly-once and latency report
@@ -149,6 +153,36 @@ and `internal/radiobackend` presents the radio to the engines as
 graywolf's message API, keeping message rows in the node's database. The
 engines don't change. Plan and status:
 [`docs/specs/2026-10-12-uvk5-backend-plan.md`](docs/specs/2026-10-12-uvk5-backend-plan.md).
+
+### UV Studio and firmware (UV-K5 nodes)
+
+**UV Studio** ([armel.github.io/uvstudio](https://armel.github.io/uvstudio/),
+by Armel FAUVEAU, Apache-2.0) runs on the node at `/uvstudio/` (admin
+login; Station → Radio → **Open UV Studio**). You get the radio's live
+screen and keypad, its RF log with CSV export, and calibration and
+boot-logo backup, from any browser on the node's network: phone, tablet
+or laptop, over plain HTTP. UV Studio normally talks to a radio plugged
+into the browser's own computer. Here a small stand-in for Web Serial
+carries its bytes over a WebSocket to the radio on the Pi. While UV Studio
+has the radio, the node's race reports wait (the keypad and panel say
+"Radio in use: UV Studio"). Closing the page, or 10 minutes without a
+click or key, gives the radio back. During a race it asks first. Its
+firmware tools are left out, and nothing reaches the internet
+(`internal/web/uvstudio/VENDORED.md` lists every change).
+
+**Firmware** is flashed by the node itself, from files kept on it, so the
+browser's connection doesn't matter once a flash starts. To flash:
+
+1. Upload a `.bin` on Station → **Radio firmware**. You can also copy it
+   into `/var/lib/checkin-board/firmware/`, or use
+   `sudo ./install.sh --firmware FILE.bin`.
+2. Press **Flash**. The node takes the radio.
+3. Switch the radio off, hold PTT, and switch it on (bootloader mode). The
+   node finds it, checks the bootloader (7.00.07 or later) and writes the
+   image page by page.
+4. The radio restarts and reconnects. Run **Check radio**.
+
+The node never raises DTR on an AIOC cable (it keys PTT from DTR).
 
 ## Setting up every node from a CSV
 

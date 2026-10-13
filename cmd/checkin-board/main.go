@@ -195,11 +195,14 @@ func run(logger *slog.Logger) error {
 		// Proves whoever sets the admin password can see this node's log.
 		logger.Warn("first-run setup: open the web page and enter this setup code", "setup_code", code)
 	}
+	fwDir := filepath.Join(filepath.Dir(cfg.DBPath), "firmware")
 	handler, err := web.NewHandler(web.Deps{
 		Store: st, Auth: authSvc, Ops: a.Ops, HQ: a.HQ, Checkpoint: a.Checkpoint, Inbox: a.Inbox,
 		Clock: a.Clock, Graywolf: msg.gw, Logger: logger, HookToken: cfg.HookToken, WebPort: listenPort(cfg.Listen),
 		Host: host, Cable: msg.cable, Radio: msg.radio, GraywolfRemote: !msg.local,
 		RadioKind: kind.ID, GraywolfReady: cfg.GraywolfReady(),
+		Flasher: msg.flasher(fwDir), FirmwareDir: msg.firmwareDir(fwDir),
+		RadioBridge: msg.bridge(),
 		Restart: func() {
 			logger.Warn("restarting with the newly chosen radio kind")
 			restart(errRestart)

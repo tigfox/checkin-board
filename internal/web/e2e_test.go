@@ -1,8 +1,10 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +21,7 @@ import (
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 
+	"checkin-board/internal/firmware"
 	"checkin-board/internal/gwfake"
 	"checkin-board/internal/raceclock"
 	"checkin-board/internal/store"
@@ -447,7 +450,10 @@ func TestE2ERaceConfig(t *testing.T) {
 // A radio node's Station page (UV-K5, phase 17): radio wording, the
 // radio's checklist, no graywolf-only cards.
 func TestE2ERadioNodeStation(t *testing.T) {
-	e := newEnvWith(t, checkpointSettings(store.RaceSetup), func(d *Deps) { d.Radio = connectedRadio() })
+	e := newEnvWith(t, checkpointSettings(store.RaceSetup), func(d *Deps) {
+		d.Radio, d.RadioBridge = connectedRadio(), &fakeBridge{}
+		d.Flasher, d.FirmwareDir = &fakeFlasher{st: firmware.Status{State: firmware.StateIdle}}, t.TempDir()
+	})
 	b := newBrowser(t, e.srv.URL)
 	b.login(e.admin)
 	b.run(chromedp.Navigate(e.srv.URL+"/admin.html"),
@@ -491,6 +497,70 @@ func TestE2ERadioKindSwitch(t *testing.T) {
 	}
 	if k, _ := e.st.RadioKind(ctx); k != "uvk5" {
 		t.Fatalf("saved kind = %q", k)
+	}
+	b.noErrors()
+}
+
+// screenRadio is a UV-K5 for UV Studio: it answers each keepalive with a
+// full screen frame (K5Viewer protocol: FF AA 55 01 0400 <1024> 0A).
+func screenRadio(radio net.Conn, keepalives *atomic.Int32) {
+	frame := append([]byte{0xFF, 0xAA, 0x55, 0x01, 0x04, 0x00}, bytes.Repeat([]byte{0x0F}, 1024)...)
+	frame = append(frame, 0x0A)
+	buf := make([]byte, 64)
+	for {
+		n, err := radio.Read(buf)
+		if err != nil {
+			return
+		}
+		if bytes.Contains(buf[:n], []byte{0x55, 0xAA}) {
+			keepalives.Add(1)
+			if _, err := radio.Write(frame); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// UV Studio on a UV-K5 node: its viewer connects through the node's
+// bridge and shows the radio's screen; the firmware tools are gone.
+func TestE2EUVStudio(t *testing.T) {
+	br := &fakeBridge{}
+	var keepalives atomic.Int32
+	e := newEnvWith(t, checkpointSettings(store.RaceActive), func(d *Deps) {
+		d.Radio, d.RadioKind, d.RadioBridge = connectedRadio(), "uvk5", br
+		d.Flasher, d.FirmwareDir = &fakeFlasher{st: firmware.Status{State: firmware.StateIdle}}, t.TempDir()
+	})
+	b := newBrowser(t, e.srv.URL)
+	b.login(e.admin)
+	// The Station page links to it and offers the firmware card.
+	b.run(chromedp.Navigate(e.srv.URL+"/admin.html"),
+		chromedp.Click(`//nav[@id="tabs"]/button[text()="Station"]`, chromedp.BySearch))
+	b.waitText("#uvstudio-card", "Open UV Studio")
+	b.waitText("#firmware-card", "No firmware files on this node yet")
+
+	b.run(chromedp.Navigate(e.srv.URL + "/uvstudio/#live"))
+	b.waitText("#cb-back", "checkin-board")
+	var flashItems int
+	b.run(chromedp.Evaluate(`document.querySelectorAll('.nav-item[data-route="flash"],.nav-item[data-route="factory-reset"],.nav-item[data-route="firmware-slots"]').length`, &flashItems))
+	if flashItems != 0 {
+		t.Fatalf("%d firmware tools still in the menu", flashItems)
+	}
+	b.run(chromedp.Click("#connectionBtn", chromedp.ByQuery))
+	b.waitText("#cb-bridge-banner", "UV Studio has this node's radio")
+	br.mu.Lock()
+	radio := br.radio
+	br.mu.Unlock()
+	go screenRadio(radio, &keepalives)
+	b.waitText("#status", "FPS")
+	if keepalives.Load() == 0 {
+		t.Fatal("no keepalive reached the radio")
+	}
+	// Disconnect gives the radio back.
+	b.run(chromedp.Click("#connectionBtn", chromedp.ByQuery))
+	select {
+	case <-br.closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the radio wasn't given back")
 	}
 	b.noErrors()
 }

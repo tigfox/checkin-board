@@ -8,11 +8,13 @@ import (
 
 	"checkin-board/internal/auth"
 	"checkin-board/internal/branding"
+	"checkin-board/internal/firmware"
 	"checkin-board/internal/graywolf"
 	"checkin-board/internal/hq"
 	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/ops"
 	"checkin-board/internal/raceconfig"
+	"checkin-board/internal/radiobackend"
 	"checkin-board/internal/store"
 )
 
@@ -62,6 +64,12 @@ func classify(err error) (int, string, string) {
 		return http.StatusNotFound, "not_found", "not found"
 	case errors.Is(err, raceconfig.ErrStale):
 		return http.StatusConflict, "stale", err.Error()
+	case errors.Is(err, firmware.ErrExists):
+		return http.StatusConflict, "exists", err.Error()
+	case errors.Is(err, firmware.ErrInvalid):
+		return http.StatusBadRequest, "invalid", err.Error()
+	case errors.Is(err, firmware.ErrBusy), errors.Is(err, radiobackend.ErrLent):
+		return http.StatusConflict, "radio_busy", err.Error()
 	case errors.Is(err, raceconfig.ErrExists):
 		return http.StatusConflict, "exists", err.Error()
 	case errors.Is(err, raceconfig.ErrInvalid):

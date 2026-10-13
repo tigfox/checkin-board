@@ -321,3 +321,27 @@ export function radioKindConfirm(label) {
     "shows NOT confirmed (tap LOG again). Saved entries are kept, and reports go out through the new radio. " +
     "Then run Check radio.";
 }
+
+// flashConfirm is the question before flashing the radio.
+export function flashConfirm(name) {
+  return `Flash ${name} into this node's radio?\n\n` +
+    "The node takes the radio (race reports wait) and asks you to put it in bootloader mode: " +
+    "switch the radio off, hold PTT, and switch it on. Keep the radio and the Pi powered until it says done.";
+}
+
+// flashJobSummary is the firmware flash job in one line (null: nothing
+// to show).
+export function flashJobSummary(job) {
+  switch (job && job.state) {
+    case "waiting":
+      return { kind: "warn", text: `Ready to flash ${job.file}: switch the radio off, hold PTT, and switch it on (bootloader mode). Race reports wait meanwhile.` };
+    case "flashing":
+      return { kind: "warn", text: `Flashing ${job.file}: page ${job.page} of ${job.pages}${job.bootloader ? ` (bootloader ${job.bootloader})` : ""}. Don't unplug or switch off the radio.` };
+    case "done":
+      return { kind: "ok", text: `Flashed ${job.file}. The radio restarts with it and reconnects; then run Check radio.` };
+    case "failed":
+      return { kind: "bad", text: `Flashing ${job.file} failed: ${job.error}` };
+    default:
+      return null;
+  }
+}

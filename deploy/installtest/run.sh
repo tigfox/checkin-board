@@ -83,4 +83,13 @@ printf 'CB_BACKEND=uvk5\n' >> $env
 : > /tmp/systemctl.log
 out=$(./install.sh </dev/null 2>&1); rc=$?
 check "an older radio node (CB_BACKEND=uvk5) starts with no graywolf password" sh -c "[ $rc = 0 ] && grep -q 'start checkin-board' /tmp/systemctl.log"
+
+# Firmware files for the UV-K5 (flashed from the Station page).
+head -c 1000 /dev/urandom > /tmp/f4hwn.test.bin
+out=$(./install.sh --firmware /tmp/f4hwn.test.bin </dev/null 2>&1)
+fwf=/var/lib/checkin-board/firmware/f4hwn.test.bin
+check "--firmware adds the file, owned by the service user, mode 640" sh -c "cmp -s /tmp/f4hwn.test.bin $fwf && [ \"\$(stat -c '%U %a' $fwf)\" = 'checkin-board 640' ]"
+: > /tmp/empty.bin
+out=$(./install.sh --firmware /tmp/empty.bin </dev/null 2>&1); rc=$?
+check "an empty --firmware is refused (exit 2)" [ "$rc" = 2 ]
 exit $fail

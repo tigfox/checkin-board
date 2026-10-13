@@ -28,6 +28,7 @@ import (
 	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/ops"
 	"checkin-board/internal/raceclock"
+	"checkin-board/internal/firmware"
 	"checkin-board/internal/raceconfig"
 	"checkin-board/internal/radiocheck"
 	"checkin-board/internal/store"
@@ -106,6 +107,12 @@ type Deps struct {
 	// GraywolfReady: graywolf's login is configured, so the graywolf
 	// kind can be chosen.
 	GraywolfReady bool
+	// Flasher flashes the UV-K5's firmware, and FirmwareDir keeps the
+	// files (UV-K5 nodes; nil/"" elsewhere).
+	Flasher     Flasher
+	FirmwareDir string
+	// RadioBridge gives UV Studio the UV-K5's serial port (UV-K5 nodes).
+	RadioBridge RadioBridge
 	// Restart starts the app again (with a newly chosen radio kind);
 	// nil: the kind is saved but takes effect at the next start.
 	Restart func()
@@ -124,6 +131,7 @@ type server struct {
 	radio       *radiocheck.Checker
 	raceConfigs *raceconfig.Service
 	raceFolder  *raceconfig.Folder
+	firmware    *firmware.Folder
 	log         *slog.Logger
 	now         func() time.Time
 	dedup       *requestDedup
@@ -154,6 +162,9 @@ func NewHandler(d Deps) (http.Handler, error) {
 		dir = filepath.Join(os.TempDir(), "checkin-board-race-configs")
 	}
 	s.raceFolder = raceconfig.NewFolder(dir)
+	if d.FirmwareDir != "" {
+		s.firmware = firmware.NewFolder(d.FirmwareDir)
+	}
 	s.panelReq.boot = time.Now().UnixNano()
 	static := d.Static
 	if static == nil {

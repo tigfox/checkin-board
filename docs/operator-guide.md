@@ -95,6 +95,19 @@ differs during the race. Use UV-K5s for checkpoints only and keep HQ on
 graywolf: the current UV-K5 firmware doesn't ack messages longer than
 about 34 characters, so a UV-K5 HQ never confirms a checkpoint's reports.
 
+**UV Studio and firmware (UV-K5).** On a UV-K5 node, the Station page has:
+- **Open UV Studio**: the radio's live screen and keypad, RF log and
+  calibration and boot-logo backup, through the node. Race reports wait
+  while it's open, and it gives the radio back when closed or after 10
+  idle minutes.
+- **Radio firmware**: `.bin` files kept on the node (upload there, copy
+  into `/var/lib/checkin-board/firmware/`, or `install.sh --firmware
+  FILE.bin`). **Flash** makes the node take the radio. Then switch the
+  radio off, hold PTT and switch it on. The node writes the image itself,
+  shows progress, and gives the radio back. A flash can be cancelled
+  while it waits for the bootloader, not once pages are going in. Keep the
+  radio and the Pi powered until it says done.
+
 **Swapping a radio mid-race:** connect the new radio (callsign, APRS,
 frequency set), choose its type on the Station page and press **Change
 radio type**, confirm. The app restarts with it in about 10 seconds: a

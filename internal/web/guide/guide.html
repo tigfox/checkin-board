@@ -119,6 +119,17 @@
         WIDE1-1,WIDE2-1 doubles the airtime of every message on a local race.</li>
       <li><strong>Battery charged</strong>: a low battery stops transmitting.</li>
     </ul>
+    <h3>UV Studio and firmware (UV-K5)</h3>
+    <ul>
+      <li><strong>Open UV Studio</strong> (Station → UV Studio): the radio's live screen and keypad, RF log with CSV
+        export, and calibration and boot-logo backup, from this browser. While it's open the radio is UV Studio's:
+        race reports wait (keypad and panel: "Radio in use: UV Studio") and go out when you close it, or after 10
+        minutes without a click. During a race it asks first.</li>
+      <li><strong>Radio firmware</strong> (Station): firmware files kept on this node. <strong>Flash</strong> makes
+        the node take the radio; then switch the radio <strong>off, hold PTT, and switch it on</strong> (bootloader
+        mode). The node writes the firmware itself, so this browser can be closed. Keep the radio and the Pi
+        powered until it says done, then run Check radio.</li>
+    </ul>
     <h3>What to expect with a UV-K5</h3>
     <ul>
       <li><strong>Check radio</strong> shows: the connection and firmware, callsign, whether the radio would

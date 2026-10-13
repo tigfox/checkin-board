@@ -90,6 +90,9 @@ type Backend struct {
 	heard     map[string]time.Time
 	packets   []graywolf.Packet
 	rssi      map[string]int
+	lent      string        // who has the radio's port ("": the backend)
+	returned  chan struct{} // closed when it's given back
+	dialing   bool
 }
 
 // New returns a backend; Run connects it.
@@ -114,8 +117,20 @@ func (b *Backend) Run(ctx context.Context) {
 	go b.sender(ctx)
 	backoff := minBackoff
 	for ctx.Err() == nil {
+		if b.waitReturned(ctx) != nil {
+			return
+		}
+		b.setDialing(true)
 		sess, err := b.dial(ctx)
+		b.setDialing(false)
+		if err == nil && b.Lent() != "" { // lent while dialling
+			_ = sess.Close()
+			continue
+		}
 		if err != nil {
+			if b.Lent() != "" {
+				continue
+			}
 			b.setDown(err)
 			b.log.Warn("radio: can't connect", "err", err, "retry_in", backoff)
 			if sleep(ctx, backoff) != nil {
@@ -131,6 +146,9 @@ func (b *Backend) Run(ctx context.Context) {
 		err = sess.Err()
 		if err == nil {
 			err = ctx.Err()
+		}
+		if lent := b.Lent(); lent != "" {
+			continue // Lend set the reason
 		}
 		b.setDown(fmt.Errorf("radio disconnected: %w", err))
 		if ctx.Err() == nil {
@@ -148,6 +166,12 @@ func (b *Backend) up(sess Session) {
 	b.log.Info("radio: connected", "firmware", sess.FirmwareVersion(), "callsign", sess.Settings().Callsign,
 		"features", fmt.Sprintf("%#x", caps.Features), "queue", caps.QueueDepth)
 	b.kick()
+}
+
+func (b *Backend) setDialing(on bool) {
+	b.mu.Lock()
+	b.dialing = on
+	b.mu.Unlock()
 }
 
 func (b *Backend) setDown(err error) {

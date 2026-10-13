@@ -1,0 +1,15 @@
+/* checkin-board additions to UV Studio (VENDORED.md). */
+#cb-back {
+  position: fixed; top: 6px; right: 10px; z-index: 1000;
+  font: 13px/1.4 system-ui, sans-serif; padding: 4px 10px; border-radius: 6px;
+  background: #1f2937; color: #f9fafb; text-decoration: none; opacity: 0.85;
+}
+#cb-bridge-banner {
+  position: sticky; top: 0; z-index: 999; margin: 0;
+  font: 13px/1.4 system-ui, sans-serif; padding: 6px 12px;
+  background: #e5e7eb; color: #111827;
+}
+#cb-bridge-banner:empty { display: none; }
+#cb-bridge-banner.busy { background: #fef3c7; color: #78350f; }
+#cb-bridge-banner.bad { background: #fee2e2; color: #7f1d1d; }
+#flashCounter { display: none !important; }

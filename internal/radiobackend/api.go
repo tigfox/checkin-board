@@ -258,13 +258,16 @@ type State struct {
 	Caps      uvk5.Capabilities
 	Free      int
 	LastRSSI  map[string]int // dBm by sender (firmware request 10)
+	// Lent says who has the radio's port instead (UV Studio, the
+	// firmware flasher); "": nobody.
+	Lent string
 }
 
 // State reports the radio connection.
 func (b *Backend) State() State {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	st := State{Callsign: b.callsign, Free: b.free, LastRSSI: map[string]int{}}
+	st := State{Callsign: b.callsign, Free: b.free, LastRSSI: map[string]int{}, Lent: b.lent}
 	for k, v := range b.rssi {
 		st.LastRSSI[k] = v
 	}

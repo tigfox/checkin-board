@@ -30,6 +30,15 @@ func (s *server) routes() []route {
 		{method: "GET", pattern: "/api/admin/gw", access: admin, h: s.getGraywolf},
 		{method: "GET", pattern: "/api/admin/radio", access: admin, h: s.getRadio},
 		{method: "GET", pattern: "/api/admin/radio-kind", access: admin, h: s.getRadioKind},
+		// UV-K5 firmware on the node, flashed by the node.
+		{method: "GET", pattern: "/api/admin/firmware", access: admin, h: s.getFirmware},
+		{method: "POST", pattern: "/api/admin/firmware", access: admin, h: s.postFirmware, upload: true},
+		{method: "DELETE", pattern: "/api/admin/firmware/{name}", access: admin, h: s.deleteFirmware},
+		{method: "POST", pattern: "/api/admin/firmware/{name}/flash", access: admin, h: s.postFlash},
+		{method: "POST", pattern: "/api/admin/firmware-flash/cancel", access: admin, h: s.postFlashCancel},
+		// UV Studio (UV-K5 nodes): the page, and its serial bridge.
+		{method: "GET", pattern: "/api/admin/uvstudio/ws", access: admin, h: s.getUVStudioWS},
+		{method: "GET", pattern: "/uvstudio/{path...}", access: admin, page: true, h: s.getUVStudio},
 		{method: "PUT", pattern: "/api/admin/radio-kind", access: admin, h: s.putRadioKind},
 		// Race config files (phase 12a).
 		{method: "GET", pattern: "/api/admin/raceconfigs", access: admin, h: s.getRaceConfigs},

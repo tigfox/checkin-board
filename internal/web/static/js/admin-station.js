@@ -4,6 +4,7 @@ import { get, post, put } from "./api.js";
 import { field, h, show } from "./dom.js";
 import { messagingSettingsForm } from "./admin-messaging.js";
 import { eventPageCard } from "./admin-eventpage.js";
+import { firmwareCard, uvStudioCard } from "./admin-firmware.js";
 import * as L from "./logic.js";
 
 // MAX_STATION_NAME matches store.MaxTacticalLen.
@@ -42,6 +43,7 @@ export async function renderStation(sec, ctx) {
   sec.append(raceSettingsForm(s, ctx), messagingSettingsForm(s, ctx));
 
   sec.append(radioCard(radio, kinds, ctx));
+  if (radio) sec.append(uvStudioCard(), await firmwareCard(ctx));
   sec.append(await eventPageCard(ctx));
 
   sec.append(h("div", { class: "card" },

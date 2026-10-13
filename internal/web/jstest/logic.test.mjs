@@ -254,3 +254,14 @@ test("radioKindConfirm names the radio and the restart", () => {
   assert.match(q, /restarts/);
   assert.match(q, /tap LOG again/);
 });
+
+test("flashJobSummary says what to do at each step", () => {
+  assert.equal(L.flashJobSummary({ state: "idle" }), null);
+  assert.match(L.flashJobSummary({ state: "waiting", file: "fw.bin" }).text, /hold PTT/);
+  const f = L.flashJobSummary({ state: "flashing", file: "fw.bin", page: 3, pages: 200, bootloader: "7.02.02" });
+  assert.equal(f.kind, "warn");
+  assert.match(f.text, /page 3 of 200 \(bootloader 7\.02\.02\)/);
+  assert.equal(L.flashJobSummary({ state: "done", file: "fw.bin" }).kind, "ok");
+  assert.match(L.flashJobSummary({ state: "failed", file: "fw.bin", error: "cancelled" }).text, /failed: cancelled/);
+  assert.match(L.flashConfirm("fw.bin"), /bootloader mode/);
+});

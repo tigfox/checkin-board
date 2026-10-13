@@ -31,6 +31,7 @@ type messaging struct {
 	cable web.CableStatus  // graywolf: the AIOC watcher
 	radio radiocheck.Radio // radio node: the backend
 	local bool             // graywolf runs on this machine
+	tools *radioTools      // UV-K5 node: UV Studio's bridge, the flasher
 }
 
 // chooseRadio is the radio kind the app starts with: the one chosen on
@@ -124,6 +125,7 @@ func startGraywolf(ctx context.Context, cfg config.Config, st *store.Store, logg
 
 // startRadio connects a UV-K5/UV-K1 radio on USB-C (CB_BACKEND=uvk5).
 func startRadio(ctx context.Context, cfg config.Config, st *store.Store, logger *slog.Logger) (messaging, error) {
+	tools := &radioTools{port: cfg.UVK5Port, log: logger}
 	rb, err := radiobackend.New(radiobackend.Config{Store: st, Logger: logger, Now: time.Now,
 		Dial: func(ctx context.Context) (radiobackend.Session, error) {
 			sess, port, err := uvk5.Dial(ctx, cfg.UVK5Port)
@@ -131,21 +133,50 @@ func startRadio(ctx context.Context, cfg config.Config, st *store.Store, logger 
 				return nil, err
 			}
 			logger.Info("radio found", "port", port)
+			tools.last.Store(port)
 			return sess, nil
 		}})
 	if err != nil {
 		return messaging{}, err
 	}
+	tools.rb = rb
 	go rb.Run(ctx)
-	return messaging{gw: rb, hold: radioHold(rb.State), radio: rb}, nil
+	return messaging{gw: rb, hold: radioHold(rb.State), radio: rb, tools: tools}, nil
 }
 
-// radioHold holds race reports while the radio isn't connected.
+// radioHold holds race reports while the radio isn't connected (or is
+// lent to UV Studio or the firmware flasher).
 func radioHold(state func() radiobackend.State) func() string {
 	return func() string {
-		if !state().Connected {
+		switch st := state(); {
+		case st.Lent != "":
+			return "radio in use: " + st.Lent
+		case !st.Connected:
 			return "radio not connected"
 		}
 		return ""
 	}
+}
+
+// flasher, firmwareDir and bridge are the UV-K5 extras for the web
+// pages (nil on a graywolf node: the pages say they're UV-K5 only).
+func (m messaging) flasher(dir string) web.Flasher {
+	if m.tools == nil {
+		return nil
+	}
+	return m.tools.newFlasher(dir)
+}
+
+func (m messaging) firmwareDir(dir string) string {
+	if m.tools == nil {
+		return ""
+	}
+	return dir
+}
+
+func (m messaging) bridge() web.RadioBridge {
+	if m.tools == nil {
+		return nil
+	}
+	return m.tools
 }
