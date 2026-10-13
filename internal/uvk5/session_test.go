@@ -284,3 +284,64 @@ func TestAckListFull(t *testing.T) {
 		t.Fatalf("drop = %+v", drop)
 	}
 }
+
+// dtrPort records when DTR is raised: after how many commands.
+type dtrPort struct {
+	net.Conn
+	mu        sync.Mutex
+	writes    int
+	dtrAfter  int // writes before SetDTR(true); -1: never
+	dtrRaised bool
+}
+
+func (p *dtrPort) Write(b []byte) (int, error) {
+	p.mu.Lock()
+	p.writes++
+	p.mu.Unlock()
+	return p.Conn.Write(b)
+}
+
+func (p *dtrPort) SetDTR(on bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if on && !p.dtrRaised {
+		p.dtrRaised, p.dtrAfter = true, p.writes
+	}
+	return nil
+}
+
+// The firmware sends monitor lines over USB-C only with DTR up, but an
+// AIOC keys PTT from DTR: it goes up only after the radio has answered,
+// before monitoring is turned on (handshake, capabilities, settings).
+func TestDTRRaisedAfterHandshake(t *testing.T) {
+	clk := &fakeClock{t: time.Now()}
+	radio := NewFakeRadio("KD2DCM-4", clk.Now)
+	host, dev := net.Pipe()
+	go func() { _ = radio.Serve(dev) }()
+	defer dev.Close()
+	p := &dtrPort{Conn: host, dtrAfter: -1}
+	s, err := Connect(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if !p.dtrRaised || p.dtrAfter != 3 || p.writes != 4 {
+		t.Fatalf("DTR raised %v after %d of %d commands", p.dtrRaised, p.dtrAfter, p.writes)
+	}
+
+	// A port that doesn't answer (an AIOC, say) never gets DTR.
+	quiet, other := net.Pipe()
+	go func() {
+		b := make([]byte, 256)
+		for {
+			if _, err := other.Read(b); err != nil {
+				return
+			}
+		}
+	}()
+	defer other.Close()
+	q := &dtrPort{Conn: quiet, dtrAfter: -1}
+	if _, err := Connect(context.Background(), q); err == nil || q.dtrRaised {
+		t.Fatalf("silent port: err %v, DTR raised %v", err, q.dtrRaised)
+	}
+}

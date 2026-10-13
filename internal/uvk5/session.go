@@ -62,6 +62,11 @@ type Session struct {
 	err     error
 }
 
+// DTRSetter is a port whose DTR line can be set (a real serial port).
+type DTRSetter interface {
+	SetDTR(on bool) error
+}
+
 // Connect handshakes on rw, checks the firmware has what checkin-board
 // needs, reads the settings and turns the monitor on. It takes rw over:
 // Close closes it.
@@ -101,6 +106,17 @@ func (s *Session) setup(ctx context.Context) error {
 	}
 	if _, err := s.ReadSettings(ctx); err != nil {
 		return err
+	}
+	// Over USB-C the firmware writes monitor lines (APRSRAW, SENT:,
+	// DROP:) only while DTR is up: it takes DTR as "a terminal is open"
+	// (cdc_acm_data_send_with_dtr). Command replies don't need it. It is
+	// raised only now, when the port has answered as a UV-K5, never on a
+	// port that might be an AIOC (which keys PTT from DTR). Bench,
+	// 2026-10-13: with DTR low no line ever arrived.
+	if d, ok := s.rw.(DTRSetter); ok {
+		if err := d.SetDTR(true); err != nil {
+			return fmt.Errorf("uvk5: raise DTR: %w", err)
+		}
 	}
 	f, err = s.command(ctx, cmdMonitor, []byte{1})
 	if err != nil {

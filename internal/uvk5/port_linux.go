@@ -12,8 +12,9 @@ import (
 
 // OpenPort opens the radio's serial port raw (8N1, 38400 baud, which
 // USB-C ignores), with DTR and RTS low so a cable that keys PTT from
-// them can't key the radio. The port is non-blocking, so Close ends a
-// pending Read.
+// them (an AIOC is a ttyACM too) can't key the radio. The port is
+// non-blocking, so Close ends a pending Read. The session raises DTR
+// once the radio has answered the handshake (see DTRSetter).
 func OpenPort(path string) (io.ReadWriteCloser, error) {
 	fd, err := unix.Open(path, unix.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -30,7 +31,21 @@ func OpenPort(path string) (io.ReadWriteCloser, error) {
 	}
 	// Not every adapter has modem lines; USB-C CDC ignores them.
 	_ = unix.IoctlSetPointerInt(fd, unix.TIOCMBIC, unix.TIOCM_DTR|unix.TIOCM_RTS)
-	return os.NewFile(uintptr(fd), path), nil
+	return &port{File: os.NewFile(uintptr(fd), path), fd: fd}, nil
+}
+
+type port struct {
+	*os.File
+	fd int
+}
+
+// SetDTR raises or lowers DTR.
+func (p *port) SetDTR(on bool) error {
+	req := uint(unix.TIOCMBIC)
+	if on {
+		req = unix.TIOCMBIS
+	}
+	return unix.IoctlSetPointerInt(p.fd, req, unix.TIOCM_DTR)
 }
 
 func rawMode(fd int) error {
