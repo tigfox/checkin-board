@@ -117,20 +117,21 @@ func (b *Backend) Run(ctx context.Context) {
 	go b.sender(ctx)
 	backoff := minBackoff
 	for ctx.Err() == nil {
-		if b.waitReturned(ctx) != nil {
-			return
-		}
-		b.setDialing(true)
-		sess, err := b.dial(ctx)
-		b.setDialing(false)
-		if err == nil && b.Lent() != "" { // lent while dialling
-			_ = sess.Close()
+		// "Not lent, so dial" and "not lent, so use the session" are each
+		// one step under b.mu, so Lend can't slip between them.
+		if lent := b.beginDial(); lent != nil {
+			select {
+			case <-lent:
+			case <-ctx.Done():
+				return
+			}
 			continue
 		}
+		sess, err := b.dial(ctx)
+		if !b.endDial(sess, err) {
+			continue // lent meanwhile: the session (if any) is closed
+		}
 		if err != nil {
-			if b.Lent() != "" {
-				continue
-			}
 			b.setDown(err)
 			b.log.Warn("radio: can't connect", "err", err, "retry_in", backoff)
 			if sleep(ctx, backoff) != nil {
@@ -140,7 +141,7 @@ func (b *Backend) Run(ctx context.Context) {
 			continue
 		}
 		backoff = minBackoff
-		b.up(sess)
+		b.logUp(sess)
 		b.events(ctx, sess)
 		_ = sess.Close()
 		err = sess.Err()
@@ -158,20 +159,55 @@ func (b *Backend) Run(ctx context.Context) {
 }
 
 func (b *Backend) up(sess Session) {
-	caps := sess.Capabilities()
 	b.mu.Lock()
-	b.sess, b.free, b.connErr, b.connected = sess, int(caps.QueueDepth), nil, b.now()
-	b.callsign = sess.Settings().Callsign
+	b.install(sess)
 	b.mu.Unlock()
+	b.logUp(sess)
+}
+
+// install makes sess the backend's session. Caller holds b.mu.
+func (b *Backend) install(sess Session) {
+	b.sess, b.free, b.connErr, b.connected = sess, int(sess.Capabilities().QueueDepth), nil, b.now()
+	b.callsign = sess.Settings().Callsign
+}
+
+func (b *Backend) logUp(sess Session) {
+	caps := sess.Capabilities()
 	b.log.Info("radio: connected", "firmware", sess.FirmwareVersion(), "callsign", sess.Settings().Callsign,
 		"features", fmt.Sprintf("%#x", caps.Features), "queue", caps.QueueDepth)
 	b.kick()
 }
 
-func (b *Backend) setDialing(on bool) {
+// beginDial marks a dial in progress, or returns the channel to wait on
+// while the radio is lent.
+func (b *Backend) beginDial() <-chan struct{} {
 	b.mu.Lock()
-	b.dialing = on
+	defer b.mu.Unlock()
+	if b.lent != "" {
+		return b.returned
+	}
+	b.dialing = true
+	return nil
+}
+
+// endDial ends a dial: a session is installed unless the radio was lent
+// meanwhile (then it's closed). It reports whether Run should go on with
+// this dial's result.
+func (b *Backend) endDial(sess Session, err error) bool {
+	b.mu.Lock()
+	b.dialing = false
+	if b.lent != "" {
+		b.mu.Unlock()
+		if err == nil {
+			_ = sess.Close()
+		}
+		return false
+	}
+	if err == nil {
+		b.install(sess)
+	}
 	b.mu.Unlock()
+	return true
 }
 
 func (b *Backend) setDown(err error) {

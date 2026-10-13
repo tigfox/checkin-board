@@ -80,19 +80,3 @@ func (b *Backend) busy() bool {
 	defer b.mu.Unlock()
 	return b.sess != nil || b.dialing
 }
-
-// waitReturned blocks while the radio is lent.
-func (b *Backend) waitReturned(ctx context.Context) error {
-	b.mu.Lock()
-	ch := b.returned
-	b.mu.Unlock()
-	if ch == nil {
-		return nil
-	}
-	select {
-	case <-ch:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}

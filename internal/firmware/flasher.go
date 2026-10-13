@@ -160,7 +160,7 @@ func (f *Flasher) finish(err error) {
 func (f *Flasher) run(ctx context.Context, fw []byte) error {
 	deadline := time.Now().Add(f.cfg.Wait)
 	probe := f.cfg.Timing
-	probe.Detect = min(probe.Detect, 1500*time.Millisecond) // per port, per round
+	probe.Detect = min(probe.Detect, probeWindow) // per port, per round
 	for time.Now().Before(deadline) {
 		for _, path := range f.cfg.Ports() {
 			if err := ctx.Err(); err != nil {
@@ -186,6 +186,10 @@ func (f *Flasher) run(ctx context.Context, fw []byte) error {
 
 var errNotBootloader = errors.New("not a bootloader")
 
+// probeWindow is how long each port gets to show 5 announcements (UV
+// Studio waits 5 s; announcements may come up to 1 s apart).
+const probeWindow = 6 * time.Second
+
 // try flashes through path if a bootloader answers there.
 func (f *Flasher) try(ctx context.Context, path string, fw []byte, probe uvk5.FlashTiming) (uvk5.Bootloader, error) {
 	if err := f.cfg.Check(path); err != nil {
@@ -199,22 +203,25 @@ func (f *Flasher) try(ctx context.Context, path string, fw []byte, probe uvk5.Fl
 	_ = port.SetDTR(true) // a USB CDC device may send nothing without it
 	timing := f.cfg.Timing
 	timing.Detect = probe.Detect
-	started := false
+	started := false // past the handshake: from here an error is final
 	bl, err := uvk5.Flash(ctx, port, fw, timing, func(p uvk5.FlashProgress) {
 		f.mu.Lock()
-		f.st.State, f.st.Page, f.st.Pages, f.st.Port = StateFlashing, p.Page, p.Pages, path
+		started = true
+		f.st.State, f.st.Page, f.st.Pages, f.st.Port, f.st.Bootloader = StateFlashing, p.Page, p.Pages, path, p.Bootloader
 		f.mu.Unlock()
 	})
-	if bl.Version != "" {
-		started = true
-		f.mu.Lock()
-		f.st.Bootloader = bl.Version
-		f.mu.Unlock()
-	}
-	if errors.Is(err, uvk5.ErrNoBootloader) && !started {
+	f.mu.Lock()
+	wrote := started
+	f.mu.Unlock()
+	switch {
+	case err == nil || wrote, errors.Is(err, context.Canceled), errors.Is(err, uvk5.ErrBootloaderTooOld):
+		return bl, err
+	default:
+		// Before the handshake anything (no answer, the port vanishing
+		// as the radio restarts) only means "not here yet".
+		f.log.Debug("firmware: no bootloader on this port yet", "port", path, "err", err)
 		return bl, errNotBootloader
 	}
-	return bl, err
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {

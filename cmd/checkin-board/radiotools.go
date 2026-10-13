@@ -25,7 +25,8 @@ type radioTools struct {
 }
 
 // radioPort is where the radio is: the configured port, the one the
-// backend last used, or the first port that isn't an AIOC.
+// backend last used, or a port with the radio's USB vendor (never just
+// any serial device: raising DTR resets an Arduino, keys an AIOC).
 func (t *radioTools) radioPort() (string, error) {
 	if t.port != "" {
 		return t.port, nil
@@ -33,26 +34,32 @@ func (t *radioTools) radioPort() (string, error) {
 	if p, _ := t.last.Load().(string); p != "" {
 		return p, nil
 	}
-	for _, p := range uvk5.Candidates() {
-		if uvk5.SafeForDTR(p) == nil {
-			return p, nil
-		}
+	if radios, _ := uvk5.RadioPorts(uvk5.Candidates()); len(radios) > 0 {
+		return radios[0], nil
 	}
-	return "", errors.New("no radio found: is it plugged in by USB-C and switched on?")
+	return "", errors.New("no UV-K5 found: is it plugged in by USB-C and switched on?")
 }
 
-// ports lists where a radio in bootloader mode may appear, the known
-// port first.
+// ports lists where a radio in bootloader mode may appear: the known
+// port, ports with the radio's USB vendor, then other ports that aren't
+// an AIOC (the bootloader's USB ids may differ from the firmware's).
 func (t *radioTools) ports() []string {
+	seen := map[string]bool{}
 	var out []string
-	if p, err := t.radioPort(); err == nil {
-		out = append(out, p)
-	}
-	for _, p := range uvk5.Candidates() {
-		if len(out) == 0 || p != out[0] {
-			out = append(out, p)
+	add := func(ps ...string) {
+		for _, p := range ps {
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
 		}
 	}
+	if p, err := t.radioPort(); err == nil {
+		add(p)
+	}
+	radios, others := uvk5.RadioPorts(uvk5.Candidates())
+	add(radios...)
+	add(others...)
 	return out
 }
 

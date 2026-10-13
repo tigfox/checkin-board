@@ -35,9 +35,11 @@ func Candidates() []string {
 func Dial(ctx context.Context, path string) (*Session, string, error) {
 	ports := []string{path}
 	if path == "" {
-		ports = Candidates()
+		// Never an AIOC: opening its port pulses DTR/RTS, which key PTT.
+		radios, others := RadioPorts(Candidates())
+		ports = append(radios, others...)
 		if len(ports) == 0 {
-			return nil, "", fmt.Errorf("uvk5: no radio found (no /dev/ttyACM*): is it plugged in by USB-C and switched on?")
+			return nil, "", fmt.Errorf("uvk5: no radio found (no /dev/ttyACM* that isn't an AIOC): is it plugged in by USB-C and switched on?")
 		}
 	}
 	var lastErr error

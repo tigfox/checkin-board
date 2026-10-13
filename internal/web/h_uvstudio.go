@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"mime"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
+
+	"checkin-board/internal/store"
 )
 
 // UV Studio (Armel FAUVEAU, Apache-2.0; internal/web/uvstudio/VENDORED.md)
@@ -42,6 +45,17 @@ func mustSubFS(f fs.FS, dir string) fs.FS {
 // uvstudioIdle gives the radio back when the page has seen no one use
 // it for this long (the page reports clicks and keys).
 const uvstudioIdle = 10 * time.Minute
+
+const (
+	// bridgeWriteTimeout: a page that stops reading (a sleeping laptop)
+	// ends the bridge instead of holding the radio.
+	bridgeWriteTimeout = 10 * time.Second
+	// bridgeMaxMsg caps one message from the page (UV Studio sends a few
+	// bytes at a time; calibration and logo writes are under 2 KB).
+	bridgeMaxMsg = 64 << 10
+	// bridgeAuthEvery re-checks the admin session (a logout ends it).
+	bridgeAuthEvery = time.Minute
+)
 
 // RadioBridge lends the UV-K5's serial port to UV Studio.
 type RadioBridge interface {
@@ -122,7 +136,11 @@ func (s *server) getUVStudioWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = conn.SetDeadline(time.Time{}) // the server's read/write timeouts don't apply
-	b := &bridge{conn: conn, in: brw.Reader, log: s}
+	token := sessionToken(r)
+	b := &bridge{conn: conn, in: brw.Reader, log: s, stillAdmin: func(ctx context.Context) bool {
+		role, err := s.Auth.Authenticate(ctx, token)
+		return err == nil && role == store.RoleAdmin
+	}}
 	defer conn.Close()
 	if perr != nil {
 		b.control(bridgeMsg{Type: "error", Message: safeBridgeErr(perr)})
@@ -141,33 +159,64 @@ func safeBridgeErr(err error) string {
 }
 
 type bridge struct {
-	conn net.Conn
-	in   io.Reader
-	log  *server
-	wmu  sync.Mutex
+	conn       net.Conn
+	in         io.Reader
+	log        *server
+	stillAdmin func(context.Context) bool
+	wmu        sync.Mutex
 }
 
 func (b *bridge) write(op ws.OpCode, p []byte) error {
 	b.wmu.Lock()
 	defer b.wmu.Unlock()
+	_ = b.conn.SetWriteDeadline(time.Now().Add(bridgeWriteTimeout))
 	return wsutil.WriteServerMessage(b.conn, op, p)
+}
+
+// readMessage reads the page's next data message, answering pings, and
+// refusing one over bridgeMaxMsg.
+func (b *bridge) readMessage() ([]byte, ws.OpCode, error) {
+	var msg []byte
+	var op ws.OpCode
+	for {
+		h, err := ws.ReadHeader(b.in)
+		if err != nil {
+			return nil, 0, err
+		}
+		if h.Length > bridgeMaxMsg || int64(len(msg))+h.Length > bridgeMaxMsg {
+			return nil, 0, errors.New("message too large")
+		}
+		payload := make([]byte, h.Length)
+		if _, err := io.ReadFull(b.in, payload); err != nil {
+			return nil, 0, err
+		}
+		if h.Masked {
+			ws.Cipher(payload, h.Mask, 0)
+		}
+		switch h.OpCode {
+		case ws.OpPing:
+			if err := b.write(ws.OpPong, payload); err != nil {
+				return nil, 0, err
+			}
+			continue
+		case ws.OpPong:
+			continue
+		case ws.OpClose:
+			return nil, 0, io.EOF
+		case ws.OpContinuation:
+		default:
+			op = h.OpCode
+		}
+		msg = append(msg, payload...)
+		if h.Fin {
+			return msg, op, nil
+		}
+	}
 }
 
 func (b *bridge) control(m bridgeMsg) {
 	data, _ := json.Marshal(m)
 	_ = b.write(ws.OpText, data)
-}
-
-// lockedRW lets wsutil answer pings while the pump writes.
-type lockedRW struct {
-	io.Reader
-	b *bridge
-}
-
-func (l lockedRW) Write(p []byte) (int, error) {
-	l.b.wmu.Lock()
-	defer l.b.wmu.Unlock()
-	return l.b.conn.Write(p)
 }
 
 // run pumps bytes both ways until either side ends or the page is idle.
@@ -194,9 +243,8 @@ func (b *bridge) run(ctx context.Context, port BridgePort) string {
 	}()
 	active := make(chan struct{}, 1)
 	go func() { // page -> radio
-		rw := lockedRW{b.in, b}
 		for {
-			data, op, err := wsutil.ReadClientData(rw)
+			data, op, err := b.readMessage()
 			if err != nil {
 				ended <- "page closed"
 				return
@@ -220,8 +268,14 @@ func (b *bridge) run(ctx context.Context, port BridgePort) string {
 	}()
 	idle := time.NewTimer(uvstudioIdle)
 	defer idle.Stop()
+	auth := time.NewTicker(bridgeAuthEvery)
+	defer auth.Stop()
 	for {
 		select {
+		case <-auth.C:
+			if !b.stillAdmin(ctx) {
+				return "logged out"
+			}
 		case why := <-ended:
 			return why
 		case <-active:

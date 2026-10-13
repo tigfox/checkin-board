@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"checkin-board/internal/uvk5"
@@ -34,10 +35,21 @@ var (
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.bin$`)
 
 // Folder is the node's firmware files.
-type Folder struct{ dir string }
+type Folder struct {
+	dir string
+
+	mu   sync.Mutex
+	sums map[string]cachedSum // by name: the page polls the list during a flash
+}
+
+type cachedSum struct {
+	size int64
+	mod  time.Time
+	sum  string
+}
 
 // NewFolder returns the folder at dir (created on first save).
-func NewFolder(dir string) *Folder { return &Folder{dir: dir} }
+func NewFolder(dir string) *Folder { return &Folder{dir: dir, sums: map[string]cachedSum{}} }
 
 // Entry is one firmware file.
 type Entry struct {
@@ -73,15 +85,19 @@ func (fo *Folder) List() ([]Entry, error) {
 		if !de.Type().IsRegular() || !nameRe.MatchString(de.Name()) {
 			continue
 		}
-		e := Entry{Name: de.Name()}
-		if info, err := de.Info(); err == nil {
-			e.Size, e.Modified = info.Size(), info.ModTime().UTC()
+		info, err := de.Info()
+		if err != nil {
+			continue
 		}
-		if data, err := fo.Read(de.Name()); err != nil {
+		e := Entry{Name: de.Name(), Size: info.Size(), Modified: info.ModTime().UTC()}
+		if sum, ok := fo.cached(e); ok {
+			e.SHA256 = sum
+		} else if data, err := fo.Read(de.Name()); err != nil {
 			e.Error = err.Error()
 		} else {
-			sum := sha256.Sum256(data)
-			e.SHA256 = hex.EncodeToString(sum[:])
+			raw := sha256.Sum256(data)
+			e.SHA256 = hex.EncodeToString(raw[:])
+			fo.remember(e)
 		}
 		out = append(out, e)
 	}
@@ -191,4 +207,21 @@ func SafeName(upload string) string {
 		return ""
 	}
 	return name + ".bin"
+}
+
+// cached is e's hash if the file hasn't changed since it was taken.
+func (fo *Folder) cached(e Entry) (string, bool) {
+	fo.mu.Lock()
+	defer fo.mu.Unlock()
+	c, ok := fo.sums[e.Name]
+	if !ok || c.size != e.Size || !c.mod.Equal(e.Modified) {
+		return "", false
+	}
+	return c.sum, true
+}
+
+func (fo *Folder) remember(e Entry) {
+	fo.mu.Lock()
+	defer fo.mu.Unlock()
+	fo.sums[e.Name] = cachedSum{size: e.Size, mod: e.Modified, sum: e.SHA256}
 }

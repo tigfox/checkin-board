@@ -115,6 +115,7 @@ type fakeBridge struct {
 	radio  net.Conn // the "radio" end
 	closed chan struct{}
 	err    error
+	opens  int
 }
 
 type pipeBridgePort struct {
@@ -137,6 +138,7 @@ func (b *fakeBridge) Open(context.Context) (BridgePort, error) {
 	}
 	host, radio := net.Pipe()
 	b.radio, b.closed = radio, make(chan struct{})
+	b.opens++
 	return &pipeBridgePort{Conn: host, closed: b.closed}, nil
 }
 

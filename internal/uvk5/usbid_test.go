@@ -3,15 +3,23 @@ package uvk5
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // fakeSysfs builds /sys/class/tty/<tty>/device -> .../usb1/1-1/1-1:1.0
 // with the device's ids one level up, and a /dev node for it.
+// Calls in one test share one fake /sys.
 func fakeSysfs(t *testing.T, tty, vendor, product string) string {
 	t.Helper()
-	root := t.TempDir()
-	usbDev := filepath.Join(root, "devices", "usb1", "1-1")
+	root := filepath.Dir(filepath.Dir(sysfsTTY))
+	if !strings.HasPrefix(sysfsTTY, os.TempDir()) { // the real /sys: make a fake one
+		root = t.TempDir()
+		old := sysfsTTY
+		sysfsTTY = filepath.Join(root, "class", "tty")
+		t.Cleanup(func() { sysfsTTY = old })
+	}
+	usbDev := filepath.Join(root, "devices", "usb1", tty)
 	iface := filepath.Join(usbDev, "1-1:1.0")
 	if err := os.MkdirAll(iface, 0o755); err != nil {
 		t.Fatal(err)
@@ -23,9 +31,6 @@ func fakeSysfs(t *testing.T, tty, vendor, product string) string {
 	if err := os.Symlink(iface, filepath.Join(cls, "device")); err != nil {
 		t.Fatal(err)
 	}
-	old := sysfsTTY
-	sysfsTTY = filepath.Join(root, "class", "tty")
-	t.Cleanup(func() { sysfsTTY = old })
 	dev := filepath.Join(root, "dev", tty)
 	_ = os.MkdirAll(filepath.Dir(dev), 0o755)
 	_ = os.WriteFile(dev, nil, 0o644)
@@ -46,5 +51,15 @@ func TestSafeForDTR(t *testing.T) {
 	}
 	if err := SafeForDTR(filepath.Join(t.TempDir(), "nothing")); err == nil {
 		t.Fatal("unknown port accepted")
+	}
+}
+
+func TestRadioPorts(t *testing.T) {
+	aioc := fakeSysfs(t, "ttyACM0", "1209", "7388")
+	radio := fakeSysfs(t, "ttyACM1", "36b7", "ffff")
+	gps := fakeSysfs(t, "ttyACM2", "1546", "01a7")
+	r, o := RadioPorts([]string{aioc, gps, radio, "/nonexistent"})
+	if len(r) != 1 || r[0] != radio || len(o) != 1 || o[0] != gps {
+		t.Fatalf("radios %v, others %v", r, o)
 	}
 }

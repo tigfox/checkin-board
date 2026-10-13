@@ -12,7 +12,13 @@
 
   const VENDOR = 0x36b7, PRODUCT = 0xffff; // the UV-K5's USB ids
   const ACTIVE_EVERY_MS = 30000;
+  const MAX_BUFFERED = 256 * 1024; // bytes waiting to go to the node
   let raceConfirmed = false;
+  // given: the node took the radio back (idle, unplugged, closed). UV
+  // Studio reconnects by itself after a disconnect; until someone presses
+  // Connect again (requestPort), the port isn't offered, so a forgotten
+  // tab can't take the radio back from the race.
+  let given = false;
 
   function domError(name, message) {
     try { return new DOMException(message, name); } catch (_) { const e = new Error(message); e.name = name; return e; }
@@ -57,30 +63,38 @@
 
     async open() {
       if (this._ws) throw domError("InvalidStateError", "The port is already open.");
+      if (given) throw domError("NotFoundError", "The radio is back with checkin-board: press Connect to use it again.");
       if (!(await confirmRace())) throw domError("NotAllowedError", "Not taking the radio during the race.");
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${proto}//${location.host}/api/admin/uvstudio/ws${raceConfirmed ? "?confirm=1" : ""}`);
       ws.binaryType = "arraybuffer";
       banner("Taking the radio from checkin-board…");
       let controller = null;
+      let isReady = false;
       const ready = new Promise((resolve, reject) => {
         ws.onmessage = (ev) => {
           if (typeof ev.data !== "string") { if (controller) controller.enqueue(new Uint8Array(ev.data)); return; }
           let m = {};
           try { m = JSON.parse(ev.data); } catch (_) { return; }
           if (m.type === "ready") {
-            banner(`UV Studio has this node's radio (${m.port}). Race reports wait until you close this page.`, "busy");
+            isReady = true;
+            banner(`UV Studio has this node's radio (${m.port}). Race reports wait until you close this page or press Disconnect.`, "busy");
             resolve();
           } else if (m.type === "error") {
             banner(m.message, "bad");
             reject(domError("NetworkError", m.message));
           } else if (m.type === "idle" || m.type === "closed") {
-            banner(m.message ? `Radio given back to checkin-board: ${m.message}` : "Radio given back to checkin-board.", "");
+            given = true;
+            banner(`Radio given back to checkin-board${m.message ? `: ${m.message}` : ""}. Press Connect to use it again.`, "");
           }
         };
         ws.onerror = () => reject(domError("NetworkError", "Can't reach this node's radio bridge."));
         ws.onclose = (ev) => {
-          reject(domError("NetworkError", ev.reason || "The node refused the radio (is it in use, or not a UV-K5 node?)"));
+          if (!isReady) { // never opened: no disconnect event
+            this._ws = null;
+            reject(domError("NetworkError", ev.reason || "The node refused the radio (is it in use, or not a UV-K5 node?)"));
+            return;
+          }
           this._lost();
         };
       });
@@ -97,9 +111,15 @@
       }, { highWaterMark: 64 });
       this._controller = () => controller;
       this.writable = new WritableStream({
-        write: (chunk) => {
+        write: async (chunk) => {
           if (ws.readyState !== WebSocket.OPEN) throw domError("NetworkError", "The radio bridge closed.");
-          ws.send(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
+          const bytes = ArrayBuffer.isView(chunk)
+            ? new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+            : new Uint8Array(chunk);
+          while (ws.bufferedAmount > MAX_BUFFERED && ws.readyState === WebSocket.OPEN) {
+            await new Promise((r) => setTimeout(r, 20));
+          }
+          ws.send(bytes);
         },
       });
       this._activity = setInterval(() => {
@@ -109,11 +129,15 @@
       for (const t of ["pointerdown", "keydown"]) document.addEventListener(t, this._onUse, true);
     }
 
-    // _lost: the bridge closed (page closed, radio unplugged, idle).
+    // _lost: the bridge closed (radio unplugged, idle, node restarting).
     _lost() {
       const ws = this._ws;
       if (!ws) return;
       this._ws = null;
+      given = true;
+      if (!document.getElementById("cb-bridge-banner")?.textContent.includes("given back")) {
+        banner("The radio bridge closed: the radio is back with checkin-board. Press Connect to use it again.", "");
+      }
       this._cleanup();
       const c = this._controller && this._controller();
       if (c) { try { c.error(domError("NetworkError", "The radio bridge closed.")); } catch (_) {} }
@@ -146,8 +170,9 @@
   const port = new BridgedPort();
 
   class BridgedSerial extends EventTarget {
-    async requestPort() { return port; }
-    async getPorts() { return [port]; }
+    // requestPort is the Connect button: someone wants the radio again.
+    async requestPort() { given = false; return port; }
+    async getPorts() { return given ? [] : [port]; }
     // UV Studio reads event.target.getInfo() on connect events.
     getInfo() { return port.getInfo(); }
   }
@@ -155,4 +180,6 @@
 
   Object.defineProperty(navigator, "serial", { value: serial, configurable: true, enumerable: true });
   window.addEventListener("pagehide", () => { port.close(); });
+  // Restored from the back/forward cache: the socket is gone; start over.
+  window.addEventListener("pageshow", (ev) => { if (ev.persisted) location.reload(); });
 })();

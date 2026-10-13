@@ -562,5 +562,21 @@ func TestE2EUVStudio(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the radio wasn't given back")
 	}
+
+	// The node ends the bridge (here the radio is unplugged): UV Studio's
+	// auto-reconnect must not take the radio again by itself.
+	b.run(chromedp.Click("#connectionBtn", chromedp.ByQuery))
+	b.waitText("#cb-bridge-banner", "UV Studio has this node's radio")
+	br.mu.Lock()
+	_ = br.radio.Close()
+	br.mu.Unlock()
+	b.waitText("#cb-bridge-banner", "Press Connect to use it again")
+	time.Sleep(3 * time.Second) // UV Studio retries about once a second
+	br.mu.Lock()
+	opens := br.opens
+	br.mu.Unlock()
+	if opens != 2 {
+		t.Fatalf("%d opens: UV Studio took the radio back by itself", opens)
+	}
 	b.noErrors()
 }

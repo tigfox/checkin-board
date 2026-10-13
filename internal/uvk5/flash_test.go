@@ -36,7 +36,7 @@ func TestFlash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bl.Version != "7.02.02" || string(bl.UID[:4]) != "0123" || last != (FlashProgress{Page: 6, Pages: 6}) {
+	if bl.Version != "7.02.02" || string(bl.UID[:4]) != "0123" || last != (FlashProgress{Page: 6, Pages: 6, Bootloader: "7.02.02"}) {
 		t.Fatalf("bootloader %+v, progress %+v", bl, last)
 	}
 	if img := b.Image(); !b.Done() || !bytes.Equal(img[:len(fw)], fw) || !bytes.Equal(img[len(fw):], make([]byte, 6*flashPage-len(fw))) {

@@ -18,6 +18,10 @@ func (u USBID) String() string { return u.Vendor + ":" + u.Product }
 // aiocID is the AIOC cable's: it keys the radio's PTT from DTR and RTS.
 var aiocID = USBID{"1209", "7388"}
 
+// RadioVendor is the USB vendor of the UV-K5 V3 / UV-K1's USB-C port
+// (PUYA, seen on the bench as 36b7:ffff).
+const RadioVendor = "36b7"
+
 // PortUSBID reads path's USB ids from sysfs (path may be a /dev/serial
 // symlink).
 func PortUSBID(path string) (USBID, error) {
@@ -56,4 +60,21 @@ func SafeForDTR(path string) error {
 		return fmt.Errorf("uvk5: %s is an AIOC cable (%s), not a UV-K5", path, id)
 	}
 	return nil
+}
+
+// RadioPorts orders candidate ports for a UV-K5: ones with the radio's
+// USB vendor first, then other ports that aren't an AIOC. Ports whose
+// ids can't be read, and AIOCs, are left out.
+func RadioPorts(ports []string) (radios, others []string) {
+	for _, p := range ports {
+		id, err := PortUSBID(p)
+		switch {
+		case err != nil || id == aiocID:
+		case id.Vendor == RadioVendor:
+			radios = append(radios, p)
+		default:
+			others = append(others, p)
+		}
+	}
+	return radios, others
 }

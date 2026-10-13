@@ -61,22 +61,22 @@ func (s *server) postFirmware(w http.ResponseWriter, r *http.Request) {
 	if !s.firmwareReady(w, r) {
 		return
 	}
-	if err := r.ParseMultipartForm(uploadMemory); err != nil {
-		writeError(w, r, s.log, &httpError{http.StatusBadRequest, "no_file", "upload a file in the \"file\" field"})
-		return
-	}
-	f, hdr, err := r.FormFile("file")
+	f, err := uploadedFile(r)
 	if err != nil {
-		writeError(w, r, s.log, &httpError{http.StatusBadRequest, "no_file", "upload a file in the \"file\" field"})
+		writeError(w, r, s.log, err)
 		return
 	}
 	defer f.Close()
+	upload := ""
+	if fh := r.MultipartForm.File["file"]; len(fh) > 0 {
+		upload = fh[0].Filename
+	}
 	data, err := io.ReadAll(io.LimitReader(f, uvk5.MaxFirmwareSize+1))
 	if err != nil {
 		writeError(w, r, s.log, err)
 		return
 	}
-	name := firmware.SafeName(hdr.Filename)
+	name := firmware.SafeName(upload)
 	if name == "" {
 		name = "firmware.bin"
 	}

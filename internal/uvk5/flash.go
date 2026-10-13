@@ -49,9 +49,11 @@ type Bootloader struct {
 	Version string
 }
 
-// FlashProgress reports pages written so far.
+// FlashProgress reports the flash: after the handshake (Page 0, the
+// point of no return), then after each page.
 type FlashProgress struct {
 	Page, Pages int
+	Bootloader  string
 }
 
 var (
@@ -93,11 +95,17 @@ func Flash(ctx context.Context, rw io.ReadWriter, fw []byte, t FlashTiming, prog
 				return
 			}
 			if it.Frame != nil {
-				select {
-				case frames <- *it.Frame:
-				default: // announcements pile up while we write: drop the oldest
-					<-frames
-					frames <- *it.Frame
+				for { // announcements pile up while we write: drop the oldest
+					select {
+					case frames <- *it.Frame:
+					default:
+						select {
+						case <-frames:
+						default:
+						}
+						continue
+					}
+					break
 				}
 			}
 		}
@@ -113,7 +121,16 @@ func Flash(ctx context.Context, rw io.ReadWriter, fw []byte, t FlashTiming, prog
 	if err := f.handshake(ctx, bl.Version); err != nil {
 		return bl, err
 	}
-	return bl, f.program(ctx, fw, progress)
+	pages := (len(fw) + flashPage - 1) / flashPage
+	if progress != nil {
+		progress(FlashProgress{Page: 0, Pages: pages, Bootloader: bl.Version})
+	}
+	return bl, f.program(ctx, fw, func(p FlashProgress) {
+		if progress != nil {
+			p.Bootloader = bl.Version
+			progress(p)
+		}
+	})
 }
 
 type flasher struct {
@@ -144,6 +161,7 @@ var errTimeout = errors.New("timeout")
 
 // detect waits for 5 announcements in a row at a plausible rate (as UV
 // Studio does: 5 ms to 1 s apart), so a stray frame can't start a flash.
+// The minimum gap also skips announcements that queued up unread.
 func (f *flasher) detect(ctx context.Context) (Bootloader, error) {
 	deadline := time.Now().Add(f.t.Detect)
 	var last time.Time
@@ -160,7 +178,7 @@ func (f *flasher) detect(ctx context.Context) (Bootloader, error) {
 			continue
 		}
 		now := time.Now()
-		if dt := now.Sub(last); !last.IsZero() && dt <= time.Second {
+		if dt := now.Sub(last); !last.IsZero() && dt >= 5*time.Millisecond && dt <= time.Second {
 			run++
 		} else {
 			run = 1
@@ -186,12 +204,17 @@ func parseDevInfo(d []byte) Bootloader {
 }
 
 // handshake answers three announcements with the bootloader's version
-// (its first 4 characters), then lets the announcements stop.
+// (its first 4 characters), paced as UV Studio does (50 ms before and
+// after each), then lets the announcements stop.
 func (f *flasher) handshake(ctx context.Context, version string) error {
 	ver := make([]byte, 4)
 	copy(ver, version)
+	f.drain() // answer fresh announcements, not ones queued meanwhile
 	deadline := time.Now().Add(f.t.Detect)
 	for sent := 0; sent < 3; {
+		if err := sleepCtx(ctx, 50*time.Millisecond); err != nil {
+			return err
+		}
 		fr, err := f.next(ctx, deadline)
 		if errors.Is(err, errTimeout) {
 			return errors.New("uvk5: the bootloader stopped answering during the handshake")
@@ -206,14 +229,26 @@ func (f *flasher) handshake(ctx context.Context, version string) error {
 			return fmt.Errorf("uvk5: handshake: %w", err)
 		}
 		sent++
+		if err := sleepCtx(ctx, 50*time.Millisecond); err != nil {
+			return err
+		}
 	}
 	if err := sleepCtx(ctx, 200*time.Millisecond); err != nil {
 		return err
 	}
-	for len(f.frames) > 0 {
-		<-f.frames
-	}
+	f.drain()
 	return nil
+}
+
+// drain drops queued frames without waiting.
+func (f *flasher) drain() {
+	for {
+		select {
+		case <-f.frames:
+		default:
+			return
+		}
+	}
 }
 
 // program sends every page and waits for each one's acknowledgement.
