@@ -36,8 +36,10 @@ dist:
 run:
 	go run ./cmd/checkin-board
 
+# A non-UTC zone, as on the nodes: catches times stored in local time
+# (bench 2026-10-13: the UV-K5 ack window never matched on EDT nodes).
 test:
-	go test -race ./...
+	TZ=America/New_York go test -race ./...
 
 jstest:
 	node --test internal/web/jstest/

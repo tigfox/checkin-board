@@ -69,3 +69,31 @@ func TestRadioMessages(t *testing.T) {
 		t.Fatalf("update missing: %v", err)
 	}
 }
+
+// Times from a node's local clock (the Pis run on local time, not UTC)
+// are stored as UTC, so the ack window still matches: SQLite compares
+// the stored text. Bench, 2026-10-13: every SENT line and ack missed.
+func TestRadioMatchAckLocalTime(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	edt := time.FixedZone("EDT", -4*3600)
+	m := &RadioMessage{Direction: "out", Status: "queued", ToCall: "KD2DCM-4", PeerCall: "KD2DCM-4", Text: "x",
+		CreatedAt: time.Date(2026, 10, 13, 15, 37, 55, 123, edt)}
+	if err := s.RadioInsert(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	submitted := time.Date(2026, 10, 13, 15, 38, 0, 456, edt)
+	if _, err := s.RadioUpdate(ctx, m.ID, func(r *RadioMessage) bool {
+		r.Status, r.MsgID, r.CreatedAt, r.SentAt = "tx_submitted", "32", submitted, &submitted
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.RadioMatchAck(ctx, "KD2DCM-4", "32", submitted.Add(-time.Minute), "tx_submitted")
+	if err != nil || got.ID != m.ID {
+		t.Fatalf("match = %+v, %v", got, err)
+	}
+	if !got.CreatedAt.Equal(submitted.Truncate(time.Second)) || got.CreatedAt.Location() != time.UTC {
+		t.Fatalf("created_at = %v", got.CreatedAt)
+	}
+}

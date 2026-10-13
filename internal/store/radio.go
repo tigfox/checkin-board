@@ -55,7 +55,7 @@ func (s *Store) RadioInsert(ctx context.Context, m *RadioMessage) error {
 		if m.CreatedAt.IsZero() {
 			m.CreatedAt = s.now()
 		}
-		m.CreatedAt = normTime(m.CreatedAt)
+		normRadioTimes(m)
 		return tx.Create(m).Error
 	})
 }
@@ -79,6 +79,7 @@ func (s *Store) RadioUpdate(ctx context.Context, id uint64, change func(*RadioMe
 			return err
 		}
 		out.UpdSeq = seq
+		normRadioTimes(&out)
 		return tx.Save(&out).Error
 	})
 	return out, err
@@ -136,4 +137,12 @@ func (s *Store) RadioDelete(ctx context.Context, id uint64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// normRadioTimes stores every time as UTC whole seconds, whatever clock
+// the caller used: queries compare the stored text (the ack window),
+// and a node's local time zone sorts wrongly against UTC.
+func normRadioTimes(m *RadioMessage) {
+	m.CreatedAt = normTime(m.CreatedAt)
+	m.SentAt, m.ReceivedAt, m.AckedAt = normTimePtr(m.SentAt), normTimePtr(m.ReceivedAt), normTimePtr(m.AckedAt)
 }
