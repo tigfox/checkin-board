@@ -297,3 +297,52 @@ install time (`install.sh --backend` is gone):
   so its Station page stays reachable. The page says why.
 - Not done: carrying the callsign over to a fresh radio automatically.
   **Check radio** flags N0CALL, and the Station page's Callsign sets it.
+
+## First bench with real radios (17f, 2026-10-13)
+
+Two UV-K5s (F4HWN v6.1.0, protocol revision 1) on the Pi Zero W nodes
+10.0.1.183 and 10.0.0.65, over USB-C, in one room at low power.
+
+Worked first time:
+- the handshake, capabilities, settings, status and set-callsign
+  commands;
+- **Check radio**;
+- switching both nodes from graywolf to the UV-K5 on the Station page
+  (back in about 1 s);
+- `SENT:` lines, `APRSRAW:` / `APRSRSSI:` lines, and the radio's own
+  acks of short messages.
+
+Found and fixed in checkin-board:
+- **DTR.** Over USB-C the firmware writes monitor lines only while DTR
+  is up (`cdc_acm_data_send_with_dtr`), but the spec says to open with
+  DTR low. Command replies are sent regardless, so everything looked
+  connected while no `SENT:` or `APRSRAW:` line ever arrived. The session
+  now raises DTR after the handshake (never before: an AIOC keys PTT from
+  DTR). Commit 16b9bee.
+- **Local time.** The backend restamped `created_at` with the node's
+  local clock, and the ack window compares SQLite text against UTC. On
+  the EDT nodes no `SENT:` line or ack ever matched. Times are now stored
+  as UTC, and `make test` runs in America/New_York. Commit 33b28c3.
+
+Found in the firmware, reported in `aprs-firmware-request-estimate.md`:
+- **Long messages aren't acked.** `APRS_RxInfo` looks for `{nn` only
+  within the 43-character display text, so a message over about 34
+  characters is never acked. A UV-K5 HQ therefore never confirms batches.
+  The docs now say: UV-K5s for checkpoints only, HQ on graywolf.
+- After a timed-out USB write the firmware stops sending monitor lines
+  until DTR is toggled again (not seen on the bench).
+
+Bench hardware:
+- 10.0.1.183's USB drops ("disabled by hub (EMI?)") every time its radio
+  transmits. It had the same fault with the AIOC.
+- 10.0.0.65 decoded few of that radio's packets.
+- Look at that radio's antenna and connection, and the node's USB
+  cabling.
+
+Bench race (UV-K5 checkpoint .65 → UV-K5 HQ .183, 20 runners):
+- 16/20 at HQ, median 3 s. Every batch arrived, but none was acked
+  (the firmware bug), so the checkpoint's window filled and the last
+  batch never went out.
+
+Still to do: the bench race with a **graywolf HQ** (the Pi 3, 10.0.1.88)
+and UV-K5 checkpoints, once 183's hardware is sorted.

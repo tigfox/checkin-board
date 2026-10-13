@@ -88,8 +88,8 @@
       <li><strong>Radio with an AIOC cable (graywolf)</strong>: any 2 m radio on an AIOC (or other sound-card)
         cable; graywolf on this node is the modem. See <a href="#radio">Radio and graywolf</a>.</li>
       <li><strong>UV-K5 V3 / UV-K1 on USB-C (APRS firmware)</strong>: the radio does the packet work itself, so any
-        Pi has CPU to spare. It suits <strong>checkpoints</strong> best; HQ is happier on graywolf, which has no
-        5-second gap between packets.</li>
+        Pi has CPU to spare. Use it for <strong>checkpoints only; keep HQ on graywolf</strong>: the current UV-K5
+        firmware doesn't acknowledge long messages, so a UV-K5 HQ never confirms a checkpoint's reports.</li>
     </ul>
     <p>Nodes with either radio work together in one race on one frequency. A type that can't be used on this
       node is marked "not available", with the reason.</p>

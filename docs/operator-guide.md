@@ -91,8 +91,9 @@ On a UV-K5: set this station's callsign-SSID (or let the Station page or
 `stationsetup` set it), switch APRS on, set the race frequency in FM, and
 set its **Path** to Direct or WIDE1-1. Then **Admin → Station → Radio →
 Check radio** must pass. See the station guide, "Radio types", for what
-differs during the race. UV-K5s suit checkpoints best; HQ is happier on
-graywolf.
+differs during the race. Use UV-K5s for checkpoints only and keep HQ on
+graywolf: the current UV-K5 firmware doesn't ack messages longer than
+about 34 characters, so a UV-K5 HQ never confirms a checkpoint's reports.
 
 **Swapping a radio mid-race:** connect the new radio (callsign, APRS,
 frequency set), choose its type on the Station page and press **Change

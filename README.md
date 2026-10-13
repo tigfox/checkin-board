@@ -125,9 +125,11 @@ in about 10 seconds (a bib logged meanwhile shows NOT confirmed: tap LOG
 again); entries are kept, and reports not yet acknowledged go out through
 the new radio (HQ ignores repeats). Then run **Check radio**. Unplug or
 switch off the old radio: graywolf keeps running. `stationsetup`'s
-`backend` column sets the type from the stations CSV. UV-K5s suit
-**checkpoints** best; HQ is happier on graywolf, which has no 5-second gap
-between packets.
+`backend` column sets the type from the stations CSV. Use UV-K5s for
+**checkpoints only; keep HQ on graywolf**. HQ has no 5-second gap between
+packets on graywolf, and the current UV-K5 firmware (F4HWN v6.1.0) doesn't
+ack messages longer than about 34 characters, so a UV-K5 HQ never confirms
+a checkpoint's reports (bench, 2026-10-13; reported to the firmware team).
 
 To add a new kind of radio later: an entry in `internal/radiokind`, a
 backend that answers the app's graywolf-shaped message calls (as
