@@ -267,3 +267,17 @@ test("slotJobSummary and slotWriteConfirm", () => {
   assert.doesNotMatch(L.slotWriteConfirm("fw.bin", 1, "Aprs", { state: "empty" }), /replaces/);
   assert.match(L.slotWriteConfirm("fw.bin", 1, "Aprs"), /main firmware isn't touched/);
 });
+
+test("pickSlot keeps Fusion and finds the same firmware", () => {
+  const bench = [
+    { slot: 1, state: "valid", name: "Fusion" }, { slot: 2, state: "valid", name: "APRS" },
+    { slot: 3, state: "valid", name: "FMVOICE" }, { slot: 4, state: "empty" },
+  ];
+  assert.deepEqual(L.pickSlot(bench, "Aprs"), { slot: 2, name: "APRS" });
+  assert.deepEqual(L.pickSlot(bench, "Custom"), { slot: 4, name: "Custom" });
+  const full = bench.slice(0, 3).concat([{ slot: 4, state: "valid", name: "X" }]);
+  assert.equal(L.pickSlot(full, "New").slot, 2); // never Fusion's slot by default
+  assert.equal(L.pickSlot(undefined, "Aprs").slot, 1); // not read yet
+  assert.ok(L.isMainSlot({ name: " FUSION " }));
+  assert.match(L.slotWriteConfirm("f.bin", 1, "APRS", { state: "valid", name: "Fusion" }), /way back/);
+});

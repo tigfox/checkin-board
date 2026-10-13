@@ -328,7 +328,10 @@ export function slotWriteConfirm(file, slot, name, current) {
   const replacing = current && current.state !== "empty"
     ? ` It replaces ${current.name || "what's there"}${current.version ? ` ${current.version}` : ""}.`
     : "";
-  return `Write ${file} into slot ${slot} as "${name}"?${replacing}\n\n` +
+  const main = isMainSlot(current)
+    ? "\n\nThis slot holds Fusion, the radio's main firmware: its copy here is the way back to it."
+    : "";
+  return `Write ${file} into slot ${slot} as "${name}"?${replacing}${main}\n\n` +
     "The node takes the radio for about a minute (race reports wait), with the radio switched on as usual. " +
     "The radio's main firmware isn't touched. Keep the radio and the Pi powered until it says done.";
 }
@@ -351,4 +354,27 @@ export function slotJobSummary(job) {
     default:
       return null;
   }
+}
+
+// MAIN_FIRMWARE is the slot name a write never replaces without asking
+// twice: the radio's main firmware (its slot copy is the way back to it).
+export const MAIN_FIRMWARE = "fusion";
+
+// isMainSlot says whether a slot (as read) holds the main firmware.
+export function isMainSlot(slot) {
+  return !!slot && (slot.name || "").trim().toLowerCase() === MAIN_FIRMWARE;
+}
+
+// pickSlot suggests where a file goes: the slot already holding firmware
+// of that name (keeping the radio's spelling), else the first empty slot,
+// else the first slot not holding the main firmware.
+export function pickSlot(slots, suggested) {
+  const list = slots || [];
+  const want = (suggested || "").trim().toLowerCase();
+  const same = want && list.find((s) => s.state !== "empty" && (s.name || "").trim().toLowerCase() === want);
+  if (same) return { slot: same.slot, name: same.name };
+  const empty = list.find((s) => s.state === "empty");
+  if (empty) return { slot: empty.slot, name: suggested || "" };
+  const other = list.find((s) => !isMainSlot(s));
+  return { slot: other ? other.slot : 1, name: suggested || "" };
 }

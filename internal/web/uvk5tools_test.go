@@ -41,7 +41,7 @@ func (f *fakeSlots) ReadSlots() error {
 	return nil
 }
 
-func (f *fakeSlots) Write(file string, slot int, name, version string) error {
+func (f *fakeSlots) Write(file string, slot int, name, version string, replaceMain bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.st.State == firmware.StateWriting {

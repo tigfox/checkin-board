@@ -91,13 +91,20 @@ function slotsTable(job, busy, ctx, render) {
 }
 
 function fileRow(f, job, busy, ctx, render) {
-  const slot = h("select", { "aria-label": `Slot for ${f.name}` }, ...SLOTS.map((n) => h("option", { value: n }, `Slot ${n}`)));
-  const name = h("input", { value: f.slot_name || "", maxlength: 15, placeholder: "name on the radio", "aria-label": "Name on the radio" });
+  const pick = L.pickSlot(job.slots, f.slot_name);
+  const label = (n) => {
+    const sl = (job.slots || []).find((s) => s.slot === n);
+    return sl && sl.state !== "empty" ? `Slot ${n} (${sl.name || sl.state})` : `Slot ${n}`;
+  };
+  const slot = h("select", { "aria-label": `Slot for ${f.name}` },
+    ...SLOTS.map((n) => h("option", { value: n, selected: n === pick.slot }, label(n))));
+  const name = h("input", { value: pick.name || "", maxlength: 15, placeholder: "name on the radio", "aria-label": "Name on the radio" });
   const version = h("input", { value: f.slot_version || "", maxlength: 15, placeholder: "version", "aria-label": "Version", size: 8 });
   return h("tr", {},
     h("td", { class: "mono" }, f.name, h("br"), h("span", { class: "muted", title: f.sha256 }, `${Math.round(f.size / 1024)} KB · ${f.sha256 ? f.sha256.slice(0, 12) : f.error || ""}`)),
     h("td", {}, slot), h("td", {}, name), h("td", {}, version),
-    h("td", {}, h("button", { type: "button", class: "primary", disabled: busy || !!f.error, dataset: { write: f.name }, onclick: async () => {
+    h("td", {}, h("button", { type: "button", class: "primary", disabled: busy || !!f.error || !job.slots, dataset: { write: f.name },
+      title: job.slots ? "" : "Read the slots first", onclick: async () => {
       const n = Number(slot.value);
       const current = (job.slots || []).find((s) => s.slot === n);
       if (!name.value.trim()) {
@@ -105,8 +112,10 @@ function fileRow(f, job, busy, ctx, render) {
         return;
       }
       if (!confirm(L.slotWriteConfirm(f.name, n, name.value.trim(), current))) return;
+      const replaceMain = L.isMainSlot(current);
+      if (replaceMain && !confirm(`Really replace Fusion in slot ${n}? Without it the radio can't go back to its main firmware from the slot menu.`)) return;
       const r = await withRaceConfirm(ctx, (c) => post(`/api/admin/firmware/${encodeURIComponent(f.name)}/write`,
-        { slot: n, name: name.value, version: version.value, confirm: c }));
+        { slot: n, name: name.value, version: version.value, confirm: c, replace_main: replaceMain }));
       if (r) await render();
     } }, "Write")),
     h("td", {}, h("button", { type: "button", class: "danger", disabled: busy, onclick: async () => {

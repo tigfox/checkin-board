@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,6 +79,14 @@ func NewSlots(cfg SlotsConfig) *Slots {
 	}
 	return &Slots{cfg: cfg, log: log, st: Status{State: StateIdle}}
 }
+
+// ProtectedFirmware is the firmware a slot write never replaces unless
+// asked to: the radio's main firmware (its copy in a slot is the way
+// back to it).
+const ProtectedFirmware = "Fusion"
+
+// ErrProtected: the slot holds the main firmware's copy.
+var ErrProtected = errors.New("firmware: that slot holds " + ProtectedFirmware + ", the radio's main firmware; it isn't overwritten")
 
 // ErrBusy: a slot job is already running.
 var ErrBusy = errors.New("firmware: the radio's slots are already being read or written")
@@ -169,8 +178,9 @@ func (j *Slots) ReadSlots() error {
 }
 
 // Write starts writing file into slot under name and version; it runs
-// on its own (Status shows progress).
-func (j *Slots) Write(file string, slot int, name, version string) error {
+// on its own (Status shows progress). A slot holding the main firmware
+// (ProtectedFirmware) is refused unless replaceMain.
+func (j *Slots) Write(file string, slot int, name, version string, replaceMain bool) error {
 	if slot < uvk5.FirstSlot || slot > uvk5.LastSlot {
 		return fmt.Errorf("%w: slot %d: only slots %d-%d can be written", ErrInvalid, slot, uvk5.FirstSlot, uvk5.LastSlot)
 	}
@@ -189,7 +199,15 @@ func (j *Slots) Write(file string, slot int, name, version string) error {
 	j.log.Info("firmware: writing slot", "file", file, "slot", slot, "name", name, "version", version)
 	go func() {
 		j.finish(j.withRadio(ctx, "writing firmware slot", func(sess SlotSession) error {
-			err := sess.WriteSlot(ctx, slot, img, name, version, func(p uvk5.SlotProgress) {
+			// Checked on the radio itself, just before erasing.
+			cur, err := sess.SlotInfo(ctx, slot)
+			if err != nil {
+				return err
+			}
+			if strings.EqualFold(strings.TrimSpace(cur.Name), ProtectedFirmware) && !replaceMain {
+				return fmt.Errorf("%w (slot %d)", ErrProtected, slot)
+			}
+			err = sess.WriteSlot(ctx, slot, img, name, version, func(p uvk5.SlotProgress) {
 				j.mu.Lock()
 				j.st.Step, j.st.Done, j.st.Total = p.Step, p.Done, p.Total
 				j.mu.Unlock()

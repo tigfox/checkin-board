@@ -21,7 +21,7 @@ import (
 // SlotWriter is the node's slot job (firmware.Slots).
 type SlotWriter interface {
 	ReadSlots() error
-	Write(file string, slot int, name, version string) error
+	Write(file string, slot int, name, version string, replaceMain bool) error
 	Cancel() error
 	Status() firmware.Status
 }
@@ -42,6 +42,9 @@ type slotWriteBody struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 	Confirm bool   `json:"confirm"`
+	// ReplaceMain allows overwriting the slot that holds the radio's main
+	// firmware (Fusion).
+	ReplaceMain bool `json:"replace_main"`
 }
 
 // firmwareReady answers 501 on a node without a UV-K5.
@@ -148,7 +151,7 @@ func (s *server) postSlotWrite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, err)
 		return
 	}
-	if err := s.Slots.Write(r.PathValue("name"), b.Slot, b.Name, b.Version); err != nil {
+	if err := s.Slots.Write(r.PathValue("name"), b.Slot, b.Name, b.Version, b.ReplaceMain); err != nil {
 		if os.IsNotExist(err) {
 			err = &httpError{http.StatusNotFound, "not_found", "no such firmware file on this node"}
 		}

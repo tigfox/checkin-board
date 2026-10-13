@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -70,14 +71,14 @@ func TestSlotsReadAndWrite(t *testing.T) {
 		t.Fatalf("read = %+v", st)
 	}
 	for _, bad := range []int{0, 5} {
-		if err := j.Write("f4hwn.aprs.v6.1.bin", bad, "Aprs", "v6.1"); !errors.Is(err, ErrInvalid) {
+		if err := j.Write("f4hwn.aprs.v6.1.bin", bad, "Aprs", "v6.1", false); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("slot %d: %v", bad, err)
 		}
 	}
-	if err := j.Write("f4hwn.aprs.v6.1.bin", 2, " ", ""); !errors.Is(err, ErrInvalid) {
+	if err := j.Write("f4hwn.aprs.v6.1.bin", 2, " ", "", false); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("no name: %v", err)
 	}
-	if err := j.Write("f4hwn.aprs.v6.1.bin", 2, "Aprs", "v6.1"); err != nil {
+	if err := j.Write("f4hwn.aprs.v6.1.bin", 2, "Aprs", "v6.1", false); err != nil {
 		t.Fatal(err)
 	}
 	st = waitSlots(t, j, StateDone, StateFailed)
@@ -107,5 +108,34 @@ func TestSlotsNoMultiboot(t *testing.T) {
 	}
 	if st := j.Status(); st.State != StateFailed || b.given.Load() != 1 {
 		t.Fatalf("status %+v, given %d", st, b.given.Load())
+	}
+}
+
+// A slot holding Fusion (the radio's main firmware) isn't overwritten
+// unless asked; the check is made on the radio just before erasing.
+func TestSlotsProtectFusion(t *testing.T) {
+	fo := NewFolder(filepath.Join(t.TempDir(), "fw"))
+	img := bytes.Repeat([]byte{1}, 300)
+	_ = fo.Save("f4hwn.aprs.v6.2.bin", img, false)
+	b := &slotBench{radio: uvk5.NewFakeRadio("KD2DCM-4", time.Now)}
+	j := NewSlots(b.config(fo))
+	if err := j.Write("f4hwn.aprs.v6.2.bin", 1, "Fusion", "v6.1.0", false); err != nil { // the bench's layout
+		t.Fatal(err)
+	}
+	waitSlots(t, j, StateDone)
+	if err := j.Write("f4hwn.aprs.v6.2.bin", 1, "APRS", "v6.2", false); err != nil {
+		t.Fatal(err)
+	}
+	if st := waitSlots(t, j, StateDone, StateFailed); st.State != StateFailed || !strings.Contains(st.Error, "Fusion") {
+		t.Fatalf("over Fusion = %+v", st)
+	}
+	if info, _ := b.radio.Slot(1); info.Name != "Fusion" {
+		t.Fatalf("slot 1 = %+v", info)
+	}
+	if err := j.Write("f4hwn.aprs.v6.2.bin", 1, "APRS", "v6.2", true); err != nil {
+		t.Fatal(err)
+	}
+	if st := waitSlots(t, j, StateDone, StateFailed); st.State != StateDone {
+		t.Fatalf("asked to replace = %+v", st)
 	}
 }
