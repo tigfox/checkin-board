@@ -21,6 +21,7 @@ import (
 
 	"checkin-board/internal/auth"
 	"checkin-board/internal/checkpoint"
+	"checkin-board/internal/firmware"
 	"checkin-board/internal/graywolf"
 	"checkin-board/internal/hostmon"
 	"checkin-board/internal/hq"
@@ -28,7 +29,6 @@ import (
 	"checkin-board/internal/linkcheck"
 	"checkin-board/internal/ops"
 	"checkin-board/internal/raceclock"
-	"checkin-board/internal/firmware"
 	"checkin-board/internal/raceconfig"
 	"checkin-board/internal/radiocheck"
 	"checkin-board/internal/store"

@@ -240,4 +240,3 @@ func (b *bridge) run(ctx context.Context, port BridgePort) string {
 		}
 	}
 }
-
