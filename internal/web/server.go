@@ -107,9 +107,9 @@ type Deps struct {
 	// GraywolfReady: graywolf's login is configured, so the graywolf
 	// kind can be chosen.
 	GraywolfReady bool
-	// Flasher flashes the UV-K5's firmware, and FirmwareDir keeps the
+	// Slots writes the UV-K5's firmware slots, and FirmwareDir keeps the
 	// files (UV-K5 nodes; nil/"" elsewhere).
-	Flasher     Flasher
+	Slots       SlotWriter
 	FirmwareDir string
 	// RadioBridge gives UV Studio the UV-K5's serial port (UV-K5 nodes).
 	RadioBridge RadioBridge

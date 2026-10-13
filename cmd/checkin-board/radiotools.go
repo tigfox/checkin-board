@@ -16,7 +16,7 @@ import (
 )
 
 // radioTools are a UV-K5 node's extras: UV Studio's serial bridge and
-// the firmware flasher. Both borrow the radio's port from the backend.
+// the firmware slot writer. Both borrow the radio's port from the backend.
 type radioTools struct {
 	rb   *radiobackend.Backend
 	port string       // CB_UVK5_PORT ("": found)
@@ -40,29 +40,6 @@ func (t *radioTools) radioPort() (string, error) {
 	return "", errors.New("no UV-K5 found: is it plugged in by USB-C and switched on?")
 }
 
-// ports lists where a radio in bootloader mode may appear: the known
-// port, ports with the radio's USB vendor, then other ports that aren't
-// an AIOC (the bootloader's USB ids may differ from the firmware's).
-func (t *radioTools) ports() []string {
-	seen := map[string]bool{}
-	var out []string
-	add := func(ps ...string) {
-		for _, p := range ps {
-			if !seen[p] {
-				seen[p] = true
-				out = append(out, p)
-			}
-		}
-	}
-	if p, err := t.radioPort(); err == nil {
-		add(p)
-	}
-	radios, others := uvk5.RadioPorts(uvk5.Candidates())
-	add(radios...)
-	add(others...)
-	return out
-}
-
 // Open lends the radio to UV Studio and opens its port with DTR up (the
 // firmware sends its screen only then).
 func (t *radioTools) Open(ctx context.Context) (web.BridgePort, error) {
@@ -79,7 +56,7 @@ func (t *radioTools) Open(ctx context.Context) (web.BridgePort, error) {
 }
 
 type namedPort struct {
-	firmware.Port
+	dtrPort
 	name string
 }
 
@@ -99,9 +76,9 @@ func (t *radioTools) openDTR() (namedPort, error) {
 	return namedPort{p, path}, nil
 }
 
-// openRadioPort opens path for the bridge or the flasher, refusing an
-// AIOC (it keys PTT from DTR).
-func openRadioPort(path string) (firmware.Port, error) {
+// openRadioPort opens path for UV Studio's bridge, refusing an AIOC (it
+// keys PTT from DTR).
+func openRadioPort(path string) (dtrPort, error) {
 	if err := uvk5.SafeForDTR(path); err != nil {
 		return nil, err
 	}
@@ -109,12 +86,18 @@ func openRadioPort(path string) (firmware.Port, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, ok := rw.(firmware.Port)
+	p, ok := rw.(dtrPort)
 	if !ok {
 		_ = rw.Close()
 		return nil, fmt.Errorf("%s: can't set DTR on this port", path)
 	}
 	return p, nil
+}
+
+// dtrPort is an open serial port whose DTR can be raised.
+type dtrPort interface {
+	io.ReadWriteCloser
+	SetDTR(on bool) error
 }
 
 // lentPort gives the radio back when UV Studio closes it.
@@ -133,14 +116,29 @@ func (l *lentPort) Close() error {
 	return err
 }
 
-// newFlasher flashes the radio from the node's firmware folder.
-func (t *radioTools) newFlasher(dir string) *firmware.Flasher {
-	return firmware.NewFlasher(firmware.FlasherConfig{
-		Folder: firmware.NewFolder(dir),
-		Lend:   t.rb.Lend,
-		Ports:  t.ports,
-		Check:  uvk5.SafeForDTR,
-		Open:   openRadioPort,
-		Logger: t.log,
+// newSlots writes the radio's firmware slots from the node's folder.
+func (t *radioTools) newSlots(dir string) *firmware.Slots {
+	return firmware.NewSlots(firmware.SlotsConfig{
+		Folder:  firmware.NewFolder(dir),
+		Lend:    t.rb.Lend,
+		Connect: t.connectBasic,
+		Logger:  t.log,
 	})
+}
+
+// connectBasic opens a handshake-only session on the radio's port (the
+// slot commands need nothing more, whatever firmware the radio runs).
+func (t *radioTools) connectBasic(ctx context.Context) (firmware.SlotSession, error) {
+	path, err := t.radioPort()
+	if err != nil {
+		return nil, err
+	}
+	if err := uvk5.SafeForDTR(path); err != nil { // opening pulses DTR/RTS
+		return nil, err
+	}
+	rw, err := uvk5.OpenPort(path)
+	if err != nil {
+		return nil, err
+	}
+	return uvk5.ConnectBasic(ctx, rw)
 }

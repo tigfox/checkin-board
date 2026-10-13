@@ -1,8 +1,9 @@
 /* checkin-board: runs before UV Studio's scripts (VENDORED.md).
- * - Flashing tools are removed: the node flashes the radio itself
- *   (Admin → Station → Radio → Firmware), so a dropped Wi-Fi link can't
- *   interrupt a flash. Removed before UV Studio reads its menu, so their
- *   routes don't exist at all.
+ * - Firmware-writing tools are removed: the node writes the radio's
+ *   firmware slots itself (Admin → Station → Radio firmware slots), so a
+ *   dropped Wi-Fi link can't interrupt a write, and the main firmware is
+ *   never written from here. Removed before UV Studio reads its menu, so
+ *   their routes don't exist at all.
  * - A link back to checkin-board. */
 (function () {
   "use strict";

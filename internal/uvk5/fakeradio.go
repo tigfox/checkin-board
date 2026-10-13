@@ -33,6 +33,8 @@ type FakeRadio struct {
 	sink      func(line string) // DirectSession: lines without a port
 	wmu       sync.Mutex
 	ts        uint32
+	mb        *fakeSlots // firmware slots (fakeslots.go)
+	noSlots   bool
 	monitor   bool
 	queue     []fakeQueued
 	acks      []fakeAck
@@ -177,6 +179,8 @@ func (f *FakeRadio) handle(c Frame) ([]byte, bool) {
 	f.commands = append(f.commands, c.ID)
 	tsOK := len(c.Data) >= 4 && f.ts != 0 && le32(c.Data) == f.ts
 	switch c.ID {
+	case cmdSlotInfo, cmdSlotErase, cmdSlotWrite, cmdSlotValidate:
+		return f.handleSlot(c)
 	case cmdHandshake:
 		if len(c.Data) < 4 || le32(c.Data) == 0 {
 			return nil, false

@@ -43,9 +43,10 @@ type Folder struct {
 }
 
 type cachedSum struct {
-	size int64
-	mod  time.Time
-	sum  string
+	size          int64
+	mod           time.Time
+	sum           string
+	name, version string
 }
 
 // NewFolder returns the folder at dir (created on first save).
@@ -57,7 +58,11 @@ type Entry struct {
 	Size     int64     `json:"size"`
 	Modified time.Time `json:"modified"`
 	SHA256   string    `json:"sha256"`
-	Error    string    `json:"error,omitempty"` // why it can't be flashed
+	// Name and Version suggest what to call it in a slot (from the file
+	// name, as UV Studio does).
+	SlotName    string `json:"slot_name,omitempty"`
+	SlotVersion string `json:"slot_version,omitempty"`
+	Error       string `json:"error,omitempty"` // why it can't go in a slot
 }
 
 func invalid(format string, a ...any) error {
@@ -90,13 +95,14 @@ func (fo *Folder) List() ([]Entry, error) {
 			continue
 		}
 		e := Entry{Name: de.Name(), Size: info.Size(), Modified: info.ModTime().UTC()}
-		if sum, ok := fo.cached(e); ok {
-			e.SHA256 = sum
+		if c, ok := fo.cached(e); ok {
+			e.SHA256, e.SlotName, e.SlotVersion = c.sum, c.name, c.version
 		} else if data, err := fo.Read(de.Name()); err != nil {
 			e.Error = err.Error()
 		} else {
 			raw := sha256.Sum256(data)
 			e.SHA256 = hex.EncodeToString(raw[:])
+			e.SlotName, e.SlotVersion = uvk5.SlotMeta(de.Name(), data)
 			fo.remember(e)
 		}
 		out = append(out, e)
@@ -123,11 +129,11 @@ func (fo *Folder) Read(name string) ([]byte, error) {
 		return nil, err
 	}
 	defer fh.Close()
-	data, err := io.ReadAll(io.LimitReader(fh, uvk5.MaxFirmwareSize+1))
+	data, err := io.ReadAll(io.LimitReader(fh, uvk5.MaxSlotImage+1))
 	if err != nil {
 		return nil, err
 	}
-	if err := uvk5.ValidFirmware(data); err != nil {
+	if err := uvk5.ValidSlotImage(data); err != nil {
 		return nil, invalid("%s: %v", name, err)
 	}
 	return data, nil
@@ -140,7 +146,7 @@ func (fo *Folder) Save(name string, data []byte, replace bool) error {
 	if err != nil {
 		return err
 	}
-	if err := uvk5.ValidFirmware(data); err != nil {
+	if err := uvk5.ValidSlotImage(data); err != nil {
 		return invalid("%v", err)
 	}
 	if err := os.MkdirAll(fo.dir, 0o750); err != nil {
@@ -209,19 +215,19 @@ func SafeName(upload string) string {
 	return name + ".bin"
 }
 
-// cached is e's hash if the file hasn't changed since it was taken.
-func (fo *Folder) cached(e Entry) (string, bool) {
+// cached is what was worked out about the file, if it hasn't changed.
+func (fo *Folder) cached(e Entry) (cachedSum, bool) {
 	fo.mu.Lock()
 	defer fo.mu.Unlock()
 	c, ok := fo.sums[e.Name]
 	if !ok || c.size != e.Size || !c.mod.Equal(e.Modified) {
-		return "", false
+		return cachedSum{}, false
 	}
-	return c.sum, true
+	return c, true
 }
 
 func (fo *Folder) remember(e Entry) {
 	fo.mu.Lock()
 	defer fo.mu.Unlock()
-	fo.sums[e.Name] = cachedSum{size: e.Size, mod: e.Modified, sum: e.SHA256}
+	fo.sums[e.Name] = cachedSum{size: e.Size, mod: e.Modified, sum: e.SHA256, name: e.SlotName, version: e.SlotVersion}
 }

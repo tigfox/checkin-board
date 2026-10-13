@@ -255,13 +255,15 @@ test("radioKindConfirm names the radio and the restart", () => {
   assert.match(q, /tap LOG again/);
 });
 
-test("flashJobSummary says what to do at each step", () => {
-  assert.equal(L.flashJobSummary({ state: "idle" }), null);
-  assert.match(L.flashJobSummary({ state: "waiting", file: "fw.bin" }).text, /hold PTT/);
-  const f = L.flashJobSummary({ state: "flashing", file: "fw.bin", page: 3, pages: 200, bootloader: "7.02.02" });
-  assert.equal(f.kind, "warn");
-  assert.match(f.text, /page 3 of 200 \(bootloader 7\.02\.02\)/);
-  assert.equal(L.flashJobSummary({ state: "done", file: "fw.bin" }).kind, "ok");
-  assert.match(L.flashJobSummary({ state: "failed", file: "fw.bin", error: "cancelled" }).text, /failed: cancelled/);
-  assert.match(L.flashConfirm("fw.bin"), /bootloader mode/);
+test("slotJobSummary and slotWriteConfirm", () => {
+  assert.equal(L.slotJobSummary({ state: "idle" }), null);
+  const w = L.slotJobSummary({ state: "writing", step: "writing", file: "fw.bin", slot: 2, name: "Aprs", done: 512, total: 2048 });
+  assert.equal(w.kind, "warn");
+  assert.match(w.text, /slot 2 \(Aprs\): writing 25%/);
+  assert.equal(L.slotJobSummary({ state: "done", file: "fw.bin", slot: 2, name: "Aprs" }).kind, "ok");
+  assert.equal(L.slotJobSummary({ state: "done", slots: [] }), null); // a read
+  assert.match(L.slotJobSummary({ state: "failed", error: "no slots" }).text, /Reading the slots failed/);
+  assert.match(L.slotWriteConfirm("fw.bin", 1, "Aprs", { state: "valid", name: "FM", version: "v1" }), /replaces FM v1/);
+  assert.doesNotMatch(L.slotWriteConfirm("fw.bin", 1, "Aprs", { state: "empty" }), /replaces/);
+  assert.match(L.slotWriteConfirm("fw.bin", 1, "Aprs"), /main firmware isn't touched/);
 });

@@ -347,40 +347,47 @@ Bench race (UV-K5 checkpoint .65 → UV-K5 HQ .183, 20 runners):
 Still to do: the bench race with a **graywolf HQ** (the Pi 3, 10.0.1.88)
 and UV-K5 checkpoints, once 183's hardware is sorted.
 
-## UV Studio and firmware on the node (17h, 2026-10-13)
+## UV Studio and firmware slots on the node (17h, 2026-10-13)
 
 The user asked for a UV Studio page on the Pi (it normally runs as a
-static page in a browser with the radio on that computer), with firmware
-flashed by the Pi from files on the Pi rather than through the browser.
+static page in a browser with the radio on that computer). Firmware is
+written by the Pi, from files on the Pi, into the radio's **firmware
+slots** (external flash), with the radio in normal mode. The main firmware
+(Fusion) is never written. A first version flashed through the bootloader
+(DFU mode, PTT at power-on). It was replaced the same day on the user's
+direction.
 
 - **UV Studio 1.8.0**, vendored in `internal/web/uvstudio/`.
   `VENDORED.md` lists every change: a Web Serial stand-in
   (`cb/serial-bridge.js`), firmware tools removed (`cb/cb.js`), the
   internet flash counter dropped, factory images left out.
 - **Bridge:** `GET /api/admin/uvstudio/ws`.
-  - Who may connect: admin only, same-origin check, one at a time.
-  - The race: during a race it needs `?confirm=1`, which the page asks
-    for.
-  - Traffic: bytes travel as binary frames, control messages as JSON
-    text.
-  - Giving the radio back: after 10 minutes without clicks or keys
-    (reported by the page as "active"), or when the page closes.
-- **Flashing:** `internal/uvk5/flash.go`, the bootloader protocol ported
-  from UV Studio's flash.js. `internal/firmware` holds the folder and the
-  job.
-  - Detecting the radio: wait for 5 announcements at a plausible rate,
-    then check the bootloader is 7.00.07 or later.
-  - Handshake: answer three announcements with the bootloader version.
-  - Writing: 256-byte pages, each acknowledged, with 3 retries.
-  - Finding the radio: the job watches every ttyACM port (except an
-    AIOC) for up to 3 minutes while the operator starts the radio in
-    bootloader mode.
-  - Cancelling: a wait can be cancelled; a write in progress can't.
-- **Shared plumbing:**
-  - `radiobackend.Backend.Lend` closes the session, stops reconnecting
-    and holds reports with "radio in use: …" until given back.
-  - A closing session sends "monitor off" first, so the next program on
-    the port gets no APRS lines.
+  - Who may connect: admin only, same-origin check, one at a time, with
+    the session re-checked every minute.
+  - Limits: a 10 s write deadline and 64 KB messages.
+  - The race: during a race it needs `?confirm=1`.
+  - Giving the radio back: after 10 idle minutes, or when the page
+    closes. UV Studio's auto-reconnect then sees no port until someone
+    presses Connect.
+- **Slots:** `internal/uvk5/slots.go`, ported from UV Studio's Firmware
+  Slots and checked against the firmware's `uart.c` / `mb_flash.h`.
+  - Commands: info `0x0720`, erase `0x0722` (30 s), write `0x0724`,
+    validate `0x0726`.
+  - Authentication: erase and write carry the session's handshake
+    timestamp, which the radio checks.
+  - Chunks: 128 bytes, because the radio's USB receive ring is 256 bytes.
+    A lost reply is retried 5 times, which is safe: rewriting the same
+    bytes changes nothing.
+  - The header goes last and commits the slot: "FMB1", version, flags,
+    size, CRC-32 (zlib), name and version, 16 bytes each.
+  - Slot 0 is the radio's backup of its main firmware. The radio refuses
+    writes to it, and so does the node.
+  - The session is handshake-only (`ConnectBasic`), so slots can be
+    written whatever firmware the radio runs.
+- **Job:** `internal/firmware` holds the folder and the slot job.
+  - Reading the slots borrows the radio for a second or two.
+  - A write borrows it for about a minute, then re-reads the slots.
+  - Cancelling leaves the slot uncommitted, and the radio won't start it.
 - **Next:** "Revive silenced reports". If an expected SENT or DROP line
   doesn't arrive, toggle DTR, because the firmware stops monitor output
   after a timed-out USB write.

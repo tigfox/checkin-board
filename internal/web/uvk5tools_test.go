@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net"
@@ -20,36 +21,51 @@ import (
 	"checkin-board/internal/firmware"
 	"checkin-board/internal/radiobackend"
 	"checkin-board/internal/store"
+	"checkin-board/internal/uvk5"
 )
 
-type fakeFlasher struct {
+type fakeSlots struct {
 	mu      sync.Mutex
-	started []string
+	writes  []string
 	st      firmware.Status
+	readErr error
 }
 
-func (f *fakeFlasher) Start(name string) error {
+func (f *fakeSlots) ReadSlots() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.st.State == firmware.StateWaiting {
-		return firmware.ErrBusy
+	if f.readErr != nil {
+		return f.readErr
 	}
-	f.started = append(f.started, name)
-	f.st = firmware.Status{State: firmware.StateWaiting, File: name}
+	f.st.State, f.st.Slots = firmware.StateDone, []uvk5.SlotInfo{{Slot: 1, State: "valid", Name: "Aprs", Version: "v6.1", Size: 90000}, {Slot: 2, State: "empty"}}
 	return nil
 }
 
-func (f *fakeFlasher) Cancel() error {
+func (f *fakeSlots) Write(file string, slot int, name, version string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.st.State != firmware.StateWaiting {
+	if f.st.State == firmware.StateWriting {
+		return firmware.ErrBusy
+	}
+	if slot < 1 || slot > 4 {
+		return firmware.ErrInvalid
+	}
+	f.writes = append(f.writes, fmt.Sprintf("%s->%d %s %s", file, slot, name, version))
+	f.st = firmware.Status{State: firmware.StateWriting, Step: "writing", File: file, Slot: slot, Name: name, Done: 512, Total: 2048}
+	return nil
+}
+
+func (f *fakeSlots) Cancel() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.st.State != firmware.StateWriting {
 		return errors.New("nothing to cancel")
 	}
 	f.st.State, f.st.Error = firmware.StateFailed, "cancelled"
 	return nil
 }
 
-func (f *fakeFlasher) Status() firmware.Status {
+func (f *fakeSlots) Status() firmware.Status {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.st
@@ -73,32 +89,47 @@ func uploadFirmware(t *testing.T, e *env, name string, data []byte) *http.Respon
 }
 
 func TestFirmwareEndpoints(t *testing.T) {
-	fl := &fakeFlasher{st: firmware.Status{State: firmware.StateIdle}}
+	sl := &fakeSlots{st: firmware.Status{State: firmware.StateIdle}}
 	e := newEnvWith(t, checkpointSettings(store.RaceActive), func(d *Deps) {
-		d.Radio, d.RadioKind, d.Flasher, d.FirmwareDir = connectedRadio(), "uvk5", fl, t.TempDir()
+		d.Radio, d.RadioKind, d.Slots, d.FirmwareDir = connectedRadio(), "uvk5", sl, t.TempDir()
 	})
-	resp := uploadFirmware(t, e, "F4HWN v6.1.bin", []byte("image"))
-	if out := decode[map[string]any](t, resp); out["name"] != "F4HWN-v6.1.bin" {
+	resp := uploadFirmware(t, e, "f4hwn.aprs.v6.1.bin", []byte("image"))
+	if out := decode[map[string]any](t, resp); out["name"] != "f4hwn.aprs.v6.1.bin" {
 		t.Fatalf("upload = %v", out)
 	}
-	expect(t, uploadFirmware(t, e, "F4HWN v6.1.bin", []byte("image")), http.StatusConflict)
+	expect(t, uploadFirmware(t, e, "f4hwn.aprs.v6.1.bin", []byte("image")), http.StatusConflict)
 	expect(t, uploadFirmware(t, e, "empty.bin", nil), http.StatusBadRequest)
 	v := decode[firmwareView](t, e.do("GET", "/api/admin/firmware", e.admin, nil))
-	if len(v.Files) != 1 || v.Job.State != "idle" {
+	if len(v.Files) != 1 || v.Files[0].SlotName != "Aprs" || v.Files[0].SlotVersion != "v6.1" || v.Job.State != "idle" {
 		t.Fatalf("view = %+v", v)
 	}
-	// During a race, flashing needs confirming.
-	expect(t, e.do("POST", "/api/admin/firmware/F4HWN-v6.1.bin/flash", e.admin, flashBody{}), http.StatusConflict)
-	if st := decode[firmware.Status](t, e.do("POST", "/api/admin/firmware/F4HWN-v6.1.bin/flash", e.admin, flashBody{Confirm: true})); st.State != "waiting" {
-		t.Fatalf("flash = %+v", st)
+	// During a race, the radio is only taken when confirmed.
+	expect(t, e.do("POST", "/api/admin/firmware-slots/read", e.admin, slotReadBody{}), http.StatusConflict)
+	if st := decode[firmware.Status](t, e.do("POST", "/api/admin/firmware-slots/read", e.admin, slotReadBody{Confirm: true})); len(st.Slots) != 2 || st.Slots[0].Name != "Aprs" {
+		t.Fatalf("read = %+v", st)
 	}
-	expect(t, e.do("POST", "/api/admin/firmware/F4HWN-v6.1.bin/flash", e.admin, flashBody{Confirm: true}), http.StatusConflict)
-	if st := decode[firmware.Status](t, e.do("POST", "/api/admin/firmware-flash/cancel", e.admin, nil)); st.Error != "cancelled" {
+	write := slotWriteBody{Slot: 2, Name: "Aprs", Version: "v6.1"}
+	expect(t, e.do("POST", "/api/admin/firmware/f4hwn.aprs.v6.1.bin/write", e.admin, write), http.StatusConflict)
+	write.Confirm = true
+	if st := decode[firmware.Status](t, e.do("POST", "/api/admin/firmware/f4hwn.aprs.v6.1.bin/write", e.admin, write)); st.State != "writing" || st.Slot != 2 {
+		t.Fatalf("write = %+v", st)
+	}
+	if len(sl.writes) != 1 || sl.writes[0] != "f4hwn.aprs.v6.1.bin->2 Aprs v6.1" {
+		t.Fatalf("writes = %v", sl.writes)
+	}
+	expect(t, e.do("POST", "/api/admin/firmware/f4hwn.aprs.v6.1.bin/write", e.admin, write), http.StatusConflict)
+	if st := decode[firmware.Status](t, e.do("POST", "/api/admin/firmware-slots/cancel", e.admin, nil)); st.Error != "cancelled" {
 		t.Fatalf("cancel = %+v", st)
 	}
-	expect(t, e.do("POST", "/api/admin/firmware-flash/cancel", e.admin, nil), http.StatusConflict)
-	expect(t, e.do("DELETE", "/api/admin/firmware/F4HWN-v6.1.bin", e.admin, nil), http.StatusOK)
-	expect(t, e.do("DELETE", "/api/admin/firmware/F4HWN-v6.1.bin", e.admin, nil), http.StatusNotFound)
+	write.Slot = 0
+	expect(t, e.do("POST", "/api/admin/firmware/f4hwn.aprs.v6.1.bin/write", e.admin, write), http.StatusBadRequest)
+	// A radio without slots is said plainly.
+	sl.readErr = uvk5.ErrNoSlots
+	if r := e.do("POST", "/api/admin/firmware-slots/read", e.admin, slotReadBody{Confirm: true}); r.StatusCode != http.StatusConflict {
+		t.Fatalf("no slots: %d", r.StatusCode)
+	}
+	expect(t, e.do("DELETE", "/api/admin/firmware/f4hwn.aprs.v6.1.bin", e.admin, nil), http.StatusOK)
+	expect(t, e.do("DELETE", "/api/admin/firmware/f4hwn.aprs.v6.1.bin", e.admin, nil), http.StatusNotFound)
 	expect(t, e.do("GET", "/api/admin/firmware", e.volunt, nil), http.StatusForbidden)
 }
 

@@ -158,13 +158,13 @@ func radioHold(state func() radiobackend.State) func() string {
 	}
 }
 
-// flasher, firmwareDir and bridge are the UV-K5 extras for the web
+// slots, firmwareDir and bridge are the UV-K5 extras for the web
 // pages (nil on a graywolf node: the pages say they're UV-K5 only).
-func (m messaging) flasher(dir string) web.Flasher {
+func (m messaging) slots(dir string) web.SlotWriter {
 	if m.tools == nil {
 		return nil
 	}
-	return m.tools.newFlasher(dir)
+	return m.tools.newSlots(dir)
 }
 
 func (m messaging) firmwareDir(dir string) string {

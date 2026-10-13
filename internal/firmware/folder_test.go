@@ -30,7 +30,7 @@ func TestFolder(t *testing.T) {
 	if err := fo.Save("empty.bin", nil, false); !errors.Is(err, ErrInvalid) {
 		t.Errorf("empty image: %v", err)
 	}
-	if err := fo.Save("big.bin", make([]byte, uvk5.MaxFirmwareSize+1), false); !errors.Is(err, ErrInvalid) {
+	if err := fo.Save("big.bin", make([]byte, uvk5.MaxSlotImage+1), false); !errors.Is(err, ErrInvalid) {
 		t.Errorf("big image: %v", err)
 	}
 	// A symlink planted in the folder is never read.

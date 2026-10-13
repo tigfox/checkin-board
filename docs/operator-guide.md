@@ -100,13 +100,15 @@ about 34 characters, so a UV-K5 HQ never confirms a checkpoint's reports.
   calibration and boot-logo backup, through the node. Race reports wait
   while it's open, and it gives the radio back when closed or after 10
   idle minutes.
-- **Radio firmware**: `.bin` files kept on the node (upload there, copy
-  into `/var/lib/checkin-board/firmware/`, or `install.sh --firmware
-  FILE.bin`). **Flash** makes the node take the radio. Then switch the
-  radio off, hold PTT and switch it on. The node writes the image itself,
-  shows progress, and gives the radio back. A flash can be cancelled
-  while it waits for the bootloader, not once pages are going in. Keep the
-  radio and the Pi powered until it says done.
+- **Radio firmware slots**: `.bin` files kept on the node (upload there,
+  copy into `/var/lib/checkin-board/firmware/`, or `install.sh --firmware
+  FILE.bin`), written into the radio's firmware slots 1-4 (the APRS and
+  FM/voice firmware) with the radio switched on as usual. The radio's
+  main firmware is never written. **Read slots** shows what each holds.
+  **Write** takes the radio for about a minute (race reports wait), erases
+  the slot, writes and verifies it. Choose the slot from the radio's menu
+  afterwards. Cancelling leaves the slot incomplete, and the radio won't
+  start it.
 
 **Swapping a radio mid-race:** connect the new radio (callsign, APRS,
 frequency set), choose its type on the Station page and press **Change

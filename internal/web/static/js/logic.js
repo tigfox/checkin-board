@@ -322,25 +322,32 @@ export function radioKindConfirm(label) {
     "Then run Check radio.";
 }
 
-// flashConfirm is the question before flashing the radio.
-export function flashConfirm(name) {
-  return `Flash ${name} into this node's radio?\n\n` +
-    "The node takes the radio (race reports wait) and asks you to put it in bootloader mode: " +
-    "switch the radio off, hold PTT, and switch it on. Keep the radio and the Pi powered until it says done.";
+// slotWriteConfirm is the question before writing a firmware slot;
+// current is the slot as last read (if it was).
+export function slotWriteConfirm(file, slot, name, current) {
+  const replacing = current && current.state !== "empty"
+    ? ` It replaces ${current.name || "what's there"}${current.version ? ` ${current.version}` : ""}.`
+    : "";
+  return `Write ${file} into slot ${slot} as "${name}"?${replacing}\n\n` +
+    "The node takes the radio for about a minute (race reports wait), with the radio switched on as usual. " +
+    "The radio's main firmware isn't touched. Keep the radio and the Pi powered until it says done.";
 }
 
-// flashJobSummary is the firmware flash job in one line (null: nothing
-// to show).
-export function flashJobSummary(job) {
+// slotJobSummary is the firmware slot job in one line (null: nothing to
+// show).
+export function slotJobSummary(job) {
   switch (job && job.state) {
-    case "waiting":
-      return { kind: "warn", text: `Ready to flash ${job.file}: switch the radio off, hold PTT, and switch it on (bootloader mode). Race reports wait meanwhile.` };
-    case "flashing":
-      return { kind: "warn", text: `Flashing ${job.file}: page ${job.page} of ${job.pages}${job.bootloader ? ` (bootloader ${job.bootloader})` : ""}. Don't unplug or switch off the radio.` };
+    case "writing": {
+      const pct = job.total ? Math.floor((100 * job.done) / job.total) : 0;
+      const step = { erasing: "erasing", writing: `writing ${pct}%`, verifying: "verifying" }[job.step] || "starting";
+      return { kind: "warn", text: `Writing ${job.file} into slot ${job.slot} (${job.name}): ${step}. Race reports wait meanwhile.` };
+    }
     case "done":
-      return { kind: "ok", text: `Flashed ${job.file}. The radio restarts with it and reconnects; then run Check radio.` };
+      return job.file
+        ? { kind: "ok", text: `Wrote ${job.file} into slot ${job.slot} (${job.name}); the radio checked it. Choose it from the radio's menu to use it.` }
+        : null;
     case "failed":
-      return { kind: "bad", text: `Flashing ${job.file} failed: ${job.error}` };
+      return { kind: "bad", text: job.file ? `Writing ${job.file} into slot ${job.slot} failed: ${job.error}` : `Reading the slots failed: ${job.error}` };
     default:
       return null;
   }

@@ -31,7 +31,7 @@ internal/linkcheck/    deployment link check: RC1 P probes, RC1 Q replies, verdi
 internal/uvk5/         UV-K5/UV-K1 radio link: serial protocol codec, AX.25, monitor lines, session, fake radio
 internal/radiobackend/ a UV-K5 radio as graywolf's message API: message rows, paced sender, ack matching, lending the port
 internal/radiokind/    the radio types a node can use (Station page, Radio type)
-internal/firmware/     UV-K5 firmware files on the node, and the flash job (the node flashes the radio itself)
+internal/firmware/     UV-K5 firmware files on the node, and the slot job (the node writes the radio's firmware slots)
 internal/web/uvstudio/ UV Studio (Apache-2.0, vendored, see VENDORED.md) with a Web Serial bridge to the node's radio
 cmd/uvk5probe/         bench tool: talk to a UV-K5 directly, print its events
 internal/provision/    stationsetup: stations CSV -> race config, pushed to and applied on every node
@@ -170,17 +170,25 @@ click or key, gives the radio back. During a race it asks first. Its
 firmware tools are left out, and nothing reaches the internet
 (`internal/web/uvstudio/VENDORED.md` lists every change).
 
-**Firmware** is flashed by the node itself, from files kept on it, so the
-browser's connection doesn't matter once a flash starts. To flash:
+**Firmware slots.** An F4HWN radio keeps other firmware (the APRS one, an
+FM/voice one) in **slots 1-4** of its external flash and switches to one
+from its menu. Slot 0 is the radio's own backup of its main firmware, and
+the radio refuses writes to it. The node writes firmware files kept on it
+into those slots itself, with the radio switched on as usual, so the
+browser's connection doesn't matter once a write starts. The radio's main
+firmware (Fusion) is never written. To write a slot:
 
-1. Upload a `.bin` on Station → **Radio firmware**. You can also copy it
-   into `/var/lib/checkin-board/firmware/`, or use
+1. Upload a `.bin` on Station → **Radio firmware slots**. You can also
+   copy it into `/var/lib/checkin-board/firmware/`, or use
    `sudo ./install.sh --firmware FILE.bin`.
-2. Press **Flash**. The node takes the radio.
-3. Switch the radio off, hold PTT, and switch it on (bootloader mode). The
-   node finds it, checks the bootloader (7.00.07 or later) and writes the
-   image page by page.
-4. The radio restarts and reconnects. Run **Check radio**.
+2. Press **Read slots** to see what each slot holds.
+3. Pick a slot, check the name and version (suggested from F4HWN file
+   names such as `f4hwn.aprs.v6.1.bin`), and press **Write**. The node
+   takes the radio for about a minute. It erases the slot, writes the image
+   and the header, and has the radio check the CRC, as UV Studio's Firmware
+   Slots does (ported from it). A cancelled or failed write leaves the slot
+   incomplete, and the radio won't start it.
+4. Choose the slot from the radio's menu to use it.
 
 The node never raises DTR on an AIOC cable (it keys PTT from DTR).
 

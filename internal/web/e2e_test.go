@@ -452,7 +452,7 @@ func TestE2ERaceConfig(t *testing.T) {
 func TestE2ERadioNodeStation(t *testing.T) {
 	e := newEnvWith(t, checkpointSettings(store.RaceSetup), func(d *Deps) {
 		d.Radio, d.RadioBridge = connectedRadio(), &fakeBridge{}
-		d.Flasher, d.FirmwareDir = &fakeFlasher{st: firmware.Status{State: firmware.StateIdle}}, t.TempDir()
+		d.Slots, d.FirmwareDir = &fakeSlots{st: firmware.Status{State: firmware.StateIdle}}, t.TempDir()
 	})
 	b := newBrowser(t, e.srv.URL)
 	b.login(e.admin)
@@ -528,7 +528,7 @@ func TestE2EUVStudio(t *testing.T) {
 	var keepalives atomic.Int32
 	e := newEnvWith(t, checkpointSettings(store.RaceActive), func(d *Deps) {
 		d.Radio, d.RadioKind, d.RadioBridge = connectedRadio(), "uvk5", br
-		d.Flasher, d.FirmwareDir = &fakeFlasher{st: firmware.Status{State: firmware.StateIdle}}, t.TempDir()
+		d.Slots, d.FirmwareDir = &fakeSlots{st: firmware.Status{State: firmware.StateIdle}}, t.TempDir()
 	})
 	b := newBrowser(t, e.srv.URL)
 	b.login(e.admin)
@@ -577,6 +577,37 @@ func TestE2EUVStudio(t *testing.T) {
 	br.mu.Unlock()
 	if opens != 2 {
 		t.Fatalf("%d opens: UV Studio took the radio back by itself", opens)
+	}
+	b.noErrors()
+}
+
+// The Station page's firmware slots card: read the slots, write a file
+// on the node into slot 2 under its suggested name.
+func TestE2EFirmwareSlots(t *testing.T) {
+	sl := &fakeSlots{st: firmware.Status{State: firmware.StateIdle}}
+	dir := t.TempDir()
+	if err := firmware.NewFolder(dir).Save("f4hwn.aprs.v6.1.bin", []byte("an image"), false); err != nil {
+		t.Fatal(err)
+	}
+	e := newEnvWith(t, checkpointSettings(store.RaceActive), func(d *Deps) {
+		d.Radio, d.RadioKind, d.RadioBridge = connectedRadio(), "uvk5", &fakeBridge{}
+		d.Slots, d.FirmwareDir = sl, dir
+	})
+	b := newBrowser(t, e.srv.URL)
+	b.login(e.admin)
+	b.run(chromedp.Navigate(e.srv.URL+"/admin.html"),
+		chromedp.Click(`//nav[@id="tabs"]/button[text()="Station"]`, chromedp.BySearch))
+	b.waitText("#firmware-card", "f4hwn.aprs.v6.1.bin")
+	b.run(chromedp.Click("#slots-read", chromedp.ByQuery)) // the race is on: the confirm is accepted
+	b.waitText("#firmware-slots", "Aprs")
+	b.run(chromedp.SetValue(`#firmware-files select`, "2", chromedp.ByQuery),
+		chromedp.Click(`button[data-write="f4hwn.aprs.v6.1.bin"]`, chromedp.ByQuery))
+	b.waitText("#slot-job", "writing 25%")
+	sl.mu.Lock()
+	writes := append([]string(nil), sl.writes...)
+	sl.mu.Unlock()
+	if len(writes) != 1 || writes[0] != "f4hwn.aprs.v6.1.bin->2 Aprs v6.1" {
+		t.Fatalf("writes = %v", writes)
 	}
 	b.noErrors()
 }

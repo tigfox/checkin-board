@@ -201,7 +201,7 @@ func run(logger *slog.Logger) error {
 		Clock: a.Clock, Graywolf: msg.gw, Logger: logger, HookToken: cfg.HookToken, WebPort: listenPort(cfg.Listen),
 		Host: host, Cable: msg.cable, Radio: msg.radio, GraywolfRemote: !msg.local,
 		RadioKind: kind.ID, GraywolfReady: cfg.GraywolfReady(),
-		Flasher: msg.flasher(fwDir), FirmwareDir: msg.firmwareDir(fwDir),
+		Slots: msg.slots(fwDir), FirmwareDir: msg.firmwareDir(fwDir),
 		RadioBridge: msg.bridge(),
 		Restart: func() {
 			logger.Warn("restarting with the newly chosen radio kind")

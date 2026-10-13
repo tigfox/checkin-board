@@ -1,23 +1,27 @@
 package web
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"os"
 
 	"checkin-board/internal/firmware"
+	"checkin-board/internal/radiobackend"
 	"checkin-board/internal/store"
 	"checkin-board/internal/uvk5"
 )
 
-// Firmware for the UV-K5/UV-K1 plugged into this node (Station page,
-// Radio card): files kept on the node, flashed by the node itself
-// through the radio's bootloader, so the browser's connection doesn't
-// matter once a flash has started.
+// Firmware slots of the UV-K5/UV-K1 plugged into this node (Station
+// page): firmware files kept on the node, written by the node itself into
+// the radio's slots 1-4 (external flash; the APRS and FM/voice firmware),
+// with the radio in normal mode. The radio's main firmware is never
+// written. The browser's connection doesn't matter once a write starts.
 
-// Flasher is the node's flash job (firmware.Flasher).
-type Flasher interface {
-	Start(name string) error
+// SlotWriter is the node's slot job (firmware.Slots).
+type SlotWriter interface {
+	ReadSlots() error
+	Write(file string, slot int, name, version string) error
 	Cancel() error
 	Status() firmware.Status
 }
@@ -27,16 +31,23 @@ type firmwareView struct {
 	Job   firmware.Status  `json:"job"`
 }
 
-type flashBody struct {
+type slotReadBody struct {
 	// Confirm acknowledges that race reports wait while the radio is
-	// being flashed (needed during a race).
+	// busy (needed during a race).
 	Confirm bool `json:"confirm"`
+}
+
+type slotWriteBody struct {
+	Slot    int    `json:"slot"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Confirm bool   `json:"confirm"`
 }
 
 // firmwareReady answers 501 on a node without a UV-K5.
 func (s *server) firmwareReady(w http.ResponseWriter, r *http.Request) bool {
-	if s.Flasher == nil || s.firmware == nil {
-		writeError(w, r, s.log, &httpError{http.StatusNotImplemented, "not_uvk5", "firmware flashing is for the UV-K5/UV-K1 radio type: choose it under Radio type first"})
+	if s.Slots == nil || s.firmware == nil {
+		writeError(w, r, s.log, &httpError{http.StatusNotImplemented, "not_uvk5", "firmware slots are for the UV-K5/UV-K1 radio type: choose it under Radio type first"})
 		return false
 	}
 	return true
@@ -54,7 +65,7 @@ func (s *server) getFirmware(w http.ResponseWriter, r *http.Request) {
 	if files == nil {
 		files = []firmware.Entry{}
 	}
-	writeJSON(w, http.StatusOK, firmwareView{Files: files, Job: s.Flasher.Status()})
+	writeJSON(w, http.StatusOK, firmwareView{Files: files, Job: s.Slots.Status()})
 }
 
 func (s *server) postFirmware(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +82,7 @@ func (s *server) postFirmware(w http.ResponseWriter, r *http.Request) {
 	if fh := r.MultipartForm.File["file"]; len(fh) > 0 {
 		upload = fh[0].Filename
 	}
-	data, err := io.ReadAll(io.LimitReader(f, uvk5.MaxFirmwareSize+1))
+	data, err := io.ReadAll(io.LimitReader(f, uvk5.MaxSlotImage+1))
 	if err != nil {
 		writeError(w, r, s.log, err)
 		return
@@ -102,41 +113,73 @@ func (s *server) deleteFirmware(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"deleted": r.PathValue("name")})
 }
 
-// postFlash starts flashing: the node takes the radio, waits for it in
-// bootloader mode, and writes the file.
-func (s *server) postFlash(w http.ResponseWriter, r *http.Request) {
+// postSlotsRead reads what the radio's slots hold.
+func (s *server) postSlotsRead(w http.ResponseWriter, r *http.Request) {
 	if !s.firmwareReady(w, r) {
 		return
 	}
-	var b flashBody
+	var b slotReadBody
 	if err := decodeJSON(r, &b); err != nil {
 		writeError(w, r, s.log, err)
 		return
 	}
-	if err := s.confirmDuringRace(r, b.Confirm, "flashing"); err != nil {
+	if err := s.confirmDuringRace(r, b.Confirm, "reading the firmware slots"); err != nil {
 		writeError(w, r, s.log, err)
 		return
 	}
-	if err := s.Flasher.Start(r.PathValue("name")); err != nil {
+	if err := s.Slots.ReadSlots(); err != nil {
+		writeError(w, r, s.log, slotErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Slots.Status())
+}
+
+// postSlotWrite starts writing a firmware file into a slot.
+func (s *server) postSlotWrite(w http.ResponseWriter, r *http.Request) {
+	if !s.firmwareReady(w, r) {
+		return
+	}
+	var b slotWriteBody
+	if err := decodeJSON(r, &b); err != nil {
+		writeError(w, r, s.log, err)
+		return
+	}
+	if err := s.confirmDuringRace(r, b.Confirm, "writing a firmware slot"); err != nil {
+		writeError(w, r, s.log, err)
+		return
+	}
+	if err := s.Slots.Write(r.PathValue("name"), b.Slot, b.Name, b.Version); err != nil {
 		if os.IsNotExist(err) {
 			err = &httpError{http.StatusNotFound, "not_found", "no such firmware file on this node"}
 		}
 		writeError(w, r, s.log, err)
 		return
 	}
-	s.log.Warn("web: firmware flash started", "file", r.PathValue("name"))
-	writeJSON(w, http.StatusAccepted, s.Flasher.Status())
+	s.log.Warn("web: firmware slot write started", "file", r.PathValue("name"), "slot", b.Slot, "name", b.Name)
+	writeJSON(w, http.StatusAccepted, s.Slots.Status())
 }
 
-func (s *server) postFlashCancel(w http.ResponseWriter, r *http.Request) {
+func (s *server) postSlotCancel(w http.ResponseWriter, r *http.Request) {
 	if !s.firmwareReady(w, r) {
 		return
 	}
-	if err := s.Flasher.Cancel(); err != nil {
+	if err := s.Slots.Cancel(); err != nil {
 		writeError(w, r, s.log, &httpError{http.StatusConflict, "not_cancellable", err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.Flasher.Status())
+	writeJSON(w, http.StatusOK, s.Slots.Status())
+}
+
+// slotErr says plainly that the radio can't do slots, or isn't there.
+func slotErr(err error) error {
+	if errors.Is(err, uvk5.ErrNoSlots) {
+		return &httpError{http.StatusConflict, "no_slots", "the radio's firmware has no firmware slots (it needs an F4HWN firmware with multiboot)"}
+	}
+	var he *httpError
+	if errors.As(err, &he) || errors.Is(err, firmware.ErrBusy) || errors.Is(err, radiobackend.ErrLent) {
+		return err
+	}
+	return &httpError{http.StatusBadGateway, "radio_error", err.Error()}
 }
 
 // confirmDuringRace refuses to take the radio away during a race unless

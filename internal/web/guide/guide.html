@@ -125,10 +125,12 @@
         export, and calibration and boot-logo backup, from this browser. While it's open the radio is UV Studio's:
         race reports wait (keypad and panel: "Radio in use: UV Studio") and go out when you close it, or after 10
         minutes without a click. During a race it asks first.</li>
-      <li><strong>Radio firmware</strong> (Station): firmware files kept on this node. <strong>Flash</strong> makes
-        the node take the radio; then switch the radio <strong>off, hold PTT, and switch it on</strong> (bootloader
-        mode). The node writes the firmware itself, so this browser can be closed. Keep the radio and the Pi
-        powered until it says done, then run Check radio.</li>
+      <li><strong>Radio firmware slots</strong> (Station): the radio keeps other firmware (the APRS one, an FM/voice
+        one) in slots 1-4 of its external memory and switches to one from its menu. This node writes firmware files
+        kept on it into those slots, with the radio switched on as usual; the radio's main firmware is never written.
+        <strong>Read slots</strong> shows what each holds; <strong>Write</strong> puts a file in a slot (about a
+        minute, race reports wait). This browser can be closed once it starts; keep the radio and the Pi powered
+        until it says done.</li>
     </ul>
     <h3>What to expect with a UV-K5</h3>
     <ul>

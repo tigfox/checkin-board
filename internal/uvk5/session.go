@@ -60,11 +60,26 @@ type Session struct {
 	done    chan struct{}
 	errOnce sync.Once
 	err     error
+	// monitoring: Connect turned monitor lines on (Close turns them off).
+	monitoring bool
 }
 
 // DTRSetter is a port whose DTR line can be set (a real serial port).
 type DTRSetter interface {
 	SetDTR(on bool) error
+}
+
+// ConnectBasic only handshakes on rw: enough for the firmware-slot
+// commands, whatever firmware the radio runs (an FM or voice firmware
+// without APRS messaging too). It takes rw over: Close closes it.
+func ConnectBasic(ctx context.Context, rw io.ReadWriteCloser) (*Session, error) {
+	s := &Session{rw: rw, replies: make(chan Frame, 8), events: make(chan any, eventBuffer), done: make(chan struct{})}
+	go s.read()
+	if err := s.handshake(ctx); err != nil {
+		s.Close()
+		return nil, err
+	}
+	return s, nil
 }
 
 // Connect handshakes on rw, checks the firmware has what checkin-board
@@ -80,7 +95,9 @@ func Connect(ctx context.Context, rw io.ReadWriteCloser) (*Session, error) {
 	return s, nil
 }
 
-func (s *Session) setup(ctx context.Context) error {
+// handshake starts a session: the radio keeps its timestamp, which slot
+// writes must carry.
+func (s *Session) handshake(ctx context.Context) error {
 	s.ts = randomTS()
 	data := make([]byte, 4)
 	put32(data, s.ts)
@@ -91,7 +108,14 @@ func (s *Session) setup(ctx context.Context) error {
 	if len(f.Data) >= 16 {
 		s.Version = cString(f.Data[:16])
 	}
-	f, err = s.command(ctx, cmdCapabilities, nil)
+	return nil
+}
+
+func (s *Session) setup(ctx context.Context) error {
+	if err := s.handshake(ctx); err != nil {
+		return err
+	}
+	f, err := s.command(ctx, cmdCapabilities, nil)
 	if errors.Is(err, ErrNoReply) {
 		return fmt.Errorf("%w (firmware %q has no capability command)", ErrFirmware, s.Version)
 	}
@@ -125,6 +149,7 @@ func (s *Session) setup(ctx context.Context) error {
 	if len(f.Data) < 1 || f.Data[0] != 1 {
 		return &RefusedError{Cmd: "monitor on"}
 	}
+	s.monitoring = true
 	return nil
 }
 
@@ -202,7 +227,7 @@ const closeQuiet = 500 * time.Millisecond
 // UV Studio, doesn't get APRS lines in its stream), ends the session and
 // closes the port.
 func (s *Session) Close() error {
-	if s.Err() == nil {
+	if s.monitoring && s.Err() == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), closeQuiet)
 		_, _ = s.command(ctx, cmdMonitor, []byte{0})
 		cancel()
@@ -213,6 +238,12 @@ func (s *Session) Close() error {
 
 // command sends a command and waits for its reply (id + 1).
 func (s *Session) command(ctx context.Context, id uint16, data []byte) (Frame, error) {
+	return s.commandWait(ctx, id, data, replyTimeout)
+}
+
+// commandWait is command with its own reply timeout (a slot erase takes
+// seconds).
+func (s *Session) commandWait(ctx context.Context, id uint16, data []byte, wait time.Duration) (Frame, error) {
 	s.cmdMu.Lock()
 	defer s.cmdMu.Unlock()
 	for len(s.replies) > 0 { // stale replies from timed-out commands
@@ -225,7 +256,7 @@ func (s *Session) command(ctx context.Context, id uint16, data []byte) (Frame, e
 		s.fail(err)
 		return Frame{}, err
 	}
-	timer := time.NewTimer(replyTimeout)
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {
 		select {

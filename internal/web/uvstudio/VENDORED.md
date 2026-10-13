@@ -17,10 +17,12 @@ the node's network.
     flash to a counter on the internet. That file isn't included.
 - `cb/serial-bridge.js` (new) stands in for Web Serial. It offers one port,
   this node's radio, whose bytes travel over a WebSocket to the node.
-- `cb/cb.js` (new) removes the tools that write firmware: Flash Firmware,
-  Firmware Slots, Apps, External Flash and Factory Reset. The node flashes
-  the radio itself instead (Admin → Station → Radio → Firmware), so a
-  dropped Wi-Fi link can't interrupt a flash. It also adds a link back.
+- `cb/cb.js` (new) removes the tools that write firmware: Flash Firmware
+  (main firmware, DFU mode), Firmware Slots, Apps, External Flash and
+  Factory Reset. The node writes the firmware slots itself instead (Admin →
+  Station → Radio firmware slots, ported from Firmware Slots), so a dropped
+  Wi-Fi link can't interrupt a write. The main firmware isn't written from
+  the node at all. It also adds a link back.
 - `cb/cb.css` (new) styles those additions and hides the flash counter.
 - Not included: `assets/factory/` (factory-reset images, including
   Quansheng's stock firmware), `tests/`, and the GitHub Pages extras.

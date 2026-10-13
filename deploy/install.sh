@@ -10,7 +10,7 @@
 #                                                   # (e.g. the Pi Zero build; replaces one)
 #   sudo ./install.sh --race-config FILE.json       # add a race config file to the node
 #   sudo ./install.sh --firmware FILE.bin           # add a UV-K5/UV-K1 firmware file to the node
-#                                                   # (flash it on Admin → Station → Radio firmware)
+#                                                   # (write it into a slot: Admin → Station)
 #   sudo ./install.sh --uvk5-port /dev/ttyACM0      # pin the UV-K5/UV-K1's serial port
 #                                                   # (normally it's found by itself)
 #
@@ -181,8 +181,8 @@ if [ -n "$FIRMWARE" ]; then
 		exit 2
 	fi
 	fw_size=$(wc -c <"$FIRMWARE")
-	if [ "$fw_size" -eq 0 ] || [ "$fw_size" -gt 524288 ]; then
-		printf 'install: --firmware %s: %s bytes; a firmware image is 1 to 524288 bytes\n' "$FIRMWARE" "$fw_size" >&2
+	if [ "$fw_size" -eq 0 ] || [ "$fw_size" -gt 120832 ]; then
+		printf 'install: --firmware %s: %s bytes; a firmware slot holds 1 to 120832 bytes\n' "$FIRMWARE" "$fw_size" >&2
 		exit 2
 	fi
 fi
@@ -638,7 +638,7 @@ if [ -n "$FIRMWARE" ]; then
 	fw_name=$(basename "$FIRMWARE")
 	if run_as "$USER_NAME" sh -c 'umask 027 && mkdir -p "$1" && cat > "$1/.$2.tmp" && mv -f "$1/.$2.tmp" "$1/$2"' \
 		_ "$STATE/firmware" "$fw_name" <"$FIRMWARE"; then
-		say "Firmware $fw_name added: flash it on Admin → Station → Radio firmware (UV-K5 radio type)."
+		say "Firmware $fw_name added: write it into a radio firmware slot on Admin → Station (UV-K5 radio type)."
 	else
 		say "Firmware $fw_name couldn't be added; upload it on Admin → Station instead."
 	fi
