@@ -57,7 +57,7 @@ type panelSettingsView struct {
 
 func toPanelSettingsView(p store.PanelSettings) panelSettingsView {
 	return panelSettingsView{Enabled: p.Enabled, Controller: p.Controller, RefreshMin: p.RefreshMin, Rotation: p.Rotation,
-		LastFullAt: p.LastFullAt, Controllers: epd.Controllers(), MinRefresh: store.PanelMinRefreshMin, MaxRefresh: store.PanelMaxRefreshMin}
+		LastFullAt: p.LastFullAt, Controllers: append(epd.Controllers(), epd.PaPiRusSizes()...), MinRefresh: store.PanelMinRefreshMin, MaxRefresh: store.PanelMaxRefreshMin}
 }
 
 func (s *server) getPanel(w http.ResponseWriter, r *http.Request) {
@@ -276,6 +276,8 @@ func (s *server) panelView(r *http.Request) (panel.View, error) {
 				hq.Closed++
 			}
 			hq.Gaps += len(h.Missing)
+			hq.Checkpoints = append(hq.Checkpoints, panel.CP{Code: h.CPCode, Name: h.Name, LastHeard: h.LastHeardAt,
+				Closed: h.ClosedAt != nil, Gaps: len(h.Missing), Unlisted: !h.Defined})
 		}
 		st.HQ = hq
 		cps, err := s.Store.ListCheckpoints(ctx)

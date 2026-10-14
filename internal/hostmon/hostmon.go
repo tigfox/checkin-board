@@ -60,6 +60,10 @@ type Snapshot struct {
 	// when the list can't be read.
 	SoundCards      []SoundCard `json:"sound_cards,omitempty"`
 	SoundCardsKnown bool        `json:"sound_cards_known,omitempty"`
+	// Uptime is how long the node has run (0: unknown).
+	Uptime time.Duration `json:"uptime_ns,omitempty"`
+	// CPUTempC is the SoC temperature (nil: unknown).
+	CPUTempC *float64 `json:"cpu_temp_c,omitempty"`
 }
 
 // SoundCard is one ALSA card: its index and its id (the name ALSA
@@ -71,7 +75,8 @@ type SoundCard struct {
 
 // Monitor keeps a short history of samples. Safe for concurrent use.
 type Monitor struct {
-	proc string
+	proc    string
+	thermal string // the SoC's sysfs thermal zone
 
 	mu       sync.Mutex
 	cpu      []cpuSample
@@ -80,6 +85,8 @@ type Monitor struct {
 	machine  string
 	cards    []SoundCard
 	cardsOK  bool
+	uptime   time.Duration
+	temp     *float64
 }
 
 type cpuSample struct {
@@ -93,8 +100,11 @@ type countSample struct {
 }
 
 // New returns a monitor reading the proc filesystem at root ("/proc" on
-// a node).
-func New(root string) *Monitor { return &Monitor{proc: root} }
+// a node); the SoC temperature comes from the sysfs thermal zone next to
+// it ("/sys" for "/proc").
+func New(root string) *Monitor {
+	return &Monitor{proc: root, thermal: filepath.Join(filepath.Dir(root), "sys", "class", "thermal", "thermal_zone0", "temp")}
+}
 
 // SampleEvery is how often Run samples.
 const SampleEvery = 10 * time.Second
@@ -120,10 +130,11 @@ func (m *Monitor) Sample(now time.Time) {
 	pid, waits, modemOK := m.readModem()
 	machine := m.readMachine()
 	cards, cardsOK := m.readSoundCards()
+	uptime, temp := m.readUptime(), m.readTemp()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.machine = machine
+	m.machine, m.uptime, m.temp = machine, uptime, temp
 	m.cards, m.cardsOK = cards, cardsOK
 	if cpuOK {
 		m.cpu = append(trimBefore(m.cpu, now.Add(-CPUWindow-time.Minute), func(s cpuSample) time.Time { return s.at }),
@@ -142,7 +153,11 @@ func (m *Monitor) Sample(now time.Time) {
 func (m *Monitor) Snapshot() Snapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := Snapshot{Machine: m.machine, SoundCardsKnown: m.cardsOK}
+	s := Snapshot{Machine: m.machine, SoundCardsKnown: m.cardsOK, Uptime: m.uptime}
+	if m.temp != nil {
+		t := *m.temp
+		s.CPUTempC = &t
+	}
 	if m.cardsOK {
 		s.SoundCards = append([]SoundCard{}, m.cards...)
 	}
@@ -315,4 +330,35 @@ func ReadSoundCards(proc string) (cards []SoundCard, ok bool) {
 		cards = append(cards, SoundCard{Index: n, ID: mm[2]})
 	}
 	return cards, true
+}
+
+// readUptime reads <proc>/uptime (0: unknown).
+func (m *Monitor) readUptime() time.Duration {
+	b, err := os.ReadFile(filepath.Join(m.proc, "uptime"))
+	if err != nil {
+		return 0
+	}
+	f := strings.Fields(string(b))
+	if len(f) == 0 {
+		return 0
+	}
+	secs, err := strconv.ParseFloat(f[0], 64)
+	if err != nil {
+		return 0
+	}
+	return time.Duration(secs * float64(time.Second)).Truncate(time.Second)
+}
+
+// readTemp reads the SoC thermal zone (millidegrees C; nil: unknown).
+func (m *Monitor) readTemp() *float64 {
+	b, err := os.ReadFile(m.thermal)
+	if err != nil {
+		return nil
+	}
+	milli, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return nil
+	}
+	c := float64(milli) / 1000
+	return &c
 }

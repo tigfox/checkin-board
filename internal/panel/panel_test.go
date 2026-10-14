@@ -84,13 +84,14 @@ func (a *fakeApp) SetController(_ context.Context, c string) error {
 }
 
 type rig struct {
-	t      *testing.T
-	health hostmon.Snapshot
-	now    time.Time
-	app    *fakeApp
-	opened map[string]*fakeDisplay
-	order  []string
-	p      *Panel
+	t        *testing.T
+	detected string
+	health   hostmon.Snapshot
+	now      time.Time
+	app      *fakeApp
+	opened   map[string]*fakeDisplay
+	order    []string
+	p        *Panel
 }
 
 func items(role string) []MenuItem {
@@ -128,9 +129,10 @@ func (r *rig) start(partial bool) {
 			r.opened[c] = d
 			return d, nil
 		},
-		Addrs:  func() []string { return []string{"192.168.4.1"} },
-		Health: func() hostmon.Snapshot { return r.health },
-		Now:    func() time.Time { return r.now },
+		Addrs:    func() []string { return []string{"192.168.4.1"} },
+		Health:   func() hostmon.Snapshot { return r.health },
+		Now:      func() time.Time { return r.now },
+		Detected: r.detected,
 	})
 }
 
@@ -601,5 +603,35 @@ func TestHealthRedrawsOnlyOnWarnings(t *testing.T) {
 	r.run(3*time.Minute + 30*time.Second)
 	if n := len(r.disp().full); n != 3 {
 		t.Fatalf("high CPU not drawn early: %d", n)
+	}
+}
+
+// A PaPiRus HAT found from its EEPROM replaces the default bonnet
+// controller (once, saved), and gets the large screen; a PaPiRus size
+// chosen by hand stays.
+func TestDetectedPaPiRus(t *testing.T) {
+	hq := View{Status: Status{Role: "hq", Station: "Finish", StateLabel: "Race active", GraywolfOK: true, Port: 8090, Now: tNow,
+		HQ: &HQ{Checkpoints: []CP{{Code: "AS1", Name: "Ridge", LastHeard: ptr(tNow)}}}},
+		Settings: Settings{Enabled: true, Controller: epd.SSD1680Z, RefreshMin: 5}}
+	r := &rig{t: t, now: tNow, app: &fakeApp{view: hq}, opened: map[string]*fakeDisplay{}, detected: epd.PaPiRus27}
+	r.start(false)
+	r.run(time.Minute)
+	if len(r.app.controller) != 1 || r.app.controller[0] != epd.PaPiRus27 {
+		t.Fatalf("saved controllers %v", r.app.controller)
+	}
+	d := r.opened[epd.PaPiRus27]
+	if d == nil || len(d.full) == 0 || d.full[0].Bounds().Size() != LargeSize {
+		t.Fatalf("opened %v", r.order)
+	}
+	if _, ok := r.opened[epd.SSD1680Z]; ok {
+		t.Fatal("the bonnet controller was opened too")
+	}
+	// Chosen by hand: the 2.6".
+	hq.Settings.Controller = epd.PaPiRus26
+	r2 := &rig{t: t, now: tNow, app: &fakeApp{view: hq}, opened: map[string]*fakeDisplay{}, detected: epd.PaPiRus27}
+	r2.start(false)
+	r2.run(time.Minute)
+	if len(r2.app.controller) != 0 || r2.opened[epd.PaPiRus26] == nil {
+		t.Fatalf("hand-chosen size changed: %v, opened %v", r2.app.controller, r2.order)
 	}
 }

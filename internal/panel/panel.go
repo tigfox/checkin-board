@@ -82,6 +82,10 @@ type Config struct {
 	// NoButtons: status only (the buttons and menu are shelved), so no
 	// detection wizard either: it needs a press.
 	NoButtons bool
+	// Detected is a display found from the hardware itself (a PaPiRus
+	// HAT's EEPROM names it): used in place of a bonnet controller, which
+	// is only the default. A PaPiRus size chosen by hand stays.
+	Detected string
 }
 
 type mode int
@@ -156,6 +160,7 @@ type Panel struct {
 	lastInput time.Time
 
 	warnedNoCtl  bool
+	detectedSet  bool // Detected was saved as the controller
 	wizardDraws  int
 	wizardNext   time.Time
 	wizardSwitch time.Time
@@ -253,6 +258,15 @@ func (p *Panel) poll(ctx context.Context, now time.Time) {
 	if !v.Settings.Enabled {
 		p.mode, p.pending = modeStatus, nil
 		return
+	}
+	if d := p.cfg.Detected; d != "" && !p.detectedSet && !epd.IsPaPiRus(v.Settings.Controller) {
+		p.detectedSet = true
+		if err := p.cfg.Source.SetController(ctx, d); err != nil {
+			p.log.Warn("panel: save the detected display", "controller", d, "err", err)
+		} else {
+			p.log.Info("panel: display detected", "controller", d)
+			v.Settings.Controller, v.Settings.DetectPending = d, false
+		}
 	}
 	switch c := v.Settings.Controller; {
 	case c == "":
@@ -413,6 +427,9 @@ func (p *Panel) statusKey() (key, important string) {
 func (p *Panel) statusScreen(now time.Time) *image.Gray {
 	if p.viewErr != nil {
 		return AppDownScreen(shortErr(p.viewErr), now)
+	}
+	if size := epd.Size(p.dispController); IsLarge(size) {
+		return LargeStatusScreen(*p.view, p.addrs, p.health, size)
 	}
 	return StatusScreen(*p.view, p.addrs, p.health)
 }

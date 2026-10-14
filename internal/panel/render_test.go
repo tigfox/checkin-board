@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"checkin-board/internal/hostmon"
 	"flag"
+	"fmt"
 	"image"
 	"image/png"
 	"os"
@@ -37,7 +38,7 @@ func golden(t *testing.T, name string, img *image.Gray) {
 			t.Fatalf("%s: grey pixel %d (the panel is 1-bit)", name, p)
 		}
 	}
-	if img.Bounds().Dx() != 250 || img.Bounds().Dy() != 122 {
+	if sz := img.Bounds().Size(); sz != image.Pt(250, 122) && sz != LargeSize {
 		t.Fatalf("%s: size %v", name, img.Bounds())
 	}
 	var buf bytes.Buffer
@@ -192,5 +193,58 @@ func TestStatusLinesRadioNode(t *testing.T) {
 	v.Status.GraywolfOK, v.Status.GraywolfProblem = false, "Radio not connected"
 	if lines, _ := statusLines(v, nil, hostmon.Snapshot{}); !contains(lines, "radio DOWN: Radio not connected") {
 		t.Errorf("down: %q", lines)
+	}
+}
+
+func hqCheckpoints(n int) []CP {
+	names := []string{"Cattle Chute", "Ridge Top", "Pitch Pine", "Beaver Pond", "Hogback Saddle", "Fire Tower", "Lost Creek Crossing", "Kings Gap", "Pole Steeple", "Mountain Creek"}
+	var out []CP
+	for i := range n {
+		c := CP{Code: fmt.Sprintf("AS%d", i+1), Name: names[i%len(names)]}
+		switch i % 5 {
+		case 0:
+			c.LastHeard = ptr(tNow.Add(-time.Duration(i+2) * time.Minute))
+		case 1:
+			c.LastHeard, c.Closed = ptr(tNow.Add(-47*time.Minute)), true
+		case 2:
+			c.LastHeard, c.Gaps = ptr(tNow.Add(-9*time.Minute)), 2
+		case 3: // never heard
+		case 4:
+			c.LastHeard = ptr(tNow.Add(-31 * time.Minute))
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func TestLargeScreens(t *testing.T) {
+	big := image.Pt(264, 176)
+	health := healthy()
+	temp, up := 51.7, 2*24*time.Hour+3*time.Hour+12*time.Minute
+	health.CPUTempC, health.Uptime = &temp, up
+	hq := View{Status: Status{
+		Role: "hq", RaceName: "Michaux Mud", RaceState: "active", StateLabel: "Race active", Station: "Finish Line",
+		HQ:         &HQ{Listed: 6, Heard: 5, Closed: 1, Gaps: 2, Checkpoints: append(hqCheckpoints(5), CP{Code: "ZZ9", Name: "", LastHeard: ptr(tNow.Add(-3 * time.Minute)), Unlisted: true})},
+		GraywolfOK: true, Port: 8090, Now: tNow,
+	}}
+	golden(t, "large-hq", LargeStatusScreen(hq, []string{"10.0.1.88"}, health, big))
+	many := hq
+	many.Status.HQ = &HQ{Checkpoints: hqCheckpoints(12)}
+	many.Status.Warnings = []string{"Race clock not set"}
+	golden(t, "large-hq-many", LargeStatusScreen(many, []string{"10.0.1.88"}, health, big))
+	golden(t, "large-checkpoint", LargeStatusScreen(cpView(), []string{"192.168.4.1"}, hostmon.Snapshot{}, big))
+	if !IsLarge(big) || IsLarge(image.Pt(250, 122)) {
+		t.Fatal("IsLarge")
+	}
+	if rows := checkpointRows(many.Status.HQ, 7, 37); len(rows) != 7 || !strings.Contains(rows[6], "+7 more") {
+		t.Fatalf("overflow rows %q", rows)
+	}
+	for _, c := range []struct {
+		d    time.Duration
+		want string
+	}{{45 * time.Minute, "45m"}, {3*time.Hour + 5*time.Minute, "3h05m"}, {up, "2d03h"}} {
+		if got := uptime(c.d); got != c.want {
+			t.Errorf("uptime(%v) = %q", c.d, got)
+		}
 	}
 }

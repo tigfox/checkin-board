@@ -231,3 +231,25 @@ func TestSoundCardsSnapshotIsACopy(t *testing.T) {
 		t.Fatalf("snapshot shares the monitor's slice: %q", got)
 	}
 }
+
+func TestUptimeAndTemp(t *testing.T) {
+	root := t.TempDir()
+	proc := filepath.Join(root, "proc")
+	zone := filepath.Join(root, "sys", "class", "thermal", "thermal_zone0")
+	for _, d := range []string{proc, zone} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = os.WriteFile(filepath.Join(proc, "uptime"), []byte("93784.52 312000.10\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(zone, "temp"), []byte("48312\n"), 0o644)
+	m := New(proc)
+	m.Sample(time.Now())
+	s := m.Snapshot()
+	if s.Uptime != 93784*time.Second || s.CPUTempC == nil || *s.CPUTempC != 48.312 {
+		t.Fatalf("uptime %v temp %v", s.Uptime, s.CPUTempC)
+	}
+	if s := New(t.TempDir()).Snapshot(); s.Uptime != 0 || s.CPUTempC != nil {
+		t.Fatalf("missing files: %+v", s)
+	}
+}

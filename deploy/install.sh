@@ -784,15 +784,30 @@ fi
 
 systemctl start checkin-board
 
+# A PaPiRus HAT (phase 18; its EEPROM names it): the panel also reads its
+# temperature sensor on I2C, and the panel's border and discharge lines
+# are GPIO 14/15, the serial console's pins.
+PAPIRUS_DROPIN=/etc/systemd/system/checkin-board-panel.service.d/50-papirus.conf
+if grep -qi papirus /proc/device-tree/hat/product 2>/dev/null; then
+	if getent group i2c >/dev/null && write_conf "$PAPIRUS_DROPIN" "$(printf '%s\n' '# checkin-board: the PaPiRus HAT'"'"'s temperature sensor is on I2C.' '[Service]' 'SupplementaryGroups=i2c')"; then
+		systemctl daemon-reload
+	fi
+	[ -e /dev/i2c-1 ] || say "PaPiRus: I2C is off (its temperature sensor; the panel works without it): sudo raspi-config nonint do_i2c 0"
+	if grep -q 'console=serial0\|console=ttyAMA0\|console=ttyS0' /boot/firmware/cmdline.txt /boot/cmdline.txt 2>/dev/null; then
+		say "PaPiRus: the serial console uses GPIO 14/15, the panel's border and discharge lines."
+		say "  Turn it off: sudo raspi-config nonint do_serial_cons 1, then reboot."
+	fi
+fi
+
 # The node panel (spec 8.4) needs SPI and the spi/gpio groups.
 if [ -e /dev/spidev0.0 ] && getent group spi >/dev/null && getent group gpio >/dev/null; then
 	systemctl enable --quiet checkin-board-panel
 	systemctl restart checkin-board-panel
-	say "Node panel started (e-ink bonnet)."
+	say "Node panel started (e-ink bonnet or PaPiRus)."
 else
 	systemctl disable --quiet checkin-board-panel 2>/dev/null || true
 	say "Node panel not started: SPI is off (no /dev/spidev0.0). With an e-ink"
-	say "bonnet attached: sudo raspi-config nonint do_spi 0, reboot, run this again."
+	say "bonnet or a PaPiRus attached: sudo raspi-config nonint do_spi 0, reboot, run this again."
 fi
 DONE=yes
 if [ "$UPGRADE" = yes ]; then

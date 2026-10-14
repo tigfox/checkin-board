@@ -97,6 +97,20 @@ type HQ struct {
 	Heard  int `json:"heard"`
 	Closed int `json:"closed"`
 	Gaps   int `json:"gaps"`
+	// Checkpoints is each checkpoint in course order (the large panel
+	// lists them with their last check-in time).
+	Checkpoints []CP `json:"checkpoints,omitempty"`
+}
+
+// CP is one checkpoint as HQ sees it.
+type CP struct {
+	Code      string     `json:"code"`
+	Name      string     `json:"name"`
+	LastHeard *time.Time `json:"last_heard,omitempty"`
+	Closed    bool       `json:"closed,omitempty"`
+	Gaps      int        `json:"gaps,omitempty"`
+	// Unlisted: heard but not on HQ's checkpoint list.
+	Unlisted bool `json:"unlisted,omitempty"`
 }
 
 // ActionRequest runs a menu item (POST /api/hook/panel/actions/{id}).

@@ -14,17 +14,18 @@ const (
 // Controllers lists them, newest bonnet first (the detection order).
 func Controllers() []string { return []string{SSD1680Z, SSD1680, SSD1675} }
 
-// Known reports whether c names a controller.
+// Known reports whether c names a controller: a bonnet's, or a PaPiRus
+// size.
 func Known(c string) bool {
 	for _, k := range Controllers() {
 		if c == k {
 			return true
 		}
 	}
-	return false
+	return IsPaPiRus(c)
 }
 
-// Panel size, landscape.
+// The bonnet's panel size, landscape (Size gives any controller's).
 const (
 	Width  = 250
 	Height = 122

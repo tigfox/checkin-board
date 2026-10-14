@@ -15,6 +15,7 @@ import (
 	"checkin-board/internal/panel"
 	"checkin-board/internal/panel/epd"
 	"checkin-board/internal/panel/epd/bonnet"
+	"checkin-board/internal/panel/epd/papirus"
 )
 
 // runPanel runs the node panel (spec 8.4) as its own process: it reads
@@ -87,7 +88,7 @@ func runPanel(ctx context.Context, env config.Env, args []string, stdin io.Reade
 	health := hostmon.New("/proc")
 	go health.Run(ctx, hostmon.SampleEvery, time.Now)
 	p := panel.New(panel.Config{Source: panel.NewClient(cfg.AppURL, cfg.Token), Open: open, Addrs: panel.NodeAddrs, Log: log,
-		Health: health.Snapshot, NoButtons: *buttons == "none"})
+		Health: health.Snapshot, NoButtons: *buttons == "none", Detected: detectedDisplay(*display)})
 	return p.Run(ctx, btn)
 }
 
@@ -156,11 +157,16 @@ func displayOpener(spec string) (panel.Opener, error) {
 	case strings.HasPrefix(spec, "png:") && len(spec) > len("png:"):
 		dir := strings.TrimPrefix(spec, "png:")
 		return func(c string) (epd.Display, error) {
-			// SSD1675 bonnets have no partial refresh; act like them.
-			return panel.NewPNGDisplay(dir, c, c != epd.SSD1675), nil
+			// SSD1675 bonnets and the PaPiRus have no partial refresh.
+			return panel.NewPNGDisplay(dir, c, c != epd.SSD1675 && !epd.IsPaPiRus(c)), nil
 		}, nil
 	case spec == "epd":
-		return bonnet.Open, nil
+		return func(c string) (epd.Display, error) {
+			if epd.IsPaPiRus(c) {
+				return papirus.Open(c)
+			}
+			return bonnet.Open(c)
+		}, nil
 	}
 	return nil, fmt.Errorf("panel: unknown display %q", spec)
 }
@@ -182,4 +188,14 @@ func readButtons(r io.Reader, out chan<- panel.Button) {
 			out <- b
 		}
 	}
+}
+
+// detectedDisplay is the display the hardware names (a PaPiRus HAT's
+// EEPROM): its largest size, the HQ Pi 3's (another size is chosen on
+// Admin > Panel). "" when nothing is detected or the display is a PNG.
+func detectedDisplay(spec string) string {
+	if spec == "epd" && papirus.Detect() {
+		return epd.PaPiRus27
+	}
+	return ""
 }
