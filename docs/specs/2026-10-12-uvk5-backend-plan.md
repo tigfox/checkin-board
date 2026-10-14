@@ -534,9 +534,12 @@ long-message ack and monitor-on fixes.
     the radio whether the RF log is switched on in its menu.
 
 Still to do on the radios:
-- Slot steps 6 (a write during a race) and 7 (a write while the radio runs
-  FMVOICE, which needs someone at the radio).
-- The keypad and RF log questions above.
+- Slot step 6 (a write during a race). Step 7 isn't needed: the FMVOICE
+  and APRS firmware are built from the same image and behave the same while
+  a slot is written (user, 2026-10-13).
+- The keypad and RF log questions above: sent to the firmware team in
+  their status doc (`aprs-firmware-request-estimate.md`, 2026-10-13
+  evening).
 - The bench race with a graywolf HQ (Pi 3).
 - 183's cable.
 
