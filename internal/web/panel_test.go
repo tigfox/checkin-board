@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"checkin-board/internal/panel"
+	"checkin-board/internal/panel/epd"
 	"checkin-board/internal/panel/menu"
 	"checkin-board/internal/raceclock"
 	"checkin-board/internal/store"
@@ -57,7 +58,7 @@ func hookView(t *testing.T, e *env) panel.View {
 func TestPanelSettingsAndMenuAdmin(t *testing.T) {
 	e := newEnv(t, checkpointSettings(store.RaceSetup))
 	got := decode[panelSettingsView](t, e.do("GET", "/api/admin/panel", e.admin, nil))
-	if !got.Enabled || got.RefreshMin != 5 || len(got.Controllers) != 3 {
+	if !got.Enabled || got.RefreshMin != 5 || len(got.Controllers) != 3+5 { // the bonnet's three, five PaPiRus sizes
 		t.Fatalf("settings = %+v", got)
 	}
 	expect(t, e.do("PUT", "/api/admin/panel", e.admin, map[string]any{"enabled": true, "refresh_min": 1}), http.StatusBadRequest)
@@ -348,3 +349,25 @@ func TestPanelBadBodies(t *testing.T) {
 }
 
 func raceclockUnsynced() *raceclock.Clock { return raceclock.NewClock(nil, nil) }
+
+// The PaPiRus 2.7" (phase 18): the preview is the large screen, and HQ's
+// panel data lists each checkpoint for it.
+func TestPanelPaPiRus(t *testing.T) {
+	e := panelEnv(t, hqSettings(store.RaceActive))
+	if err := e.st.CreateCheckpoint(ctx, &store.Checkpoint{Code: "AS1", Name: "Ridge Top", CourseOrder: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.SetPanelController(ctx, epd.PaPiRus27); err != nil {
+		t.Fatal(err)
+	}
+	resp := e.do("GET", "/api/admin/panel/preview.png", e.admin, nil)
+	expect(t, resp, http.StatusOK)
+	img, err := png.Decode(resp.Body)
+	if err != nil || img.Bounds().Dx() != 264 || img.Bounds().Dy() != 176 {
+		t.Fatalf("preview %v %v", img.Bounds(), err)
+	}
+	v := hookView(t, e)
+	if v.Status.HQ == nil || len(v.Status.HQ.Checkpoints) != 1 || v.Status.HQ.Checkpoints[0].Name != "Ridge Top" || v.Status.HQ.Checkpoints[0].LastHeard != nil {
+		t.Fatalf("HQ checkpoints = %+v", v.Status.HQ)
+	}
+}

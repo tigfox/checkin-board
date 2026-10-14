@@ -288,6 +288,17 @@ reboot, and run `install.sh` again.
   current revision and the default.
 - **The display rests 3 minutes between refreshes**, to protect it.
   That's why the status can lag a change by a few minutes.
+- **A PaPiRus HAT** (the HQ Pi 3) is found by itself and shows a larger
+  screen:
+  - the node's address, CPU, temperature, uptime and radio link;
+  - on HQ, one line per checkpoint in course order, with its last check-in
+    time (`--:--` if not heard yet), and "closed" or "gap N" (missing
+    batches).
+
+  It needs SPI on, I2C on for its temperature sensor, and the serial
+  console off, because the panel uses GPIO 14/15:
+  `sudo raspi-config nonint do_spi 0`, `do_i2c 0` and
+  `do_serial_cons 1`, then reboot and run `install.sh` again.
 
 ## 3. Race day
 

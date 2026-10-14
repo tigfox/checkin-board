@@ -45,7 +45,7 @@ function settingsCard(s, ctx) {
     h("h2", {}, "Display"),
     h("label", {}, enabled, " Panel on"),
     h("label", { for: "pn-controller" }, "Display controller (bonnet revisions differ)"), controller,
-    h("p", { class: "muted" }, "SSD1680Z is the current bonnet. If the display stays blank or garbled, show a test pattern with each controller and choose the one that draws it cleanly."),
+    h("p", { class: "muted" }, "SSD1680Z is the current Adafruit bonnet. If the display stays blank or garbled, show a test pattern with each controller and choose the one that draws it cleanly. A PiSupply PaPiRus HAT is found by itself (its 2.7\" size, which shows each checkpoint's last check-in on HQ); choose another PaPiRus size here if yours is smaller."),
     h("label", { for: "pn-refresh" }, `Refresh the status every (minutes, ${s.min_refresh}-${s.max_refresh})`), refresh,
     h("label", { for: "pn-rotation" }, "Rotation"), rotation,
     h("div", { class: "row" },

@@ -192,7 +192,11 @@ func (s *server) getPanelPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, err)
 		return
 	}
-	img := panel.Rotate(panel.StatusScreen(v, []string{"<node address>"}, hostmon.Snapshot{}), v.Settings.Rotation)
+	screen := panel.StatusScreen(v, []string{"<node address>"}, hostmon.Snapshot{})
+	if size := epd.Size(v.Settings.Controller); panel.IsLarge(size) { // the PaPiRus 2.7" (phase 18)
+		screen = panel.LargeStatusScreen(v, []string{"<node address>"}, hostmon.Snapshot{}, size)
+	}
+	img := panel.Rotate(screen, v.Settings.Rotation)
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		writeError(w, r, s.log, err)

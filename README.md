@@ -46,7 +46,7 @@ internal/radiocheck/   radio status check: graywolf build, channel, audio, PTT, 
 internal/hostmon/      node health from /proc: CPU 5-min average, graywolf modem keeping up, machine
 internal/panel/        node panel: e-ink status screen and two-button menu (renderer, state machine, hook client)
 internal/panel/menu/   the panel's action allowlist, default menu and validation
-internal/panel/epd/    e-ink controllers (SSD1680Z/SSD1680/SSD1675 over periph.io)
+internal/panel/epd/    e-ink controllers (SSD1680Z/SSD1680/SSD1675; PaPiRus G2 COG) over periph.io
 internal/gwfake/       in-memory fake of graywolf's Messages API + simulated RF channel (tests)
 internal/sim/          whole-node simulation: exactly-once and latency tests
 deploy/                systemd unit, env template, install script (+ option tests)
@@ -316,6 +316,22 @@ update fast enough for a menu). The panel is
 its own service, `checkin-board-panel`, talking to the app over the
 local hook. `install.sh` sets it up when SPI is enabled
 (`sudo raspi-config nonint do_spi 0`, then reboot).
+
+A **PiSupply PaPiRus** HAT (phase 18) works too:
+- **Detection:** the panel finds it from the HAT's EEPROM and uses its
+  2.7" size (264x176). Choose another PaPiRus size on Admin → Panel.
+- **Driver:** a Go port of Pervasive Displays' G2 COG driver (repaper
+  gratis, Apache-2.0), so no FUSE driver or Python is needed. It reads the
+  HAT's LM75B to time its updates.
+- **What it shows:** on the large panel, the node's own basics (address,
+  CPU, SoC temperature, uptime, radio link), and on HQ one line per
+  checkpoint with its last check-in time.
+- **Setup:** it needs SPI, ideally I2C, and the serial console off,
+  because the panel's border and discharge lines are GPIO 14/15:
+  `sudo raspi-config nonint do_spi 0; sudo raspi-config nonint do_i2c 0;
+  sudo raspi-config nonint do_serial_cons 1`, reboot, then run
+  `install.sh`. Check it with `sudo checkin-board panel -test
+  papirus-2.7` (a full refresh takes about 6 s).
 
 Check the bonnet without the app, once per controller until the test
 pattern is readable (a refresh that returns at once or times out points
