@@ -1,7 +1,8 @@
 # Plan: UV-K5/UV-K1 radio backend (phase 17)
 
-Status: **17a-17e built** (2026-10-12); 17f (on-air bench) waits for the
-radios. "As built" at the end. It follows
+Status: **17a-17e, 17g and 17h built** (2026-10-12/13); 17f (on-air bench)
+is partly done, and the radio tests still to do are listed at the end
+("Testing still to do"). "As built" sections follow the phases. It follows
 [`2026-10-12-uvk5-backend-proposal.md`](2026-10-12-uvk5-backend-proposal.md),
 the firmware maintainer's estimate
 (`uv-k1-k5v3-firmware-custom/claude/aprs-firmware-request-estimate.md`)
@@ -391,3 +392,73 @@ direction.
 - **Next:** "Revive silenced reports". If an expected SENT or DROP line
   doesn't arrive, toggle DTR, because the firmware stops monitor output
   after a timed-out USB write.
+
+## Testing still to do (on the radios)
+
+### Firmware slot writing (17h)
+
+Reading the slots is tested on both bench radios. On 2026-10-13 they held
+1 Fusion, 2 APRS, 3 FMVOICE (all v6.1.0) and 4 empty. Writing is tested
+only against the fake radio. On the real radios:
+
+1. **First write, to the empty slot 4** on 10.0.0.65's radio.
+   - Use an F4HWN build from the firmware repo or the radio team, named
+     like `f4hwn.<edition>.v<version>.bin`.
+   - Upload it on the Station page, press **Read slots**, write it into
+     slot 4, and time it (expected about a minute).
+   - Check: the job ends "done" and the re-read shows slot 4 valid with
+     the right name, version and size. The radio is back with checkin-board
+     and Check radio passes.
+   - Check the CRC: compare the slot's CRC-32 with the file's
+     (`python3 -c 'import zlib,sys; print(hex(zlib.crc32(open(sys.argv[1],"rb").read())))' FILE`).
+2. **Boot it:** choose slot 4 from the radio's menu. The radio starts that
+   firmware. Then switch back to APRS (slot 2) and confirm the node
+   reconnects.
+3. **Replace a slot in use:** write a newer APRS build into slot 2 (the
+   page should default to slot 2, named "APRS"). Boot it, and confirm the
+   node connects with the new firmware version.
+4. **Fusion stays put:** try writing into slot 1 without confirming. The
+   node must refuse ("holds Fusion") and slot 1 must be unchanged. Don't
+   use the override on the bench radios.
+5. **Interruptions:**
+   - Cancel a write half way: the slot reads "incomplete", and the radio
+     doesn't offer it, or refuses to start it.
+   - Unplug USB during a write: the job fails, and the radio reconnects
+     when it's plugged back in.
+   - Write the slot again: it ends "valid".
+6. **During a race:** start a race on the node, write a slot, and check
+   that race reports wait ("Radio in use: writing firmware slot") and go
+   out afterwards with nothing lost.
+7. **Write while running FM/voice:** with the radio running FMVOICE
+   (slot 3), read and write slot 4. The node uses a handshake-only
+   session, so this should work although that firmware has no APRS
+   messaging.
+8. **Timing on a Pi Zero:** note the write time and CPU use. The
+   1500 ms per-chunk reply timeout and 5 retries are UV Studio's. Adjust
+   them if a Pi Zero's USB is slower.
+
+### UV Studio through the Pi
+
+Done on 10.0.0.65: the live screen streamed through the Pi, and the radio
+went back to checkin-board on Disconnect. Still to try:
+- the keypad (a key press shows on the radio);
+- the RF log and its CSV export;
+- calibration dump and restore (restore only to the same radio);
+- boot-logo download and upload;
+- the 10-minute idle give-back with a real phone left open;
+- a phone or tablet as the browser.
+
+### Still open from 17f
+
+- After the radio team's firmware fix (long messages acked), repeat the
+  bench race: UV-K5 checkpoint to UV-K5 HQ, 20 runners.
+- The bench race with a **graywolf HQ** (the Pi 3, 10.0.1.88) and UV-K5
+  checkpoints, 100 runners. Link checks between each pair first.
+- 10.0.1.183's USB drops (EMI) when its radio transmits. Retest with a
+  shielded USB cable or ferrites, and with the radio moved away from the
+  Pi.
+- After the firmware team decides on DTR: confirm monitor lines arrive.
+  Then build "Revive silenced reports" (toggle DTR when an expected
+  SENT/DROP line doesn't arrive), the next development item.
+- The opt-in radio contract test (17f), and a test report.
+
