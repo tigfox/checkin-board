@@ -220,6 +220,33 @@ func (s *Session) Err() error {
 // OtherLine values, in order.
 func (s *Session) Events() <-chan any { return s.events }
 
+// ReviveMonitor turns monitor lines back on. After one timed-out write
+// to the host the firmware stops sending them (it takes the host as gone)
+// while its status still says monitoring is on, so nothing shows that
+// they stopped. Firmware since 2026-10-13 restarts them on "monitor on";
+// older firmware only on a DTR change, so DTR is lowered and raised
+// first (this port answered as a UV-K5: never an AIOC).
+//
+// With toggleDTR false only "monitor on" is sent (a routine refresh).
+func (s *Session) ReviveMonitor(ctx context.Context, toggleDTR bool) error {
+	if d, ok := s.rw.(DTRSetter); ok && toggleDTR {
+		_ = d.SetDTR(false)
+		time.Sleep(20 * time.Millisecond)
+		if err := d.SetDTR(true); err != nil {
+			return fmt.Errorf("uvk5: raise DTR: %w", err)
+		}
+	}
+	f, err := s.command(ctx, cmdMonitor, []byte{1})
+	if err != nil {
+		return fmt.Errorf("uvk5: monitor on: %w", err)
+	}
+	if len(f.Data) < 1 || f.Data[0] != 1 {
+		return &RefusedError{Cmd: "monitor on"}
+	}
+	s.monitoring = true
+	return nil
+}
+
 // closeQuiet bounds Close's "monitor off".
 const closeQuiet = 500 * time.Millisecond
 

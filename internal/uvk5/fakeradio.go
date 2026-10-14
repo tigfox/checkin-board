@@ -22,27 +22,29 @@ type FakeRadio struct {
 	Air func(from, to string, m Message)
 	Now func() time.Time
 
-	mu        sync.Mutex
-	settings  Settings
-	caps      Capabilities
-	status    Status
-	gap       time.Duration
-	busy      bool // the channel never clears
-	lowBatt   bool
-	out       io.Writer
-	sink      func(line string) // DirectSession: lines without a port
-	wmu       sync.Mutex
-	ts        uint32
-	mb        *fakeSlots // firmware slots (fakeslots.go)
-	noSlots   bool
-	monitor   bool
-	queue     []fakeQueued
-	acks      []fakeAck
-	line      int
-	lastTX    time.Time
-	headSince time.Time // when the front item started waiting on a busy channel
-	rssi      int
-	commands  []uint16
+	mu         sync.Mutex
+	settings   Settings
+	caps       Capabilities
+	status     Status
+	gap        time.Duration
+	busy       bool // the channel never clears
+	lowBatt    bool
+	out        io.Writer
+	sink       func(line string) // DirectSession: lines without a port
+	wmu        sync.Mutex
+	ts         uint32
+	mb         *fakeSlots // firmware slots (fakeslots.go)
+	silenced   bool       // monitor lines stopped (Silence)
+	monitorOns int
+	noSlots    bool
+	monitor    bool
+	queue      []fakeQueued
+	acks       []fakeAck
+	line       int
+	lastTX     time.Time
+	headSince  time.Time // when the front item started waiting on a busy channel
+	rssi       int
+	commands   []uint16
 }
 
 type fakeQueued struct {
@@ -162,8 +164,11 @@ func (f *FakeRadio) writeLine(on bool, s string) {
 		return
 	}
 	f.mu.Lock()
-	sink := f.sink
+	sink, silenced := f.sink, f.silenced
 	f.mu.Unlock()
+	if silenced {
+		return
+	}
 	if sink != nil {
 		sink(s)
 		return
@@ -205,6 +210,10 @@ func (f *FakeRadio) handle(c Frame) ([]byte, bool) {
 	case cmdMonitor:
 		f.monitor = len(c.Data) > 0 && c.Data[0] == 1
 		f.status.Monitor = f.monitor
+		if f.monitor {
+			f.silenced = false
+			f.monitorOns++
+		}
 		return ack(true), true
 	case cmdSendMessage:
 		return f.queueMessage(c.Data, tsOK), true
@@ -395,4 +404,20 @@ func (f *FakeRadio) Commands() []uint16 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.commands)
+}
+
+// Silence stops the monitor lines as the firmware does after a timed-out
+// write to the host; the status still says monitoring is on. "Monitor
+// on" brings them back.
+func (f *FakeRadio) Silence() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.silenced = true
+}
+
+// Revivals counts "monitor on" commands since the first.
+func (f *FakeRadio) Revivals() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.monitorOns - 1
 }

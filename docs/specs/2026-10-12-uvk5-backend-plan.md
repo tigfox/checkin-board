@@ -397,6 +397,20 @@ direction.
 
 ### Firmware slot writing (17h)
 
+**Done on the radios, 2026-10-13:**
+- The new APRS image (`build/APRS/f4hwn.aprs.bin`, 111,772 bytes, CRC-32
+  `a9c26082`) has the long-message ack and monitor-on fixes. It was
+  uploaded through the API and written into slot 2 ("APRS") on both
+  radios.
+- Each write took about 3.2 s, so race reports would wait about 3 s. Both
+  radios' own CRC checks match the file.
+- Slot 1 (Fusion, `9ff308c3`) is unchanged, and so is slot 3. A write
+  into slot 1 without the override was refused on the radio, and slot 1
+  read back unchanged.
+- Steps 1 (with slot 2 instead of 4) and 4 below are done. Step 2 (boot
+  it) needs someone at each radio: choose slot 2 from the menu so the
+  radios run the new image.
+
 Reading the slots is tested on both bench radios. On 2026-10-13 they held
 1 Fusion, 2 APRS, 3 FMVOICE (all v6.1.0) and 4 empty. Writing is tested
 only against the fake radio. On the real radios:
@@ -457,8 +471,28 @@ went back to checkin-board on Disconnect. Still to try:
 - 10.0.1.183's USB drops (EMI) when its radio transmits. Retest with a
   shielded USB cable or ferrites, and with the radio moved away from the
   Pi.
-- After the firmware team decides on DTR: confirm monitor lines arrive.
-  Then build "Revive silenced reports" (toggle DTR when an expected
-  SENT/DROP line doesn't arrive), the next development item.
+- With the new APRS image booted, check monitor lines arrive with DTR low
+  (the firmware fix). Then force a silent stretch (for example, suspend
+  the app's reads) and check the backend revives the lines.
 - The opt-in radio contract test (17f), and a test report.
+
+## Revive silenced reports (2026-10-13)
+
+The firmware team's answer: after one timed-out write to the host, the
+firmware stops sending monitor lines, while its status still says
+monitoring is on. Firmware since 2026-10-13 restarts them on "monitor
+on"; older firmware only on a DTR change.
+
+- `uvk5.Session.ReviveMonitor`: lowers and raises DTR (on a port that
+  answered as a UV-K5), then sends "monitor on".
+- The radio backend calls it in two cases:
+  - **Overdue:** a message the radio took 30 s ago still has no SENT or
+    DROP, and no line at all has come for 30 s. This revival includes the
+    DTR toggle.
+  - **Routine:** every 2 minutes, "monitor on" only, because lost lines
+    for incoming messages show nowhere else.
+- Lines lost before a revival can't be recovered. Their rows expire after
+  90 s, and the engines send again (HQ dedups).
+- Tested against the fake radio, which can be silenced like the
+  firmware. On the radios: see "Testing still to do".
 

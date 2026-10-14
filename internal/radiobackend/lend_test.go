@@ -51,3 +51,34 @@ func TestLend(t *testing.T) {
 	}
 	gb()
 }
+
+// The radio's monitor lines stop (as after a timed-out write to the
+// host): a report goes overdue, the backend turns them back on, and the
+// next message's SENT arrives. Then a routine refresh every reviveEvery.
+func TestReviveSilencedLines(t *testing.T) {
+	h := newHarness(t)
+	h.radio.Silence()
+	m := h.send("lost line")
+	h.waitFor("submitted", func() bool { return h.status(m.ID) == statusSubmitted })
+	h.radio.Tick() // on air, but its SENT line is lost
+	if h.status(m.ID) != statusSubmitted {
+		t.Fatal("a SENT line got through while silenced")
+	}
+	if h.radio.Revivals() != 0 {
+		t.Fatalf("revived too early: %d", h.radio.Revivals())
+	}
+	h.clk.Add(reviveOverdue + time.Second)
+	h.waitFor("revived", func() bool { return h.radio.Revivals() == 1 })
+	m2 := h.send("after the revival")
+	h.waitFor("submitted", func() bool { return h.status(m2.ID) == statusSubmitted })
+	h.clk.Add(10 * time.Second) // past the radio's gap
+	h.radio.Tick()
+	h.waitFor("SENT heard", func() bool { return h.status(m2.ID) == graywolf.StatusSentRF })
+	// Nothing overdue: the next "monitor on" is the routine one.
+	time.Sleep(3 * senderTick)
+	if n := h.radio.Revivals(); n != 1 {
+		t.Fatalf("%d revivals without cause", n)
+	}
+	h.clk.Add(reviveEvery)
+	h.waitFor("routine refresh", func() bool { return h.radio.Revivals() == 2 })
+}

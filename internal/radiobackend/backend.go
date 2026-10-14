@@ -44,6 +44,13 @@ const (
 	dedupWindow = 5 * time.Minute
 	maxPackets  = 2000
 	senderTick  = time.Second
+	// reviveOverdue: a message the radio took this long ago with no
+	// SENT/DROP, and no line at all for as long, means the monitor lines
+	// may have stopped (a timed-out write to the host): turn them back on.
+	reviveOverdue = 30 * time.Second
+	// reviveEvery refreshes "monitor on" anyway: lost lines for incoming
+	// messages show nowhere else.
+	reviveEvery = 2 * time.Minute
 	minBackoff  = 2 * time.Second
 	maxBackoff  = 30 * time.Second
 	opTimeout   = 5 * time.Second
@@ -80,19 +87,21 @@ type Backend struct {
 	log  *slog.Logger
 	wake chan struct{}
 
-	mu        sync.Mutex
-	sess      Session
-	free      int
-	connErr   error
-	connected time.Time
-	callsign  string // the last callsign read from the radio
-	subs      map[chan graywolf.Event]struct{}
-	heard     map[string]time.Time
-	packets   []graywolf.Packet
-	rssi      map[string]int
-	lent      string        // who has the radio's port ("": the backend)
-	returned  chan struct{} // closed when it's given back
-	dialing   bool
+	mu         sync.Mutex
+	sess       Session
+	free       int
+	connErr    error
+	connected  time.Time
+	callsign   string // the last callsign read from the radio
+	subs       map[chan graywolf.Event]struct{}
+	heard      map[string]time.Time
+	packets    []graywolf.Packet
+	rssi       map[string]int
+	lastLine   time.Time     // the last monitor line from the radio
+	lastRevive time.Time     // the last "monitor on" (connect, or a revival)
+	lent       string        // who has the radio's port ("": the backend)
+	returned   chan struct{} // closed when it's given back
+	dialing    bool
 }
 
 // New returns a backend; Run connects it.
@@ -168,6 +177,7 @@ func (b *Backend) up(sess Session) {
 // install makes sess the backend's session. Caller holds b.mu.
 func (b *Backend) install(sess Session) {
 	b.sess, b.free, b.connErr, b.connected = sess, int(sess.Capabilities().QueueDepth), nil, b.now()
+	b.lastLine, b.lastRevive = b.connected, b.connected
 	b.callsign = sess.Settings().Callsign
 }
 
@@ -256,6 +266,7 @@ func (b *Backend) sender(ctx context.Context) {
 		case <-t.C:
 		}
 		b.expireSubmitted(ctx)
+		b.reviveIfSilent(ctx)
 		b.submit(ctx)
 	}
 }
@@ -347,6 +358,9 @@ func (b *Backend) events(ctx context.Context, sess Session) {
 }
 
 func (b *Backend) handle(ctx context.Context, ev any) {
+	b.mu.Lock()
+	b.lastLine = b.now()
+	b.mu.Unlock()
 	switch e := ev.(type) {
 	case uvk5.Sent:
 		b.settle(ctx, e.To, e.Line, func(m *store.RadioMessage) {
@@ -545,4 +559,51 @@ func (b *Backend) Step(ctx context.Context) {
 	}
 	b.expireSubmitted(ctx)
 	b.submit(ctx)
+}
+
+// reviver is a session whose monitor lines can be turned back on
+// (uvk5.Session).
+type reviver interface {
+	ReviveMonitor(ctx context.Context, toggleDTR bool) error
+}
+
+// reviveIfSilent turns the radio's monitor lines back on when a report
+// is overdue and nothing has been heard for as long (they may have
+// stopped after a timed-out write to the host), and every reviveEvery
+// anyway.
+func (b *Backend) reviveIfSilent(ctx context.Context) {
+	b.mu.Lock()
+	sess, last, lastRevive := b.sess, b.lastLine, b.lastRevive
+	b.mu.Unlock()
+	r, ok := sess.(reviver)
+	if !ok {
+		return
+	}
+	now := b.now()
+	overdue := false
+	if now.Sub(last) >= reviveOverdue && now.Sub(lastRevive) >= reviveOverdue {
+		if rows, err := b.st.RadioOutbound(ctx, statusSubmitted); err == nil {
+			for _, row := range rows {
+				if now.Sub(row.CreatedAt) >= reviveOverdue {
+					overdue = true
+					break
+				}
+			}
+		}
+	}
+	if !overdue && now.Sub(lastRevive) < reviveEvery {
+		return
+	}
+	b.mu.Lock()
+	b.lastRevive = now
+	b.mu.Unlock()
+	rctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+	err := r.ReviveMonitor(rctx, overdue)
+	switch {
+	case err != nil:
+		b.log.Warn("radio: turn monitor lines back on", "err", err)
+	case overdue:
+		b.log.Warn("radio: no report lines with messages waiting; turned monitor lines back on", "silent_for", now.Sub(last).Round(time.Second))
+	}
 }
