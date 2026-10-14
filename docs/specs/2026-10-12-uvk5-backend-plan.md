@@ -568,3 +568,18 @@ frequency.
     its 5 transmissions (dmesg "disabled by hub (EMI?)", 10 s apart like
     the probes), so HQ's replies arrived while it was reconnecting. This
     is the hardware problem (an unshielded cable) noted earlier.
+- **Bench race, 100 runners over 20 minutes**, graywolf HQ (.88) with
+  two UV-K5 checkpoints:
+  - **PIPI (.65): 100/100 exactly once.** Average 7.6 s from bib to HQ,
+    worst 44 s, 25 batches with 2 retransmissions in all. This is the
+    race-day layout (graywolf HQ, UV-K5 checkpoints), and it works.
+  - **CTL (.183): 29/100 at HQ, none duplicated.** The other 71 were still
+    queued safely on the node. Its USB dropped 69 times in 35 minutes, at
+    its transmissions, reconnecting in 2 s each time; the revival fired
+    11 times. HQ's acks and the radio's SENT lines that arrived during a
+    drop were lost, so batches stayed unconfirmed and the in-flight window
+    filled. HQ received 7 of its batches.
+  - This is the cable or interference problem, not the protocol. Retest
+    .183 with a shielded cable or ferrites, or with the radio moved away
+    from the Pi.
+  - After the race, all three nodes were reset (backups kept).
