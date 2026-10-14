@@ -543,3 +543,28 @@ Still to do on the radios:
 - The bench race with a graywolf HQ (Pi 3).
 - 183's cable.
 
+
+## Bench with the graywolf HQ (2026-10-13, night)
+
+HQ: the Pi 3 (10.0.1.88), graywolf 0.14.14 with a Baofeng on an AIOC,
+callsign KD2DCM-0. Checkpoints: the two Pi Zeros with UV-K5s, all on one
+frequency.
+
+- **Bug found and fixed (fc690ca): SSID 0.**
+  - Symptom: the first link check from .65 got round trip 5/5 but uplink
+    0/5. HQ heard every probe, but the checkpoint never took HQ's acks.
+  - Cause: a UV-K5 reports callsigns as on the air, where SSID 0 has no
+    suffix (`KD2DCM`), while HQ's call is configured as `KD2DCM-0`. The
+    checkpoint engine and link check compared callsigns with
+    `strings.EqualFold`, so on race day no report from a UV-K5
+    checkpoint to that HQ would ever be confirmed.
+  - Fix: they now use `store.SameStation` everywhere a station is
+    matched. The simulator's channel also delivers by callsign as on the
+    air. A sim test (HQ `W1HQ-0`, UV-K5 checkpoint) fails without the
+    fix.
+- **Link checks after the fix:**
+  - .65: **PASS**, uplink 5/5, round trip 5/5.
+  - .183: FAIL (uplink 2/5, round trip 0/5). Its USB dropped at each of
+    its 5 transmissions (dmesg "disabled by hub (EMI?)", 10 s apart like
+    the probes), so HQ's replies arrived while it was reconnecting. This
+    is the hardware problem (an unshielded cable) noted earlier.
