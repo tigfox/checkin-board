@@ -5,7 +5,7 @@
 // Stop checkin-board first (or switch its radio type away): only one
 // program can have the port.
 //
-//	uvk5probe [-port /dev/ttyACM0] [-listen 60s] [-raw] [-to CALL -text TEXT]
+//	uvk5probe [-port /dev/ttyACM0] [-listen 60s] [-raw] [-dtr-low] [-to CALL -text TEXT]
 package main
 
 import (
@@ -26,18 +26,19 @@ func main() {
 	port := flag.String("port", "", "serial port (default: the first radio found)")
 	listen := flag.Duration("listen", time.Minute, "how long to print events")
 	raw := flag.Bool("raw", false, "print every byte read")
+	dtrLow := flag.Bool("dtr-low", false, "keep DTR low (firmware since 2026-10-13 sends monitor lines without it)")
 	to := flag.String("to", "", "send a message to this callsign-SSID")
 	text := flag.String("text", "uvk5probe test", "the message text")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, *port, *listen, *raw, *to, *text); err != nil {
+	if err := run(ctx, *port, *listen, *raw, *dtrLow, *to, *text); err != nil {
 		fmt.Fprintln(os.Stderr, "uvk5probe:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, port string, listen time.Duration, raw bool, to, text string) error {
+func run(ctx context.Context, port string, listen time.Duration, raw, dtrLow bool, to, text string) error {
 	if port == "" {
 		c := uvk5.Candidates()
 		if len(c) == 0 {
@@ -51,6 +52,9 @@ func run(ctx context.Context, port string, listen time.Duration, raw bool, to, t
 	}
 	if raw {
 		rw = &tap{ReadWriteCloser: rw, start: time.Now()}
+	}
+	if dtrLow {
+		rw = struct{ io.ReadWriteCloser }{rw} // hides SetDTR: the session can't raise it
 	}
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	sess, err := uvk5.Connect(cctx, rw)

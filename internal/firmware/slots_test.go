@@ -29,8 +29,7 @@ func (b *slotBench) config(fo *Folder) SlotsConfig {
 		},
 		Connect: func(ctx context.Context) (SlotSession, error) {
 			host, dev := net.Pipe()
-			go func() { _ = b.radio.Serve(dev) }()
-			go func() { <-ctx.Done(); _ = dev.Close() }()
+			go func() { _ = b.radio.Serve(dev) }() // ends when the session closes the port, as a real one
 			return uvk5.ConnectBasic(ctx, host)
 		},
 	}
@@ -137,5 +136,27 @@ func TestSlotsProtectFusion(t *testing.T) {
 	}
 	if st := waitSlots(t, j, StateDone, StateFailed); st.State != StateDone {
 		t.Fatalf("asked to replace = %+v", st)
+	}
+}
+
+// A cancelled write re-reads the slots: the table shows the slot as it
+// now is (empty: the header that commits it comes last).
+func TestSlotsCancelRereads(t *testing.T) {
+	fo := NewFolder(filepath.Join(t.TempDir(), "fw"))
+	_ = fo.Save("f4hwn.aprs.v6.1.bin", bytes.Repeat([]byte{7}, uvk5.MaxSlotImage), false)
+	b := &slotBench{radio: uvk5.NewFakeRadio("KD2DCM-4", time.Now)}
+	j := NewSlots(b.config(fo))
+	if err := j.Write("f4hwn.aprs.v6.1.bin", 2, "APRS", "v1", false); err != nil {
+		t.Fatal(err)
+	}
+	for j.Status().Done == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	if err := j.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	st := waitSlots(t, j, StateFailed)
+	if !strings.Contains(st.Error, "cancelled") || len(st.Slots) != 4 || st.Slots[1].State != "empty" {
+		t.Fatalf("after cancel = %+v", st)
 	}
 }

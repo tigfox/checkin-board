@@ -496,3 +496,47 @@ on"; older firmware only on a DTR change.
 - Tested against the fake radio, which can be silenced like the
   firmware. On the radios: see "Testing still to do".
 
+## Bench results with the new APRS image (2026-10-13, evening)
+
+Both radios were started from slot 2, which runs the new image with the
+long-message ack and monitor-on fixes.
+
+- **Both firmware fixes work on the radios.** `uvk5probe -dtr-low` on .65
+  sent a 66-character message to .183's radio. The SENT line arrived with
+  DTR held low (the monitor-on fix), and .183's radio acked the long
+  message (`ack01`) about a second later (the ack fix).
+- **Bench race:** UV-K5 checkpoint .65 to UV-K5 HQ .183, 20 runners.
+  **PASS, 20/20 exactly once**, median 4 s, p95 44 s, worst 46 s. The slow
+  tail is .183's USB dropping off on each of its 8 transmissions (its
+  acks); the protocol absorbed it. Before the ack fix the same race got
+  16/20.
+- **Revival:** deployed. The routine refresh ran on both nodes with no
+  errors, and Check radio stayed OK. No real silent stretch occurred to
+  revive.
+- **Slots, step 5 (interruptions):** on .65 a write to slot 2 was
+  cancelled at 54,528 of 111,772 bytes. The slot read back "empty": the
+  header that commits it comes last, so the radio has nothing to start.
+  Writing again made it valid (CRC `a9c26082`).
+  - Fixed after this: the job now re-reads the slots after a failed or
+    cancelled write too, so the table shows the slot as it now is.
+- **UV Studio on .65, through the Pi:**
+  - Live screen, calibration dump and boot-logo read: work.
+  - Passing the radio between UV Studio's viewer and its tools: works.
+  - No page errors.
+  - The **keypad had no effect**: MENU and EXIT left the screen
+    unchanged, though the screen itself was live. The firmware does accept
+    `AA 55 03 <key>` on USB (`App/driver/vcp.c`), and the bytes travel the
+    same path as the viewer's keepalives, which work. Next: try the keypad
+    with the radio plugged straight into a computer. If it fails there
+    too, it's a question for the firmware team.
+  - The **RF log** view said it isn't enabled, and the export returned
+    nothing. The APRS preset inherits Fusion's RF log setting, so check on
+    the radio whether the RF log is switched on in its menu.
+
+Still to do on the radios:
+- Slot steps 6 (a write during a race) and 7 (a write while the radio runs
+  FMVOICE, which needs someone at the radio).
+- The keypad and RF log questions above.
+- The bench race with a graywolf HQ (Pi 3).
+- 183's cable.
+

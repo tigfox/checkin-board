@@ -212,10 +212,17 @@ func (j *Slots) Write(file string, slot int, name, version string, replaceMain b
 				j.st.Step, j.st.Done, j.st.Total = p.Step, p.Done, p.Total
 				j.mu.Unlock()
 			})
-			if err != nil {
-				return err
+			// Show what the slots hold now, after a failed or cancelled
+			// write too (the slot is no longer what was last read).
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), readSlotsTimeout)
+			defer cancel()
+			if rerr := j.readAll(rctx, sess); rerr != nil {
+				j.forgetSlot(slot)
+				if err == nil {
+					err = rerr
+				}
 			}
-			return j.readAll(ctx, sess) // show the result
+			return err
 		}))
 	}()
 	return nil
@@ -230,4 +237,16 @@ func (j *Slots) Cancel() error {
 	}
 	j.cancel()
 	return nil
+}
+
+// forgetSlot marks slot as unknown in the last read (it couldn't be read
+// again after a write).
+func (j *Slots) forgetSlot(slot int) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for i := range j.st.Slots {
+		if j.st.Slots[i].Slot == slot {
+			j.st.Slots[i] = uvk5.SlotInfo{Slot: slot, State: "unknown: read the slots again"}
+		}
+	}
 }
