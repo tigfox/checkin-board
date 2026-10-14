@@ -45,7 +45,7 @@ func (s *Service) blocked(cfg store.Settings, c store.LinkCheck) string {
 		return "the race is " + cfg.RaceState
 	case cfg.Role == "":
 		return "this node has no role"
-	case cfg.Role == store.RoleCheckpoint && !strings.EqualFold(cfg.HQCall, c.PeerCall):
+	case cfg.Role == store.RoleCheckpoint && !store.SameStation(cfg.HQCall, c.PeerCall):
 		return "the HQ callsign changed"
 	}
 	return ""
@@ -134,7 +134,7 @@ func (s *Service) onReply(ctx context.Context, sender string, q *wire.ProbeReply
 	if err != nil {
 		return err
 	}
-	if !strings.EqualFold(c.PeerCall, sender) || c.Run != int(q.Run) || c.StationCode != q.CP {
+	if !store.SameStation(c.PeerCall, sender) || c.Run != int(q.Run) || c.StationCode != q.CP {
 		return nil
 	}
 	heard := 0

@@ -30,7 +30,7 @@ func (s *Service) onProbe(ctx context.Context, m graywolf.Message, sender string
 	unknown := false
 	switch cfg.Role {
 	case store.RoleCheckpoint:
-		if !strings.EqualFold(sender, cfg.HQCall) {
+		if !store.SameStation(sender, cfg.HQCall) {
 			s.log.Info("linkcheck: ignoring probe from a station other than HQ", "from", sender)
 			return nil
 		}
@@ -41,7 +41,7 @@ func (s *Service) onProbe(ctx context.Context, m graywolf.Message, sender string
 		}
 		known := len(cps) == 0
 		for _, c := range cps {
-			if strings.EqualFold(c.ExpectedCall, sender) {
+			if store.SameStation(c.ExpectedCall, sender) {
 				known = true
 			}
 		}
@@ -93,7 +93,7 @@ func viaField(via string) string {
 func (s *Service) reply(ctx context.Context, cfg store.Settings, r store.LinkResponse, now time.Time) error {
 	switch {
 	case !answering(cfg), r.ReplyAckedAt != nil, r.ReplyAttempts > maxReplyResends,
-		cfg.Role == store.RoleCheckpoint && !strings.EqualFold(r.PeerCall, cfg.HQCall),
+		cfg.Role == store.RoleCheckpoint && !store.SameStation(r.PeerCall, cfg.HQCall),
 		cfg.Role == "":
 		return s.store.StopLinkReply(ctx, r.ID)
 	}

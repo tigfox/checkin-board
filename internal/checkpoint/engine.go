@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -602,7 +601,7 @@ func (e *Engine) settledRow(ctx context.Context, hq string, id uint64) (bool, er
 		}
 		return false, err
 	}
-	if !strings.EqualFold(m.ToCall, hq) || (m.Status != graywolf.StatusAcked && m.Status != graywolf.StatusRejected) {
+	if !store.SameStation(m.ToCall, hq) || (m.Status != graywolf.StatusAcked && m.Status != graywolf.StatusRejected) {
 		return false, nil
 	}
 	return true, e.applyStatus(ctx, hq, m)
@@ -737,7 +736,7 @@ func (e *Engine) HandleOutbound(ctx context.Context, m graywolf.Message) error {
 }
 
 func (e *Engine) applyStatus(ctx context.Context, hq string, m graywolf.Message) error {
-	if hq == "" || !strings.EqualFold(m.ToCall, hq) {
+	if hq == "" || !store.SameStation(m.ToCall, hq) {
 		return nil
 	}
 	contactAt := e.now()
@@ -799,7 +798,7 @@ func (e *Engine) expedite(ctx context.Context) {
 // worth retrying).
 func (e *Engine) HandleInbound(ctx context.Context, m graywolf.Message) error {
 	hq := e.currentHQ()
-	if hq == "" || !strings.EqualFold(m.FromCall, hq) {
+	if hq == "" || !store.SameStation(m.FromCall, hq) {
 		e.log.Info("checkpoint: ignoring RC1 from non-HQ station", "from", m.FromCall)
 		return nil
 	}

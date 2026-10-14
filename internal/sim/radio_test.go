@@ -181,3 +181,18 @@ func TestHQRadioSwap(t *testing.T) {
 	s.Run(10 * time.Minute)
 	assertExactlyOnce(t, hqNode, cp)
 }
+
+// HQ's callsign has SSID 0 written out ("W1HQ-0"), as on the bench
+// (KD2DCM-0). A UV-K5 reports what's on the air, where SSID 0 has no
+// suffix ("W1HQ"): the checkpoint must still take HQ's acks and gap
+// requests as HQ's. Bench, 2026-10-13: every report stayed unconfirmed.
+func TestRadioCheckpointHQWithSSIDZero(t *testing.T) {
+	const hq0 = "W1HQ-0"
+	s := newSim(t, 19, gwfake.Profile{Loss: 0.1, MaxDelay: time.Second})
+	hqNode := addNode(t, s, hq0, HQSettings())
+	cp := addRadioNode(t, s, "W1RAD-7", CheckpointSettings("AS1", hq0))
+	massStart(t, s, rand.New(rand.NewPCG(19, 19)), 1, 30, cp)
+	runUntilConfirmed(t, s, 2*time.Hour, cp)
+	s.Run(10 * time.Minute)
+	assertExactlyOnce(t, hqNode, cp)
+}

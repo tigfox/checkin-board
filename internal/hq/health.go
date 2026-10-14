@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"slices"
-	"strings"
 	"time"
 
 	"checkin-board/internal/store"
@@ -60,7 +59,7 @@ func (e *Engine) Health(ctx context.Context) ([]CheckpointHealth, error) {
 	out := make([]CheckpointHealth, 0, len(byCode))
 	for _, h := range byCode {
 		h.SenderMismatch = h.ExpectedCall != "" && h.LastSourceCall != "" &&
-			!strings.EqualFold(h.ExpectedCall, h.LastSourceCall)
+			!store.SameStation(h.ExpectedCall, h.LastSourceCall)
 		out = append(out, *h)
 	}
 	slices.SortFunc(out, func(a, b CheckpointHealth) int {

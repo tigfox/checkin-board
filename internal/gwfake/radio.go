@@ -173,12 +173,12 @@ func (r *Radio) Deliver() {
 	slices.SortStableFunc(due, func(a, b inFlight) int { return a.at.Compare(b.at) })
 	for _, f := range due {
 		for _, s := range stations {
-			if strings.EqualFold(s.Call, f.frame.To) && !strings.EqualFold(s.Call, f.frame.From) {
+			if sameCall(s.Call, f.frame.To) && !sameCall(s.Call, f.frame.From) {
 				s.hear(f.frame)
 			}
 		}
 		for _, l := range listeners {
-			if call := l.Callsign(); strings.EqualFold(call, f.frame.To) && !strings.EqualFold(call, f.frame.From) {
+			if call := l.Callsign(); sameCall(call, f.frame.To) && !sameCall(call, f.frame.From) {
 				l.HearFrame(f.frame)
 			}
 		}
@@ -277,4 +277,11 @@ func (s *Station) ListPackets(ctx context.Context, q graywolf.PacketQuery) ([]gr
 		out = out[len(out)-q.Limit:]
 	}
 	return out, nil
+}
+
+// sameCall compares callsigns as on the air: case-insensitive, SSID 0
+// the same as none ("W1HQ-0" is "W1HQ").
+func sameCall(a, b string) bool {
+	norm := func(c string) string { return strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(c)), "-0") }
+	return norm(a) == norm(b)
 }

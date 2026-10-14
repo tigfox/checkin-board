@@ -258,7 +258,7 @@ func (s *Service) levelAt(ctx context.Context, sender string, since time.Time, m
 		return nil, ""
 	}
 	for _, p := range pk {
-		if p.Decoded == nil || p.Decoded.Message == nil || !strings.EqualFold(p.Decoded.Source, sender) || !match(p.Decoded.Message) {
+		if p.Decoded == nil || p.Decoded.Message == nil || !store.SameStation(p.Decoded.Source, sender) || !match(p.Decoded.Message) {
 			continue
 		}
 		if p.AudioLevel != nil {

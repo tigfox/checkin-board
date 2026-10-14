@@ -76,12 +76,12 @@ func Readiness(cfg store.Settings, cps []store.Checkpoint, checks []store.LinkCh
 	switch cfg.Role {
 	case store.RoleCheckpoint:
 		for _, c := range checks {
-			if s, ok := fromCheck(c); ok && strings.EqualFold(c.PeerCall, cfg.HQCall) && recent(s) {
+			if s, ok := fromCheck(c); ok && store.SameStation(c.PeerCall, cfg.HQCall) && recent(s) {
 				return nil
 			}
 		}
 		for _, r := range responses {
-			if strings.EqualFold(r.PeerCall, cfg.HQCall) && recent(fromResponse(r)) {
+			if store.SameStation(r.PeerCall, cfg.HQCall) && recent(fromResponse(r)) {
 				return nil
 			}
 		}
@@ -92,7 +92,7 @@ func Readiness(cfg store.Settings, cps []store.Checkpoint, checks []store.LinkCh
 		// Any recent PASS counts, not only the newest result.
 		for _, c := range checks {
 			for _, cp := range cps {
-				if s, ok := fromCheck(c); ok && strings.EqualFold(c.PeerCall, cp.ExpectedCall) && recent(s) {
+				if s, ok := fromCheck(c); ok && store.SameStation(c.PeerCall, cp.ExpectedCall) && recent(s) {
 					pass[cp.Code] = true
 				}
 			}
